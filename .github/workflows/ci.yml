@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Typecheck & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  deploy-script:
+    name: deploy.ps1 standalone smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke-test deploy.ps1 in standalone mode
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:USERPROFILE = $env:HOME
+          # Standalone mode: <repo>/extensions/<name> does not exist, so the
+          # script must fall back to deploying the repo itself. Dry run on a
+          # clean tree must succeed.
+          ./scripts/deploy.ps1 -Category extensions -Name smoke-nonexistent -DryRun
+          if ($LASTEXITCODE -ne 0) { throw 'deploy.ps1 standalone dry run failed' }
+          Write-Output 'deploy.ps1 standalone smoke test passed.'

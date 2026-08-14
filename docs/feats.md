@@ -1,0 +1,489 @@
+# Context Features — Design & Specs
+
+Design document and implementation specs for the next four `feat:` increments
+of the Broke extension. Every fact about the AiderDesk extension API in this
+document was verified against the authoritative builtin `extension-creator`
+skill (`%APPDATA%\aider-desk\Cache\extensions\hotovo-aider-desk\resources\skills\`,
+files `event-types.md` and `extension-interface.md`) and
+`docs/aiderdesk-reference.md` (meta repo).
+
+Status: **Draft** — specs are implementation-ready; spikes S1–S4 (below) must
+be resolved during the corresponding feature's development.
+
+## Roadmap
+
+| # | Feature | Version | Effort | Status |
+|---|---------|---------|--------|--------|
+| F1 | Active Log & Stack-Trace Compressor | 0.2.0 | S | shipped |
+| F2 | ST-Slicing (Semantic Context Thinning) | 0.3.0 | M | planned |
+| F3 | State Snapshotting & Memory Flushing | 0.4.0 | M | planned |
+| F4 | Local Keyword/Vector Index with snippet summaries | 0.5.0 | L | planned |
+
+Rationale for the order: F1 is a small pure-function pass that slots into the
+existing pipeline (quick win, validates the config/command/stats extension
+pattern for everything that follows). F2 changes what the agent sees and needs
+a hook-level spike first (S1). F3 contains the only genuinely destructive
+operation of the whole roadmap (flush) and must land after F1's stats/config
+mechanics exist. F4 is the largest and benefits from the patterns established
+by F1–F3.
+
+## Cross-cutting principles
+
+1. **Non-destructive by default.** Everything that runs automatically must
+   leave the stored task history untouched (Broke's core promise). Destructive
+   operations (F3 flush) are manual, opt-in, and require confirmation.
+2. **Opt-in for behavior-changing features.** F2 (slicing) and F3 (flush)
+   change what the agent or the user sees; their config defaults are `off`.
+   F1 and F4 are purely additive and default `on`.
+3. **Feature-detect the runtime API.** Published `@aiderdesk/extensions`
+   types (~0.28) lag the runtime. Any hook/TaskContext method used here is
+   checked at runtime before use and degrades gracefully (pattern established
+   by savemytoken's `truncateToolResult` detection).
+4. **Failure isolation.** No hook handler may ever throw into the agent loop.
+   New passes are wrapped the same way `summarizePass` is (catch → report →
+   keep previous savings).
+5. **No secrets in new artifacts.** `maskSecrets` (compress.ts) is applied to
+   anything derived from conversation content before it is persisted
+   (snapshots, flush state messages).
+6. **Bounded memory.** All per-task maps use `boundedMapSet`; all persisted
+   artifacts (index, snapshots, history dumps) have size caps and rotation.
+7. **Honest numbers.** New savings counters stay chars/4 estimates, labeled as
+   estimates, and never count the app's own compression.
+8. **Extensions of the pattern.** Each feature extends the same four seams:
+   a new pure module, zod config block, `/broke` subcommands, and (where
+   applicable) stats/UI surfaces. Tests live in `tests/*.test.ts`
+   (`tsx --test`), typecheck with `tsc --noEmit`.
+
+## Shared spike list (resolve during development)
+
+- **S1 (F2):** Does `onOptimizeMessages` see file contents injected by the
+  Aider CLI (context files, `/add`, repo map)? If yes, an input-level slice
+  pass can cover the Aider path that tool hooks cannot. Verify with a debug
+  log of message roles/part types in a real task.
+- **S2 (F3):** What happens to `{project}/.aider-desk/tasks/{id}/.aider.chat.history.md`
+  (written by the Python connector) when `TaskContext.removeMessagesUpTo` +
+  `addContextMessage` are used? Does the next prompt re-hydrate from that
+  file? If yes, flushing must also document/accept the desync or be blocked.
+- **S3 (F3/F4):** Does `scripts/deploy.ps1` preserve extension subfolders
+  (`snapshots/`, `index/`)? `config.json` is preserved; confirm the same for
+  new folders or exclude them from deployment.
+- **S4 (F2):** Capture the exact `toolName` strings of file-read and file-edit
+  tools in a real session (`onToolCalled` debug log). The allowlist must
+  match reality (names differ between docs and runtime).
+
+---
+
+## F1 — Active Log & Stack-Trace Compressor
+
+**Version:** 0.2.0 (feat: → minor). **Effort:** S.
+
+### Objective
+
+Before the model sees a tool result containing compiler/test output, replace
+the noise with the diagnostic essence: exception type, failing
+file:line, and a small window of surrounding context. A 2,000-line terminal
+dump becomes ~15 lines, permanently shrinking every subsequent model call.
+
+### AiderDesk compatibility
+
+Fully compatible, two verified docking points:
+
+- **Primary: input pass in `onOptimizeMessages`** (matches Broke's
+  "stored history untouched" promise; same architecture as the existing
+  `truncate` pass). Tool results are messages with `tool` role and
+  `tool-result` parts; their text is available via the existing
+  `toolResultText`/`partText` helpers.
+- **Optional follow-up: tool-level rewrite in `onToolFinished`** (output is
+  modifiable per `ToolFinishedEvent`; `ExtensionContext.truncateToolResult`
+  exists for the "save full output to temp file" path). Config-flag controlled
+  (default `off`), because it rewrites stored history.
+
+### Design
+
+**New module `errors.ts`** (pure, no deps):
+
+- `extractErrorSummary(text: string, opts: { contextLines: number }): { summary: string; matched: boolean }`
+  — regex-based extraction. Recognized patterns (v1):
+  - TypeScript/tsc/tsx: `error TS\d+`, with `(<file>):(<line>):(<col>)` and
+    context lines from the source excerpt block.
+  - Node/Vitest/Jest stack traces: `Error: <message>` + `at <fn> (<file>:<line>:<col>)`
+    (first frame wins), plus Jest/Vitest `✕ <test name>` + `●` failure blocks.
+  - Python/pytest: `Traceback (most recent call last)` … `File "<file>", line <n>, in <fn>`
+    + final `<ExceptionType>: <message>`; pytest `FAILED <path> - <ExceptionType>: <message>`.
+  - Generic fallback: first line matching `^\S+(Error|Exception|Failure):` .
+  - Result shape: exception type + message (first line), failing
+    `file:line`, up to `contextLines` of surrounding source context, explicit
+    marker `… [broke: error summary — N lines → M lines]`.
+  - Unmatched text returns `{ matched: false }` and passes through untouched.
+
+**Pipeline (compress.ts):**
+
+- New pass `errorPass(messages, protectedTurns, opts): PassResult` between
+  `truncate` and `summarize`; uses `compressibleRange` (same region rules —
+  the active working set is never touched).
+- Engage when: level ≥ `truncate` **and** message text length ≥
+  `errors.minChars` (per-message threshold, independent of
+  `maxContextChars` — a 2k-line test failure in a small conversation is
+  exactly the case worth compressing; documented in README).
+- `CompressReport` gains `errorChars`; `TaskStats.savedChars` gains `error`.
+
+**Config (config.ts, new `errors` block):**
+
+```ts
+const ErrorsSchema = z.object({
+  enabled: z.boolean().default(true),
+  /** Compress matching tool results ≥ this many chars. */
+  minChars: z.number().int().positive().default(8000),
+  /** Context lines kept around the failing line. */
+  contextLines: z.number().int().min(1).max(30).default(8),
+  /** Rewrite at tool level (onToolFinished) instead of input-only. */
+  toolLevel: z.boolean().default(false),
+});
+```
+
+**Commands (commands.ts):** `/broke errors <on|off>`,
+`/broke errors minchars <n>`, `/broke errors lines <n>`,
+`/broke errors toollevel <on|off>`; status/stats output extended.
+
+**Stats/UI:** `formatStats` line `error: <n> chars (<k> outputs)`;
+`/broke selftest` gains an error-compression case.
+
+### Acceptance criteria
+
+- [ ] A tsc output with 2,000 lines compresses to exception type + file:line
+      + ≤ 8 context lines, with the `[broke: error summary]` marker.
+- [ ] Python traceback and Jest/Vitest failure blocks are recognized.
+- [ ] Non-error tool output (normal build logs, code listings) passes through
+      byte-identical (except existing passes).
+- [ ] Protected turns are never compressed; `enabled: false` is a no-op.
+- [ ] `toolLevel: true` rewrites `output.content[0].text` in `onToolFinished`
+      and saves the full output via `truncateToolResult`; `false` (default)
+      never touches stored history.
+- [ ] A throwing `extractErrorSummary` cannot break the model call.
+
+### Verification
+
+`npm run typecheck` && `npm test` (new tests in `tests/errors.test.ts`:
+tsc sample, python sample, jest sample, negative samples, threshold, marker
+counts, region protection).
+
+---
+
+## F2 — ST-Slicing (Semantic Context Thinning)
+
+**Version:** 0.3.0 (feat: → minor). **Effort:** M.
+
+### Objective
+
+When the agent reads source files via power tools, deliver interface views —
+imports, exported type/interface/class declarations, function signatures —
+instead of full bodies. Only the file currently being edited (the *focus*)
+is returned in full. A transparent network proxy is **not possible** in the
+AiderDesk extension host (no hook intercepts the Aider CLI's own file reads);
+instead the interception happens at tool-result level, which is verified
+compatible (`ToolCalledEvent`/`ToolFinishedEvent` expose mutable `input` and
+`output`).
+
+### AiderDesk compatibility
+
+- `onToolFinished` rewrites `output.content[0].text` of file-read tool
+  results (tool-name allowlist, see S4; feature-detect and log unknown names
+  once per session for diagnosis).
+- `onToolCalled` records edit targets: when a file-edit/write tool fires, its
+  target path becomes the task's focus file (bounded per-task map,
+  `boundedMapSet`).
+- Focus also includes files with pending task changes via
+  `TaskContext.getUpdatedFiles()` (available in `onToolFinished`) and
+  explicit `/broke slice focus <path>`.
+- Skipped when: `output` has `isError`, contains image parts, or the path is
+  not sliceable (extension allowlist, skip `node_modules`/`dist`/`vendor`).
+- Known gap (documented in README, not a bug): Aider CLI context files
+  (repo map, `/add`, connector-injected content) bypass tool hooks. S1 may
+  close this with an input-level pass; out of scope for v1.
+
+### Design
+
+**New module `slice.ts`** (pure, no new deps in v1):
+
+- `SLICEABLE_EXT: Record<string, 'ts' | 'py'>` — `.ts/.tsx/.js/.jsx/.mts/.cts`
+  and `.py` in v1.
+- `sliceInterfaces(source: string, lang: 'ts' | 'py'): SlicedView` —
+  heuristic (regex) extraction, zero dependencies (Broke stays zod-only):
+  - keep: imports/exports, `interface`/`type` declarations (full — they are
+    the contract), class/function signatures with bodies elided to
+    `{ /* … */ }`, decorated members for classes, `__init__`/`def` signatures
+    for Python incl. type hints, module docstring first 5 lines.
+  - elide: function/class bodies, comments (except docstrings), blank runs.
+  - `SlicedView = { text: string; originalLines: number; keptLines: number }`.
+- `sliceWithFocus(source, lang, focus: { file: string; symbol?: string } | null)`
+  — when `focus` matches this file, keep the full body of the focus symbol if
+  resolvable, otherwise the full file.
+- v2 (config `slice.parser: 'ast'`, default `'heuristic'`): `web-tree-sitter`
+  (WASM — no native builds on Windows; folder extensions may carry npm deps).
+  Feature-detect module load; fall back to heuristic on failure.
+
+**Hook wiring (index.ts):**
+
+- `onToolCalled`: detect edit tools (S4 allowlist), store
+  `lastEditPath[taskId]`.
+- `onToolFinished`: detect read tools; if `slice.enabled` and output text
+  contains a sliceable file (path from `input.filePath ?? input.path`):
+  - file size < `slice.minChars` → pass through untouched;
+  - `isFocus(path)` (lastEditPath ∪ getUpdatedFiles ∪ explicit focus) → full
+    content, prepended focus marker;
+  - else → interface view with marker line
+    `[broke: interface view — N of M lines. Full body only for the focus file (run /broke slice focus <path> or /broke slice off to disable)]`.
+- Always synchronous and exception-guarded; on any doubt → pass through.
+
+**Config (config.ts, new `slice` block):**
+
+```ts
+const SliceSchema = z.object({
+  /** Master switch — OFF by default: slicing changes what the agent sees. */
+  enabled: z.boolean().default(false),
+  parser: z.enum(['heuristic', 'ast']).default('heuristic'),
+  /** Files smaller than this (chars) always pass through untouched. */
+  minChars: z.number().int().positive().default(4000),
+  /** Cap for the generated interface view; larger views fall back to full content. */
+  maxChars: z.number().int().positive().default(20000),
+  /** Derive focus from edit-tool calls and updated files. */
+  focusAuto: z.boolean().default(true),
+});
+```
+
+**Commands (commands.ts):** `/broke slice <on|off>`,
+`/broke slice focus <path>`, `/broke slice focus clear`,
+`/broke slice parser <heuristic|ast>`, `/broke slice status`
+(active focus per task). Stats: `TaskStats.savedChars.slice` (estimated:
+full-file chars vs. interface-view chars, only when a slice actually
+replaced content).
+
+### Acceptance criteria
+
+- [ ] Reading a TS file ≥ `minChars` returns imports + declarations +
+      signatures with elided bodies; reading the focus file returns the full
+      body (focus symbol when resolvable).
+- [ ] Edit-tool call on file X makes the next read of X full-body
+      (`focusAuto`), and reads of other files stay sliced.
+- [ ] Python files slice correctly (def signatures incl. type hints,
+      `__init__`, class members).
+- [ ] `slice.enabled: false`, non-sliceable extensions, small files, error
+      outputs and image parts pass through untouched.
+- [ ] Unknown read/edit tool names are logged once and never crash the hook.
+- [ ] `/broke slice status` shows the current focus and parser mode.
+- [ ] README documents the Aider-CLI-context gap (S1 result) honestly.
+
+### Verification
+
+`npm run typecheck` && `npm test` (`tests/slice.test.ts`: TS/Py fixtures,
+focus resolution, markers, passthrough cases). Spike S1 + S4 before hook
+implementation. Manual check: real task, agent reads two files — one focus,
+one not; verify the model sees the sliced view.
+
+---
+
+## F3 — State Snapshotting & Memory Flushing
+
+**Version:** 0.4.0 (feat: → minor). **Effort:** M.
+
+### Objective
+
+On milestone ("sub-goal reached"), persist a compact JSON state protocol
+("Feature X built, exports A/B created") and optionally flush the accumulated
+conversation so the next step starts from a lean context. Verified API facts:
+`TaskContext` exposes `getContextMessages`, `removeMessage`,
+`removeLastMessage`, `removeMessagesUpTo(messageId)`, `loadContextMessages`,
+`addContextMessage`, `getUpdatedFiles`, `generateText`, `askQuestion` — true
+history replacement is therefore **possible**. AiderDesk also ships
+`handoffConversation(focus?, execute?)`; F3 complements it rather than
+replacing it (snapshots are inspectable JSON; flush is only one of its uses).
+
+### Design
+
+**New module `snapshot.ts`:**
+
+- Zod schema `SnapshotRecord`:
+  `{ version: 1, taskId, taskName, createdAt, goal, achieved, files: string[], commit?: string, summary, historyFile?: string }`
+  — `goal` = first user message (truncated to 2,000 chars); `files` =
+  `getUpdatedFiles()`; `summary` = compact text via existing summarizer deps
+  (`SummarizeDeps`, `maskSecrets` applied) or a template when unavailable.
+- Persistence: `join(__dirname, 'snapshots', taskId, '<iso>_<label>.json')`
+  (extension dir, like `stats.jsonl` — survives deploys; S3 verifies
+  `deploy.ps1`). `snapshot.keepHistory` (default `true`) additionally writes
+  the raw message array to `<iso>_<label>.history.json` **before any flush** —
+  this is the undo file. Rotation: keep last 50 per task.
+- Triggers:
+  - `onAfterCommit` (read-only event, but writing our own files is allowed):
+    record from commit message + `getUpdatedFiles` + current summary.
+    Config `snapshot.onCommit` default `true`.
+  - Manual `/broke snapshot <label>` — always available.
+  - Test-green detection (`onToolFinished` heuristic on test-runner/bash
+    results: exit code 0 + `passed`/`ok` patterns) — config
+    `snapshot.onTestPass` default `false` (false positives).
+
+**Flush (manual only in v1 — automatic flushing while an agent loop runs is
+dangerous: removed message ids may be referenced by the running step):**
+
+- `/broke flush [--yes]` (chat command, runs between turns):
+  1. Write snapshot + history file (abort if writing fails).
+  2. `getContextMessages()` → plan via pure `buildFlushPlan(messages, stateMessage)`
+     (testable): keep = first user message (task brief) + last state message;
+     remove = everything between them.
+  3. `removeMessagesUpTo(lastKeptId)` + `addContextMessage(stateMessage)` —
+     `loadContextMessages` is the documented alternative (S2 decides).
+  4. State message: `[broke-state]` marker + compact JSON of the record.
+- `/broke flush --undo <n>`: restore from the history file via
+  `loadContextMessages` (only when the task is idle; S2 gates this).
+- Config: `snapshot.onCommit` (true), `snapshot.onTestPass` (false),
+  `snapshot.keepHistory` (true), `flush.confirm` (true — uses
+  `askQuestion` or `--yes`).
+
+**Commands (commands.ts):** `/broke snapshot [label]`, `/broke snapshot list`,
+`/broke snapshot show <n>`, `/broke flush [--yes]`, `/broke flush --undo <n>`.
+
+### Acceptance criteria
+
+- [ ] `onAfterCommit` writes a valid `SnapshotRecord` (schema-parseable) with
+      files + commit + summary; secrets are masked; failures never propagate.
+- [ ] `/broke snapshot list/show` renders persisted records.
+- [ ] `/broke flush` without `--yes` asks for confirmation; snapshot +
+      history file exist before any message is removed.
+- [ ] After flush, the task context = task brief + `[broke-state]` message;
+      the agent answers a follow-up prompt correctly (manual check).
+- [ ] `--undo` restores the exact prior message array from the history file.
+- [ ] History files are capped/rotated; `snapshot.keepHistory: false` skips
+      them and disables `--undo` (documented).
+- [ ] README documents the `.aider.chat.history.md` desync per S2.
+
+### Verification
+
+`npm run typecheck` && `npm test` (`tests/snapshot.test.ts`:
+serialization, goal extraction, `buildFlushPlan`, rotation, undo roundtrip).
+Manual: real task with 20+ messages → snapshot → flush → follow-up prompt →
+`--undo`.
+
+---
+
+## F4 — Local Keyword/Vector Index with Snippet Summaries
+
+**Version:** 0.5.0 (feat: → minor). **Effort:** L.
+
+### Objective
+
+A project-local search index that returns **compressed snippet summaries**
+(top-k results, ±6 lines around the match) instead of dumping whole files
+into the context. Honest positioning: AiderDesk already ships
+`power---semantic_search` (app-level vector search) and a cached repo map
+(`TaskContext.getRepoMap()`). Broke's differentiators: token-budgeted snippet
+output, offline keyword mode with zero embedding dependency, per-project
+persistence, and integration with the compression pipeline's philosophy.
+
+### AiderDesk compatibility
+
+Fully compatible — v1 needs no app API beyond filesystem access:
+`ExtensionContext.getProjectDir()`, optional `TaskContext.getAllFiles()` /
+`getUpdatedFiles()` for change detection, and `getTools()` for the
+`broke-search` tool (name kebab-case, zod `inputSchema`). Vector tier reuses
+the existing Ollama HTTP client (add `ollamaEmbed` to `local.ts`,
+`POST /api/embeddings`). App `MemoryContext` (LanceDB) is explicitly **not**
+used: it is global memory, not a per-project file index, and storing file
+snippets there would pollute it.
+
+### Design
+
+**New module `indexer.ts`:**
+
+- `Indexer` class: build/update/query. State per project (hashed project
+  path): `join(__dirname, 'index', <projectHash>, 'index.json')`.
+- Build rules: walk project root; skip `node_modules`, `.git`, `dist`,
+  `build`, `vendor`, `.aider-desk`; per-file cap 512 KB; extensions allowlist
+  (ts/tsx/js/jsx/py/json/md in v1). Tokenizer: lowercase, identifier-aware,
+  minimal stopword list. Inverted index: `term → { file, tf }`; per-file meta
+  `{ path, mtime, size }` for incremental rebuilds (only changed files
+  re-indexed; merge in place).
+- Query: BM25-style ranking; top-k (default 8); snippet = ±6 lines around the
+  best match line, middle elided with markers; per-result
+  `path:line` + match count; total snippet budget ≤ `search.maxChars`
+  (default 6000 chars ≈ 1.5k tokens) — the snippet summary *is* the token
+  control.
+- Staleness: `onAfterCommit` + `onFilesAdded` trigger async, throttled,
+  never-throwing rebuilds; queries rebuild lazily when index mtime is older
+  than the newest project file change.
+- Failure isolation: index build/query errors return a short message and
+  never throw into the agent loop.
+- v2 (config `search.backend`): `vector`/`hybrid` via Ollama embeddings
+  (`nomic-embed-text` or similar, pulled on demand; graceful fallback to
+  keyword when Ollama is offline — same pattern as the summarizer).
+
+**Tool (index.ts, `getTools`):** `broke-search` — zod schema
+`{ query: string; k?: number; files?: string[] }`; returns the snippet
+summary text (plus one-line footer with index stats). Chat convenience:
+`/broke search <query>`.
+
+**Commands (commands.ts):** `/broke index [rebuild]`, `/broke index status`
+(file count, index size, last build), `/broke search <query>`,
+`/broke index backend <keyword|vector|hybrid>` (v2).
+
+**Config (config.ts, new `search` block):**
+
+```ts
+const SearchSchema = z.object({
+  enabled: z.boolean().default(true),
+  backend: z.enum(['keyword', 'vector', 'hybrid']).default('keyword'),
+  maxResults: z.number().int().min(1).max(50).default(8),
+  /** Total snippet budget per query — the token control. */
+  maxChars: z.number().int().positive().default(6000),
+  contextLines: z.number().int().min(1).max(20).default(6),
+  maxFileKB: z.number().int().positive().default(512),
+});
+```
+
+### Acceptance criteria
+
+- [ ] `broke-search` returns ≤ `maxResults` results with `path:line`,
+      snippet windows and match counts, total ≤ `maxChars` chars.
+- [ ] Incremental rebuild re-indexes only changed files (mtime/size);
+      index survives extension reload; S3 confirms deploy preservation.
+- [ ] Query while a file changed since last build returns fresh results
+      (lazy rebuild) without blocking the agent loop.
+- [ ] Unindexable dirs (`node_modules` etc.) are never walked;
+      `enabled: false` removes the tool.
+- [ ] `broke index status` reports honest numbers; rebuild failures degrade
+      to a short message.
+- [ ] v2: `vector` backend returns embedding-ranked results and falls back to
+      keyword when Ollama is unreachable.
+- [ ] README positions the feature vs. `power---semantic_search` + repo map.
+
+### Verification
+
+`npm run typecheck` && `npm test` (`tests/indexer.test.ts`: tokenizer,
+build/merge on tmp fixture dir, BM25 ranking, snippet windowing, staleness,
+budget cap, rotation). Manual: real project → `/broke index` → `broke-search`
+via agent; verify snippet budget in a large repo.
+
+---
+
+## Versioning & delivery (per feature)
+
+- One feature per release: `feat:` conventional commit (or a short-lived
+  branch merged within days), annotated tag `v0.x.0`, CHANGELOG entry under
+  `[Unreleased]` written with the change, README updated, docs/feats.md status
+  flipped to `released`.
+- Before commit: `npm run typecheck` && `npm test` (all green).
+- Deploy: `.\scripts\deploy.ps1 -Category extensions -Name broke` from a
+  clean, tagged state (verify S3: config.json **and** new artifact folders
+  survive).
+- Version bumps: F1 → 0.2.0, F2 → 0.3.0, F3 → 0.4.0, F4 → 0.5.0.
+
+## Risk register
+
+| Risk | Feat | Impact | Mitigation |
+|------|------|--------|------------|
+| Tool names differ from docs at runtime | F2 | Med | S4 spike; allowlist + once-logging + feature-detect |
+| Aider-CLI context files bypass hooks | F2 | Med | Documented gap; S1 may close via input pass |
+| Flush desyncs `.aider.chat.history.md` | F3 | High | S2 spike before implementation; manual-only; undo file |
+| Flush during running agent step | F3 | High | v1 manual-only; confirm gate; snapshot before removal |
+| Sliced view confuses the model (missing body) | F2 | Med | Focus tracking; marker line; escape hatch `/broke slice off` |
+| Index build blocks the agent loop | F4 | Med | Lazy/async builds, throttling, never-throwing |
+| deploy.ps1 wipes new artifact folders | F3/F4 | Med | S3 spike; preserve/restore logic |
+| Types lag runtime | all | Low | Feature-detect pattern, graceful degradation |
