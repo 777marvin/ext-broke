@@ -2,7 +2,7 @@
  * Stack-trace & log compression. Pure functions that reduce compiler/test
  * output to its diagnostic essence: exception type, failing file:line and a
  * small window of surrounding context. Used by the input pass (errorPass in
- * compress.ts) and — when errors.toolLevel is on — by onToolFinished.
+ * compress.ts) and - when errors.toolLevel is on - by onToolFinished.
  *
  * Everything here is deterministic text processing: no LLM, no dependencies.
  */
@@ -57,17 +57,17 @@ export function enforceArchiveCap(
         unlinkSync(f.path);
         total -= f.size;
       } catch {
-        // best effort — a locked file is skipped, the cap is soft
+        // best effort - a locked file is skipped, the cap is soft
       }
     }
   } catch {
-    // best effort — archiving must never break tool execution
+    // best effort - archiving must never break tool execution
   }
 }
 
 /**
  * Archive the full (uncompressed) tool output next to the extension so the
- * summary marker can point at it. Best effort — never throws. Returns the
+ * summary marker can point at it. Best effort - never throws. Returns the
  * path relative to the extension directory ('' when saving failed).
  * Callers MUST redact secrets before calling this (see maskSecrets).
  */
@@ -138,7 +138,7 @@ export interface ErrorSummaryResult {
   body: string;
 }
 
-const MARKER_PREFIX = '… [broke: error summary — ';
+const MARKER_PREFIX = '… [broke: error summary - ';
 
 /**
  * Wrap a matched body in the standard marker. `suffix` explains what happened
@@ -290,7 +290,7 @@ function matchJest(lines: string[], contextLines: number): ErrorSummaryResult | 
   if (frame) {
     bodyLines.push(`at ${frame[2]}:${frame[3]}:${frame[4]} (${frame[1].trimEnd()})`);
   }
-  void contextLines; // Jest output carries no usable source excerpt — skip it.
+  void contextLines; // Jest output carries no usable source excerpt - skip it.
   return result(bodyLines.join('\n'), lines.length);
 }
 
@@ -299,7 +299,7 @@ function matchJest(lines: string[], contextLines: number): ErrorSummaryResult | 
 // ---------------------------------------------------------------------------
 
 const NODE_ERR_RE = /^([A-Za-z_][\w.]*(?:Error|Exception)):\s?(.*)$/;
-/** Frames: "    at fn (C:\file.ts:12:5)" — prefer user code over internals. */
+/** Frames: "    at fn (C:\file.ts:12:5)" - prefer user code over internals. */
 const NODE_FRAME_RE = /^\s+at\s+(.+?)\s+\(([^)]+):(\d+):(\d+)\)$/;
 
 function matchNode(lines: string[]): ErrorSummaryResult | null {

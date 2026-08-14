@@ -4,7 +4,7 @@ import { isPlaintextRemoteUrl, ollamaStatus } from './local';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from './pricing';
 import { estimateTokens, type TaskStats, totalSavedChars } from './tokens';
 
-export const HELP_TEXT = `broke — token budget compression
+export const HELP_TEXT = `broke - token budget compression
 
 Usage: /broke <subcommand>
 
@@ -29,7 +29,7 @@ Usage: /broke <subcommand>
   selftest                      run the pipeline on synthetic input and log results
   help                          this text
 
-All estimates use the chars/4 heuristic — honest numbers, not provider counts.`;
+All estimates use the chars/4 heuristic - honest numbers, not provider counts.`;
 
 export type BrokeCommand =
   | { kind: 'status' }
@@ -151,7 +151,7 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config): { config: 
     case 'errors-lines':
       return { config: updateConfigPath('errors.contextLines', cmd.value), message: `errors contextLines → ${cmd.value}` };
     case 'errors-toollevel':
-      return { config: updateConfigPath('errors.toolLevel', cmd.enabled), message: `error tool-level rewriting ${cmd.enabled ? 'enabled' : 'disabled'} — rewrites stored history` };
+      return { config: updateConfigPath('errors.toolLevel', cmd.enabled), message: `error tool-level rewriting ${cmd.enabled ? 'enabled' : 'disabled'} - rewrites stored history` };
     case 'summarize-via':
       return { config: updateConfigPath('summarize.via', cmd.via), message: `summarizer → ${cmd.via}` };
     case 'summarize-model':
@@ -170,24 +170,24 @@ function fmtChars(chars: number): string {
 }
 
 /**
- * Human-readable stats block. `price` is the current task model price —
+ * Human-readable stats block. `price` is the current task model price -
  * the money line is computed from it, so the saved $ is always the price
  * of the model the task is using right now.
  */
 export function formatStats(config: Config, stats: TaskStats | null, price: TaskModelPrice | null | undefined = null): string {
-  if (!stats) return 'No stats recorded for this task yet — send a message first.';
+  if (!stats) return 'No stats recorded for this task yet - send a message first.';
   const total = totalSavedChars(stats);
   const totalTokens = estimateTokens(total);
   const money = price ? formatUsd(savedCostUsd(totalTokens, price.inputPerMToken)) : null;
   const lines = [
-    `broke stats — ${stats.passes} compression run(s)`,
+    `broke stats - ${stats.passes} compression run(s)`,
     `  saved total:   ${fmtChars(total)}`,
     ...(money ? [`  estimated cost saved: ${money} (${priceLabel(price)})`] : []),
     `  structural:    ${fmtChars(stats.savedChars.structural)} (lossless)`,
     `  error:         ${fmtChars(stats.savedChars.error)} (stack-trace/log compression)`,
     `  truncate:      ${fmtChars(stats.savedChars.truncate)}`,
     `  summarize:     ${fmtChars(stats.savedChars.summarize)} (${stats.summarizedRanges} range(s), ${stats.summarizeFailures} failure(s))`,
-    `  summarizer LLM calls: ${stats.summarizeCalls} (cache reuse not counted — true cost side)`,
+    `  summarizer LLM calls: ${stats.summarizeCalls} (cache reuse not counted - true cost side)`,
     `  last summarizer: ${stats.lastSummarizer}`,
     `  level: ${config.level} | maxContextChars: ${config.maxContextChars.toLocaleString()} | protectedTurns: ${config.protectedTurns}`,
   ];
@@ -198,7 +198,7 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
 export async function formatStatus(config: Config, stats: TaskStats | null, price?: TaskModelPrice | null): Promise<string> {
   const ollama = config.summarize.via === 'local' ? await ollamaStatus(config.summarize.ollamaUrl) : null;
   const lines = [
-    `broke — ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level})`,
+    `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level})`,
     `  maxContextChars: ${config.maxContextChars.toLocaleString()} chars | protectedTurns: ${config.protectedTurns}`,
     `  truncate limits: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB | maxInputChars: ${config.truncate.maxInputChars}`,
     `  errors: ${config.errors.enabled ? 'on' : 'off'} | min ${config.errors.minChars.toLocaleString()} chars | ${config.errors.contextLines} context lines | tool-level: ${config.errors.toolLevel ? 'on' : 'off'}`,
@@ -207,16 +207,16 @@ export async function formatStatus(config: Config, stats: TaskStats | null, pric
   if (ollama) {
     if (ollama.reachable) {
       const hasModel = ollama.models.includes(config.summarize.localModel) || ollama.models.some((m) => m.startsWith(config.summarize.localModel.split(':')[0]));
-      lines.push(`  ollama ${ollama.version ? `v${ollama.version} ` : ''}reachable at ${config.summarize.ollamaUrl} — ${ollama.models.length} model(s) installed${hasModel ? '' : `, ${config.summarize.localModel} NOT found (run: ollama pull ${config.summarize.localModel})`}`);
+      lines.push(`  ollama ${ollama.version ? `v${ollama.version} ` : ''}reachable at ${config.summarize.ollamaUrl} - ${ollama.models.length} model(s) installed${hasModel ? '' : `, ${config.summarize.localModel} NOT found (run: ollama pull ${config.summarize.localModel})`}`);
     } else {
-      lines.push(`  ollama NOT reachable at ${config.summarize.ollamaUrl} — local summarization is inactive (${ollama.error ?? 'unknown error'}). Start it with: ollama serve`);
+      lines.push(`  ollama NOT reachable at ${config.summarize.ollamaUrl} - local summarization is inactive (${ollama.error ?? 'unknown error'}). Start it with: ollama serve`);
     }
     if (isPlaintextRemoteUrl(config.summarize.ollamaUrl)) {
-      lines.push('  ⚠ remote Ollama via plaintext http — conversation content is sent unencrypted. Prefer https:// or a local Ollama.');
+      lines.push('  ⚠ remote Ollama via plaintext http - conversation content is sent unencrypted. Prefer https:// or a local Ollama.');
     }
   }
   const statsBlock = formatStats(config, stats, price);
-  if (statsBlock !== 'No stats recorded for this task yet — send a message first.') {
+  if (statsBlock !== 'No stats recorded for this task yet - send a message first.') {
     lines.push('', statsBlock);
   }
   lines.push('', 'Defaults: ' + JSON.stringify({ level: DEFAULT_CONFIG.level, maxContextChars: DEFAULT_CONFIG.maxContextChars, protectedTurns: DEFAULT_CONFIG.protectedTurns, truncate: DEFAULT_CONFIG.truncate, summarize: { via: DEFAULT_CONFIG.summarize.via, localModel: DEFAULT_CONFIG.summarize.localModel } }));

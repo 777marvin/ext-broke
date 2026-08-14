@@ -7,7 +7,7 @@ Hardware facts (verified on this machine, 2026-08):
 | Laptop | MSI Thin 15 B12UC |
 | CPU | Intel Core i5-12450H (4P + 4E cores) |
 | RAM | 15.7 GB (shared with iGPU) |
-| GPU | NVIDIA GeForce RTX 3050 Laptop — **4 GB VRAM** |
+| GPU | NVIDIA GeForce RTX 3050 Laptop, **4 GB VRAM** |
 | Local runtime | Ollama installed (`ollama.exe`), server currently **not running**, no models pulled yet |
 
 The binding constraint is **4 GB VRAM**. Everything below is derived from
@@ -24,32 +24,32 @@ that, plus Ollama's default behaviors (Q4 quantizations, KV cache sharing).
 | `qwen2.5-coder:7b` | ~4.4 GB | ⚠️ partial offload | works, 2-3× slower than 3B |
 | `qwen2.5-coder:14b`, `deepseek-r1:14b`, `gemma2:9b`, 13B+ | > 6 GB | ❌ | not usable interactively on this GPU |
 
-Expected speeds (estimates — measure with `/broke status` + your own runs):
+Expected speeds (estimates; measure with `/broke status` + your own runs):
 3B Q4 fully in VRAM ≈ **30–60 tok/s** generation, prompt processing much
 faster; 7B with partial offload ≈ **8–20 tok/s**. A 400-word summary
-(~500 output tokens) takes roughly **10–20 s on a 3B, 30–60 s on a 7B** —
+(~500 output tokens) takes roughly **10–20 s on a 3B, 30–60 s on a 7B**,
 fine for background-style compression, too slow for interactive chat.
 
 ## What local models genuinely do well (on this stack)
 
-1. **Summarization & context compression** — the ideal workload: quality
+1. **Summarization & context compression**: the ideal workload: quality
    bar is modest, latency tolerance is high, and every summary produced
    locally saves *all* the cloud input tokens of the turns it replaces.
    This is Broke's `summarize via local` (default).
-2. **Small, well-scoped text transformations** — commit message drafting,
+2. **Small, well-scoped text transformations**: commit message drafting,
    task titling, prompt rewriting, error-message condensation.
-3. **Classification / triage** — "is this output an error?", "which
+3. **Classification / triage**: "is this output an error?", "which
    component does this mention?", simple routing decisions.
-4. **Single-file review & lint-style checks** — a 3–4B model can spot
+4. **Single-file review & lint-style checks**: a 3–4B model can spot
    obvious bugs, missing imports, or style drifts in a file it is given
    fully.
-5. **Fully offline / privacy-sensitive work** — small files, no repo map,
+5. **Fully offline / privacy-sensitive work**: small files, no repo map,
    no cloud round-trips at all.
 
 ## What local models cannot do (on this stack)
 
 - **Multi-file refactoring and feature work**: the main agent's job needs
-  repo map + tool calls + long context — 3–4B models degrade quickly and
+  repo map + tool calls + long context, 3–4B models degrade quickly and
   their tool-calling reliability is mediocre. Keep the main loop on a
   cloud model.
 - **Long-context reasoning**: 4 GB VRAM caps usable context (8–16k
@@ -87,7 +87,7 @@ Ollama directly and needs no provider registration.
 
 With Ollama + a 3B model pulled, you can still get summaries, short
 answers, and single-file reviews without any network. Not a replacement
-for the main agent — a safety net.
+for the main agent, a safety net.
 
 ## Setup
 

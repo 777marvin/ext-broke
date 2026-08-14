@@ -32,11 +32,11 @@
   return (
     <div className="flex flex-col gap-5">
       <p className="text-xs text-text-secondary">
-        Compresses the input context before it reaches the model — on every model call, not only at the built-in
+        Compresses the input context before it reaches the model - on every model call, not only at the built-in
         emergency threshold. Everything here can also be changed from the chat: <span className="font-mono">/broke help</span>.
       </p>
 
-      {/* 1 — Master switch + level */}
+      {/* 1 - Master switch + level */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">Compression pipeline</p>
         <Checkbox
@@ -49,17 +49,17 @@
           value={cfg.level ?? 'truncate'}
           onChange={(value) => updateConfig({ ...config, level: value })}
           options={[
-            { value: 'structural', label: 'Structural — lossless only (empty/dedup/merge)' },
-            { value: 'truncate', label: 'Truncate — + head/tail truncation of old tool outputs (recommended)' },
-            { value: 'summarize', label: 'Summarize — + LLM summary of old turns (most aggressive)' },
+            { value: 'structural', label: 'Structural - lossless only (empty/dedup/merge)' },
+            { value: 'truncate', label: 'Truncate - + head/tail truncation of old tool outputs (recommended)' },
+            { value: 'summarize', label: 'Summarize - + LLM summary of old turns (most aggressive)' },
           ]}
         />
         <p className="text-xs text-text-secondary -mt-2">
-          The task's stored history is never touched — compression applies to the input of each model call.
+          The task's stored history is never touched - compression applies to the input of each model call.
         </p>
       </div>
 
-      {/* 2 — Thresholds */}
+      {/* 2 - Thresholds */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">Thresholds</p>
         <div className="flex gap-4">
@@ -76,7 +76,7 @@
         </p>
       </div>
 
-      {/* 3 — Error compression */}
+      {/* 3 - Error compression */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">Error compression (compiler/test output)</p>
         <Checkbox
@@ -99,7 +99,7 @@
         />
       </div>
 
-      {/* 4 — Truncation limits */}
+      {/* 4 - Truncation limits */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">Truncation limits (old tool outputs)</p>
         <div className="flex gap-4">
@@ -112,7 +112,7 @@
         </div>
       </div>
 
-      {/* 5 — Summarizer */}
+      {/* 5 - Summarizer */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">Summarizer</p>
         <Select
@@ -120,8 +120,8 @@
           value={summarize.via ?? 'local'}
           onChange={(value) => updateConfig({ ...config, summarize: { ...summarize, via: value } })}
           options={[
-            { value: 'local', label: 'Local (Ollama) — zero cloud tokens' },
-            { value: 'cloud', label: 'Cloud — AiderDesk model registry' },
+            { value: 'local', label: 'Local (Ollama) - zero cloud tokens' },
+            { value: 'cloud', label: 'Cloud - AiderDesk model registry' },
           ]}
         />
         {summarize.via === 'local' ? (
@@ -143,7 +143,7 @@
           </div>
         ) : (
           <Input
-            label="Cloud model id (provider/model — empty = task model)"
+            label="Cloud model id (provider/model - empty = task model)"
             defaultValue={summarize.cloudModelId ?? ''}
             onBlur={(e) => updateConfig({ ...config, summarize: { ...summarize, cloudModelId: e.target.value.trim() } })}
           />
@@ -163,7 +163,7 @@
         </p>
       </div>
 
-      {/* 5 — UI */}
+      {/* 5 - UI */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">UI</p>
         <Checkbox

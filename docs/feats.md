@@ -1,4 +1,4 @@
-# Context Features — Design & Specs
+# Context Features: Design & Specs
 
 Design document and implementation specs for the next four `feat:` increments
 of the Broke extension. Every fact about the AiderDesk extension API in this
@@ -7,7 +7,7 @@ skill (`%APPDATA%\aider-desk\Cache\extensions\hotovo-aider-desk\resources\skills
 files `event-types.md` and `extension-interface.md`) and
 `docs/aiderdesk-reference.md` (meta repo).
 
-Status: **Draft** — specs are implementation-ready; spikes S1–S4 (below) must
+Status: **Draft**: specs are implementation-ready; spikes S1–S4 (below) must
 be resolved during the corresponding feature's development.
 
 ## Roadmap
@@ -73,7 +73,7 @@ by F1–F3.
 
 ---
 
-## F1 — Active Log & Stack-Trace Compressor
+## F1: Active Log & Stack-Trace Compressor
 
 **Version:** 0.2.0 (feat: → minor). **Effort:** S.
 
@@ -103,7 +103,7 @@ Fully compatible, two verified docking points:
 **New module `errors.ts`** (pure, no deps):
 
 - `extractErrorSummary(text: string, opts: { contextLines: number }): { summary: string; matched: boolean }`
-  — regex-based extraction. Recognized patterns (v1):
+  regex-based extraction. Recognized patterns (v1):
   - TypeScript/tsc/tsx: `error TS\d+`, with `(<file>):(<line>):(<col>)` and
     context lines from the source excerpt block.
   - Node/Vitest/Jest stack traces: `Error: <message>` + `at <fn> (<file>:<line>:<col>)`
@@ -113,17 +113,17 @@ Fully compatible, two verified docking points:
   - Generic fallback: first line matching `^\S+(Error|Exception|Failure):` .
   - Result shape: exception type + message (first line), failing
     `file:line`, up to `contextLines` of surrounding source context, explicit
-    marker `… [broke: error summary — N lines → M lines]`.
+    marker `… [broke: error summary - N lines → M lines]`.
   - Unmatched text returns `{ matched: false }` and passes through untouched.
 
 **Pipeline (compress.ts):**
 
 - New pass `errorPass(messages, protectedTurns, opts): PassResult` between
-  `truncate` and `summarize`; uses `compressibleRange` (same region rules —
+  `truncate` and `summarize`; uses `compressibleRange` (same region rules,
   the active working set is never touched).
 - Engage when: level ≥ `truncate` **and** message text length ≥
   `errors.minChars` (per-message threshold, independent of
-  `maxContextChars` — a 2k-line test failure in a small conversation is
+  `maxContextChars`, a 2k-line test failure in a small conversation is
   exactly the case worth compressing; documented in README).
 - `CompressReport` gains `errorChars`; `TaskStats.savedChars` gains `error`.
 
@@ -169,14 +169,14 @@ counts, region protection).
 
 ---
 
-## F2 — ST-Slicing (Semantic Context Thinning)
+## F2: ST-Slicing (Semantic Context Thinning)
 
 **Version:** 0.3.0 (feat: → minor). **Effort:** M.
 
 ### Objective
 
-When the agent reads source files via power tools, deliver interface views —
-imports, exported type/interface/class declarations, function signatures —
+When the agent reads source files via power tools, deliver interface views,
+imports, exported type/interface/class declarations, function signatures,
 instead of full bodies. Only the file currently being edited (the *focus*)
 is returned in full. A transparent network proxy is **not possible** in the
 AiderDesk extension host (no hook intercepts the Aider CLI's own file reads);
@@ -205,21 +205,21 @@ compatible (`ToolCalledEvent`/`ToolFinishedEvent` expose mutable `input` and
 
 **New module `slice.ts`** (pure, no new deps in v1):
 
-- `SLICEABLE_EXT: Record<string, 'ts' | 'py'>` — `.ts/.tsx/.js/.jsx/.mts/.cts`
+- `SLICEABLE_EXT: Record<string, 'ts' | 'py'>`, `.ts/.tsx/.js/.jsx/.mts/.cts`
   and `.py` in v1.
-- `sliceInterfaces(source: string, lang: 'ts' | 'py'): SlicedView` —
+- `sliceInterfaces(source: string, lang: 'ts' | 'py'): SlicedView`,
   heuristic (regex) extraction, zero dependencies (Broke stays zod-only):
-  - keep: imports/exports, `interface`/`type` declarations (full — they are
+  - keep: imports/exports, `interface`/`type` declarations (full, they are
     the contract), class/function signatures with bodies elided to
     `{ /* … */ }`, decorated members for classes, `__init__`/`def` signatures
     for Python incl. type hints, module docstring first 5 lines.
   - elide: function/class bodies, comments (except docstrings), blank runs.
   - `SlicedView = { text: string; originalLines: number; keptLines: number }`.
 - `sliceWithFocus(source, lang, focus: { file: string; symbol?: string } | null)`
-  — when `focus` matches this file, keep the full body of the focus symbol if
+  when `focus` matches this file, keep the full body of the focus symbol if
   resolvable, otherwise the full file.
 - v2 (config `slice.parser: 'ast'`, default `'heuristic'`): `web-tree-sitter`
-  (WASM — no native builds on Windows; folder extensions may carry npm deps).
+  (WASM, no native builds on Windows; folder extensions may carry npm deps).
   Feature-detect module load; fall back to heuristic on failure.
 
 **Hook wiring (index.ts):**
@@ -232,14 +232,14 @@ compatible (`ToolCalledEvent`/`ToolFinishedEvent` expose mutable `input` and
   - `isFocus(path)` (lastEditPath ∪ getUpdatedFiles ∪ explicit focus) → full
     content, prepended focus marker;
   - else → interface view with marker line
-    `[broke: interface view — N of M lines. Full body only for the focus file (run /broke slice focus <path> or /broke slice off to disable)]`.
+    `[broke: interface view - N of M lines. Full body only for the focus file (run /broke slice focus <path> or /broke slice off to disable)]`.
 - Always synchronous and exception-guarded; on any doubt → pass through.
 
 **Config (config.ts, new `slice` block):**
 
 ```ts
 const SliceSchema = z.object({
-  /** Master switch — OFF by default: slicing changes what the agent sees. */
+  /** Master switch - OFF by default: slicing changes what the agent sees. */
   enabled: z.boolean().default(false),
   parser: z.enum(['heuristic', 'ast']).default('heuristic'),
   /** Files smaller than this (chars) always pass through untouched. */
@@ -277,12 +277,12 @@ replaced content).
 
 `npm run typecheck` && `npm test` (`tests/slice.test.ts`: TS/Py fixtures,
 focus resolution, markers, passthrough cases). Spike S1 + S4 before hook
-implementation. Manual check: real task, agent reads two files — one focus,
+implementation. Manual check: real task, agent reads two files, one focus,
 one not; verify the model sees the sliced view.
 
 ---
 
-## F3 — State Snapshotting & Memory Flushing
+## F3: State Snapshotting & Memory Flushing
 
 **Version:** 0.4.0 (feat: → minor). **Effort:** M.
 
@@ -293,7 +293,7 @@ On milestone ("sub-goal reached"), persist a compact JSON state protocol
 conversation so the next step starts from a lean context. Verified API facts:
 `TaskContext` exposes `getContextMessages`, `removeMessage`,
 `removeLastMessage`, `removeMessagesUpTo(messageId)`, `loadContextMessages`,
-`addContextMessage`, `getUpdatedFiles`, `generateText`, `askQuestion` — true
+`addContextMessage`, `getUpdatedFiles`, `generateText`, `askQuestion`, true
 history replacement is therefore **possible**. AiderDesk also ships
 `handoffConversation(focus?, execute?)`; F3 complements it rather than
 replacing it (snapshots are inspectable JSON; flush is only one of its uses).
@@ -304,24 +304,24 @@ replacing it (snapshots are inspectable JSON; flush is only one of its uses).
 
 - Zod schema `SnapshotRecord`:
   `{ version: 1, taskId, taskName, createdAt, goal, achieved, files: string[], commit?: string, summary, historyFile?: string }`
-  — `goal` = first user message (truncated to 2,000 chars); `files` =
+  `goal` = first user message (truncated to 2,000 chars); `files` =
   `getUpdatedFiles()`; `summary` = compact text via existing summarizer deps
   (`SummarizeDeps`, `maskSecrets` applied) or a template when unavailable.
 - Persistence: `join(__dirname, 'snapshots', taskId, '<iso>_<label>.json')`
-  (extension dir, like `stats.jsonl` — survives deploys; S3 verifies
+  (extension dir, like `stats.jsonl`, survives deploys; S3 verifies
   `deploy.ps1`). `snapshot.keepHistory` (default `true`) additionally writes
-  the raw message array to `<iso>_<label>.history.json` **before any flush** —
+  the raw message array to `<iso>_<label>.history.json` **before any flush**,
   this is the undo file. Rotation: keep last 50 per task.
 - Triggers:
   - `onAfterCommit` (read-only event, but writing our own files is allowed):
     record from commit message + `getUpdatedFiles` + current summary.
     Config `snapshot.onCommit` default `true`.
-  - Manual `/broke snapshot <label>` — always available.
+  - Manual `/broke snapshot <label>`, always available.
   - Test-green detection (`onToolFinished` heuristic on test-runner/bash
-    results: exit code 0 + `passed`/`ok` patterns) — config
+    results: exit code 0 + `passed`/`ok` patterns), config
     `snapshot.onTestPass` default `false` (false positives).
 
-**Flush (manual only in v1 — automatic flushing while an agent loop runs is
+**Flush (manual only in v1, automatic flushing while an agent loop runs is
 dangerous: removed message ids may be referenced by the running step):**
 
 - `/broke flush [--yes]` (chat command, runs between turns):
@@ -329,13 +329,13 @@ dangerous: removed message ids may be referenced by the running step):**
   2. `getContextMessages()` → plan via pure `buildFlushPlan(messages, stateMessage)`
      (testable): keep = first user message (task brief) + last state message;
      remove = everything between them.
-  3. `removeMessagesUpTo(lastKeptId)` + `addContextMessage(stateMessage)` —
+  3. `removeMessagesUpTo(lastKeptId)` + `addContextMessage(stateMessage)`,
      `loadContextMessages` is the documented alternative (S2 decides).
   4. State message: `[broke-state]` marker + compact JSON of the record.
 - `/broke flush --undo <n>`: restore from the history file via
   `loadContextMessages` (only when the task is idle; S2 gates this).
 - Config: `snapshot.onCommit` (true), `snapshot.onTestPass` (false),
-  `snapshot.keepHistory` (true), `flush.confirm` (true — uses
+  `snapshot.keepHistory` (true), `flush.confirm` (true, uses
   `askQuestion` or `--yes`).
 
 **Commands (commands.ts):** `/broke snapshot [label]`, `/broke snapshot list`,
@@ -364,7 +364,7 @@ Manual: real task with 20+ messages → snapshot → flush → follow-up prompt 
 
 ---
 
-## F4 — Local Keyword/Vector Index with Snippet Summaries
+## F4: Local Keyword/Vector Index with Snippet Summaries
 
 **Version:** 0.5.0 (feat: → minor). **Effort:** L.
 
@@ -380,7 +380,7 @@ persistence, and integration with the compression pipeline's philosophy.
 
 ### AiderDesk compatibility
 
-Fully compatible — v1 needs no app API beyond filesystem access:
+Fully compatible, v1 needs no app API beyond filesystem access:
 `ExtensionContext.getProjectDir()`, optional `TaskContext.getAllFiles()` /
 `getUpdatedFiles()` for change detection, and `getTools()` for the
 `broke-search` tool (name kebab-case, zod `inputSchema`). Vector tier reuses
@@ -404,7 +404,7 @@ snippets there would pollute it.
 - Query: BM25-style ranking; top-k (default 8); snippet = ±6 lines around the
   best match line, middle elided with markers; per-result
   `path:line` + match count; total snippet budget ≤ `search.maxChars`
-  (default 6000 chars ≈ 1.5k tokens) — the snippet summary *is* the token
+  (default 6000 chars ≈ 1.5k tokens), the snippet summary *is* the token
   control.
 - Staleness: `onAfterCommit` + `onFilesAdded` trigger async, throttled,
   never-throwing rebuilds; queries rebuild lazily when index mtime is older
@@ -413,9 +413,9 @@ snippets there would pollute it.
   never throw into the agent loop.
 - v2 (config `search.backend`): `vector`/`hybrid` via Ollama embeddings
   (`nomic-embed-text` or similar, pulled on demand; graceful fallback to
-  keyword when Ollama is offline — same pattern as the summarizer).
+  keyword when Ollama is offline, same pattern as the summarizer).
 
-**Tool (index.ts, `getTools`):** `broke-search` — zod schema
+**Tool (index.ts, `getTools`):** `broke-search`, zod schema
 `{ query: string; k?: number; files?: string[] }`; returns the snippet
 summary text (plus one-line footer with index stats). Chat convenience:
 `/broke search <query>`.
@@ -431,7 +431,7 @@ const SearchSchema = z.object({
   enabled: z.boolean().default(true),
   backend: z.enum(['keyword', 'vector', 'hybrid']).default('keyword'),
   maxResults: z.number().int().min(1).max(50).default(8),
-  /** Total snippet budget per query — the token control. */
+  /** Total snippet budget per query - the token control. */
   maxChars: z.number().int().positive().default(6000),
   contextLines: z.number().int().min(1).max(20).default(6),
   maxFileKB: z.number().int().positive().default(512),

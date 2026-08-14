@@ -109,13 +109,13 @@ export async function runSelfTest(config: Config): Promise<SelfTestResult> {
   const lines: string[] = [];
   const level = config.enabled ? config.level : 'off';
   lines.push(
-    `broke selftest — synthetic conversation: ${messages.length} messages, ${before.toLocaleString()} chars (≈ ${estimateTokens(before).toLocaleString()} tokens)` +
-      ` — thresholds forced low so every applicable pass is exercised (your config: level=${level}, maxContextChars=${config.maxContextChars.toLocaleString()})`,
+    `broke selftest - synthetic conversation: ${messages.length} messages, ${before.toLocaleString()} chars (≈ ${estimateTokens(before).toLocaleString()} tokens)` +
+      ` - thresholds forced low so every applicable pass is exercised (your config: level=${level}, maxContextChars=${config.maxContextChars.toLocaleString()})`,
   );
 
   const deps: SummarizeDeps = {
     generateLocal: async (_model, _prompt) => {
-      lines.push('  [summarizer] local (stub): would call Ollama — returning a stub summary');
+      lines.push('  [summarizer] local (stub): would call Ollama - returning a stub summary');
       return 'Requirements: implement billing module with invoices, payments, CSV export; discount field added later. Decisions: implemented step by step; tests pass except discount calculation and CSV export format, which must be fixed. Files: src/billing.ts (edited: total → discountedTotal).';
     },
     generateCloud: async () => undefined,
@@ -129,15 +129,15 @@ export async function runSelfTest(config: Config): Promise<SelfTestResult> {
   lines.push(`  result: ${result.length} messages, ${after.toLocaleString()} chars (≈ ${estimateTokens(after).toLocaleString()} tokens)`);
   lines.push(`  structural:  ${report.structuralChars.toLocaleString()} chars removed (always exercised)`);
   lines.push(
-    `  error:       ${report.errorChars.toLocaleString()} chars removed (stack-trace/log compression)${config.errors.enabled && (levelApplied === 'truncate' || levelApplied === 'summarize') ? '' : ' — NOT exercised (needs errors.enabled + level truncate or summarize)'}`,
+    `  error:       ${report.errorChars.toLocaleString()} chars removed (stack-trace/log compression)${config.errors.enabled && (levelApplied === 'truncate' || levelApplied === 'summarize') ? '' : ' - NOT exercised (needs errors.enabled + level truncate or summarize)'}`,
   );
   lines.push(
-    `  truncate:    ${report.truncateChars.toLocaleString()} chars removed${levelApplied === 'truncate' || levelApplied === 'summarize' ? '' : ' — NOT exercised (needs level truncate or summarize)'}`,
+    `  truncate:    ${report.truncateChars.toLocaleString()} chars removed${levelApplied === 'truncate' || levelApplied === 'summarize' ? '' : ' - NOT exercised (needs level truncate or summarize)'}`,
   );
   lines.push(
-    `  summarize:   ${report.summarizeChars.toLocaleString()} chars removed (${report.summarizedRanges} range(s), ${report.summarizeCalls} LLM call(s), summarizer: ${report.summarizer})${levelApplied === 'summarize' ? '' : ' — NOT exercised (needs level summarize)'}`,
+    `  summarize:   ${report.summarizeChars.toLocaleString()} chars removed (${report.summarizedRanges} range(s), ${report.summarizeCalls} LLM call(s), summarizer: ${report.summarizer})${levelApplied === 'summarize' ? '' : ' - NOT exercised (needs level summarize)'}`,
   );
-  lines.push(`  total saved: ${(before - after).toLocaleString()} chars (≈ ${estimateTokens(before - after).toLocaleString()} tokens) — ${report.touched ? 'pipeline active' : 'nothing to do'}`);
+  lines.push(`  total saved: ${(before - after).toLocaleString()} chars (≈ ${estimateTokens(before - after).toLocaleString()} tokens) - ${report.touched ? 'pipeline active' : 'nothing to do'}`);
 
   const hasMarker = result.some((m) => typeof m.content === 'string' && m.content.startsWith('[broke-compacted]'));
   const hasErrorSummary = result.some(

@@ -24,11 +24,11 @@ export interface OllamaGenerateResult {
 /**
  * Generation timeout. Summarization runs INSIDE the model call (the agent
  * waits for onOptimizeMessages), so a hung Ollama must not stall the task
- * for minutes — 60 s is long enough for an 800-token local generation and
+ * for minutes - 60 s is long enough for an 800-token local generation and
  * still short enough to fail fast.
  */
 const REQUEST_TIMEOUT_MS = 60_000;
-/** Status checks must never block task init or commands — short timeout. */
+/** Status checks must never block task init or commands - short timeout. */
 const STATUS_TIMEOUT_MS = 3_000;
 
 async function request(baseUrl: string, path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
@@ -58,7 +58,7 @@ export async function ollamaStatus(baseUrl: string, timeoutMs = STATUS_TIMEOUT_M
   try {
     const res = await request(baseUrl, '/api/tags', undefined, timeoutMs);
     if (!res.ok) {
-      // An HTTP error means the server answered — but it is NOT usable for
+      // An HTTP error means the server answered - but it is NOT usable for
       // summarization, so it must not count as reachable.
       return { reachable: false, models: [], error: `HTTP ${res.status}` };
     }

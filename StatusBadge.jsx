@@ -13,13 +13,13 @@
   const usedLabel = used === 'local' ? 'local (Ollama)' : used === 'cloud' ? 'cloud' : 'never yet';
   const usedNote =
     used === 'none' && configured !== 'none'
-      ? ' — only fires when the input exceeds the maxchars threshold AND the region is older than summarize.afterTurns'
+      ? ' - only fires when the input exceeds the maxchars threshold AND the region is older than summarize.afterTurns'
       : '';
   const ollamaNote = configured === 'local'
     ? ollama
       ? ollama.reachable
         ? `ollama: reachable (${ollama.models} models)`
-        : `ollama: NOT reachable (${ollama.error || 'unknown'}) — local summaries inactive (ollama serve)`
+        : `ollama: NOT reachable (${ollama.error || 'unknown'}) - local summaries inactive (ollama serve)`
       : 'ollama: status unknown'
     : '';
 
@@ -28,11 +28,11 @@
       ? ` ≈ $${cost.savedUsd < 0.01 ? cost.savedUsd.toFixed(4) : cost.savedUsd.toFixed(2)}`
       : '';
   const title = [
-    `broke — level: ${level}`,
+    `broke - level: ${level}`,
     `saved ≈ ${total.toLocaleString()} input tokens${money} (chars/4 estimate)`,
     cost.modelLabel ? `  at current task model: ${cost.modelLabel}` : '',
     `  structural: ${(s.structural ?? 0).toLocaleString()} | truncate: ${(s.truncate ?? 0).toLocaleString()} | summarize: ${(s.summarize ?? 0).toLocaleString()}`,
-    `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` — ${failed} failure(s)` : ''}`,
+    `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` - ${failed} failure(s)` : ''}`,
     ollamaNote ? `  ${ollamaNote}` : '',
     'click the task input for /broke stats',
   ]

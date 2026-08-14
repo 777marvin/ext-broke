@@ -40,13 +40,13 @@ describe('priceLabel', () => {
   });
 
   it('marks local/unknown models honestly', () => {
-    assert.equal(priceLabel(price(null)), 'openai/gpt-4o (local/unknown — $0)');
+    assert.equal(priceLabel(price(null)), 'openai/gpt-4o (local/unknown - $0)');
     assert.equal(priceLabel(null), 'unknown model');
   });
 });
 
 describe('stats persistence privacy', () => {
-  it('never persists project paths — only task-scoped fields', () => {
+  it('never persists project paths - only task-scoped fields', () => {
     const dir = mkdtempSync(join(tmpdir(), 'broke-stats-'));
     const file = join(dir, 'stats.jsonl');
     try {

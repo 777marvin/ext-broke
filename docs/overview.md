@@ -7,20 +7,20 @@
 A token-budget extension for AiderDesk. It compresses the conversation input
 **before every model call**, in three depth levels, and can run the
 summarization pass on a **free local model** (Ollama) instead of the task's
-expensive model. The stored task history is never rewritten — compression
+expensive model. The stored task history is never rewritten, compression
 applies to the input of each model call only.
 
 | Level | What happens | Loss |
 |---|---|---|
 | `structural` | drop empty messages, dedupe identical adjacent tool results, merge consecutive assistant texts | none (lossless) |
 | `truncate` (default) | + error compression of compiler/test output (tsc, Python/pytest, Jest/Vitest, Node stack traces) + head/tail truncation of old tool outputs, trimming of oversized tool-call inputs | middle of old outputs, error-dump detail |
-| `summarize` | + replace old conversation turns with a dense summary — via local Ollama (default, 0 cloud tokens) or a cloud model | detail of old turns |
+| `summarize` | + replace old conversation turns with a dense summary, via local Ollama (default, 0 cloud tokens) or a cloud model | detail of old turns |
 
 ## Module map
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `index.ts` | 475 | Extension entry: `class Broke implements Extension` — `onOptimizeMessages` (core pipeline), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …`), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`) |
+| `index.ts` | 475 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …`), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`) |
 | `compress.ts` | 753 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass`, `summarizePass` (with `maskSecrets` + prompt-injection hardening), `compressMessages` |
 | `errors.ts` | 365 | F1 error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in `text` **and** structured `json`/`content` outputs (`{ stdout, stderr, exitCode }`), extracts the diagnostic essence, archives full output at tool level |
 | `config.ts` | 182 | Zod schema, defaults, atomic `config.json` writes, cache invalidation, corrupted-config warning |
@@ -39,16 +39,16 @@ applies to the input of each model call only.
 `onOptimizeMessages` fires before every model call. Four passes run over
 everything older than the protected region:
 
-1. **structural** — drop empty messages, dedupe identical adjacent tool
+1. **structural**: drop empty messages, dedupe identical adjacent tool
    results, merge consecutive assistant texts (lossless).
-2. **errors** (F1) — compiler/test output becomes its diagnostic essence
-   with an explicit `… [broke: error summary — N lines → M lines]` marker.
+2. **errors** (F1): compiler/test output becomes its diagnostic essence
+   with an explicit `… [broke: error summary - N lines → M lines]` marker.
    Engages per-message above `errors.minChars` (default 8000), before
    truncate. Optionally rewrites stored history at tool level
    (`errors.toolLevel`, archives originals under `<extension>/errors/`).
-3. **truncate** — old tool outputs over 200 lines / 20 KB → head+tail with
+3. **truncate**: old tool outputs over 200 lines / 20 KB → head+tail with
    marker; tool-call inputs over 2000 chars → `__broke` preview.
-4. **summarize** — region ≥ `afterTurns` (8) user turns and input above
+4. **summarize**: region ≥ `afterTurns` (8) user turns and input above
    `maxContextChars` (60000 ≈ 15k tokens) → one `[broke-compacted]`
    summary message, cached per task (tool-loop steps append to the cache;
    regeneration only on new user turns or ≥ `minChars` of new content).
@@ -76,7 +76,7 @@ Caveat: run used v0.2.0, before the structured-output error-compression fix.
 
 ## Docs
 
-- `docs/token-saving.md` — full lever list
-- `docs/aiderdesk-builtin.md` — AiderDesk's built-in token savings (verified from source)
-- `docs/local-models.md` — local-model capabilities on this hardware (RTX 3050, 4 GB VRAM)
-- `docs/feats.md` — specs for F2 ST-slicing, F3 state snapshotting/memory flushing, F4 local keyword/vector index (F1 shipped in v0.2.0)
+- `docs/token-saving.md`: full lever list
+- `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
+- `docs/local-models.md`: local-model capabilities on this hardware (RTX 3050, 4 GB VRAM)
+- `docs/feats.md`: specs for F2 ST-slicing, F3 state snapshotting/memory flushing, F4 local keyword/vector index (F1 shipped in v0.2.0)

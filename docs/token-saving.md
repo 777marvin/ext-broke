@@ -1,6 +1,6 @@
 # Token-Saving Strategies (how to actually save tokens)
 
-The goal is not "fewer tokens" as a number — it is **useful tokens per
+The goal is not "fewer tokens" as a number, it is **useful tokens per
 dollar**. Every lever below trades fidelity for size; the art is choosing
 which fidelity you can afford to lose, at which layer.
 
@@ -16,10 +16,10 @@ per model call:
 
 Two consequences:
 
-1. **The conversation history is billed N times** — once per model call.
+1. **The conversation history is billed N times**: once per model call.
    Saving 10k tokens in the history saves 10k × (number of calls) input
    tokens, not 10k.
-2. **Everything in the context is billed every turn** — so removing
+2. **Everything in the context is billed every turn**, so removing
    something once helps forever, while shortening answers helps only once.
 
 ## The levers, ordered by leverage
@@ -44,7 +44,7 @@ Two consequences:
 | Summarize pass (LLM summary of old turns) | above threshold, old turns only | detail of old turns |
 | AiderDesk `Compact` / `Smart` compaction | at 30%/200k | same idea, reactive |
 
-Rule of thumb: **the last N turns are the working set — never compress
+Rule of thumb: **the last N turns are the working set, never compress
 them.** Everything older is increasingly redundant (the model already acted
 on it; the file system already reflects it). Broke protects the last 6
 turns by default.
@@ -69,22 +69,22 @@ turns by default.
 
 ### E. Measure, then tune
 
-- Broke: `/broke stats`, the 💸 badge — chars/4 heuristic, honest
+- Broke: `/broke stats`, the 💸 badge: chars/4 heuristic, honest
   estimates, per task.
-- savemytoken: `/tokens` — response sizes, truncation counts, USD at real
+- savemytoken: `/tokens`: response sizes, truncation counts, USD at real
   model prices.
 - AiderDesk usage stats (task settings) show provider-reported token
-  usage — the ground truth for calibrating the heuristics.
+  usage, the ground truth for calibrating the heuristics.
 
 ## What "permanent input compression" means
 
 Two different things, both real:
 
-1. **Transient (per call)** — every input the model sees is compressed,
+1. **Transient (per call)**: every input the model sees is compressed,
    but the stored task history stays intact. Broke v0.1 does this. Pros:
    reversible, no information destroyed in the log. Cons: the compression
    work repeats per call (mitigated by the summary cache).
-2. **Persistent** — the stored conversation is rewritten (old turns
+2. **Persistent**: the stored conversation is rewritten (old turns
    replaced by a summary), like AiderDesk's built-in `Compact` compaction
    (`loadContextMessages`). Pros: history stays small forever. Cons:
    destructive, hard to undo.
@@ -102,5 +102,5 @@ as the emergency brake.** If you want persistent compression on demand,
   and ~20–60 s of local time; the same summary via a cloud model costs
   input tokens of the summarizer call (usually cheaper than the turns it
   replaces, but not free).
-- The built-in `Compact` uses the **task's model** — on a frontier model
+- The built-in `Compact` uses the **task's model**; on a frontier model
   that is the single most expensive token operation in the app.

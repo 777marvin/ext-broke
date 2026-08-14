@@ -24,7 +24,7 @@ const ErrorsSchema = z.object({
   /** Compress matching tool results (stack traces, compiler/test output). */
   enabled: z.boolean().default(true),
   /**
-   * Per-message threshold (chars) — independent of maxContextChars: a 2k-line
+   * Per-message threshold (chars) - independent of maxContextChars: a 2k-line
    * test failure in a small conversation is exactly the case worth compressing.
    */
   minChars: z.number().int().positive().default(8000),
@@ -32,7 +32,7 @@ const ErrorsSchema = z.object({
   contextLines: z.number().int().min(1).max(30).default(8),
   /**
    * Rewrite tool results at the source (onToolFinished) instead of input-only.
-   * Rewrites STORED history — keep off unless you want the summary persisted;
+   * Rewrites STORED history - keep off unless you want the summary persisted;
    * full outputs are archived under <extension>/errors/.
    */
   toolLevel: z.boolean().default(false),
@@ -55,7 +55,7 @@ const SummarizeSchema = z.object({
    * Empty string = use the task's current model (like built-in compact).
    */
   cloudModelId: z.string().default(''),
-  /** Hard cap on the generated summary (chars) — also guards output tokens. */
+  /** Hard cap on the generated summary (chars) - also guards output tokens. */
   maxSummaryChars: z.number().int().positive().default(4000),
 });
 const summarizeDefault = SummarizeSchema.parse({});
@@ -67,7 +67,7 @@ const UiSchema = z.object({
 const uiDefault = UiSchema.parse({});
 
 export const ConfigSchema = z.object({
-  /** Master switch — /broke off disables the whole pipeline. */
+  /** Master switch - /broke off disables the whole pipeline. */
   enabled: z.boolean().default(true),
   /**
    * Compression depth:
@@ -78,7 +78,7 @@ export const ConfigSchema = z.object({
   level: z.enum(['structural', 'truncate', 'summarize']).default('truncate'),
   /**
    * Estimated input size (in characters) above which the lossy passes
-   * engage. chars/4 is a rough token heuristic — see docs/token-saving.md.
+   * engage. chars/4 is a rough token heuristic - see docs/token-saving.md.
    * 60000 chars ≈ 15k tokens (below the built-in emergency threshold, so
    * broke acts first).
    */
@@ -86,7 +86,7 @@ export const ConfigSchema = z.object({
   /**
    * Never compress the last N user turns (the active working set).
    * Sessions with fewer turns fall back to protecting only the current
-   * step — see ACTIVE_TURN_TAIL in compress.ts.
+   * step - see ACTIVE_TURN_TAIL in compress.ts.
    */
   protectedTurns: z.number().int().min(1).max(50).default(2),
   truncate: TruncateSchema.default(truncateDefault),
@@ -137,7 +137,7 @@ export function getConfig(): Config {
     configWarning = null;
   } catch (err) {
     cachedConfig = DEFAULT_CONFIG;
-    configWarning = `config.json unreadable (${err instanceof Error ? err.message : String(err)}) — running on defaults`;
+    configWarning = `config.json unreadable (${err instanceof Error ? err.message : String(err)}) - running on defaults`;
   }
   return cachedConfig;
 }

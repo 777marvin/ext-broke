@@ -3,7 +3,7 @@
  * computed from the price of the model CURRENTLY used in the task (per user
  * requirement): the resolved task agent profile (with task-level overrides)
  * is matched against the model registry (getModelConfigs), and the model's
- * input price per token is used. Local models (Ollama) have no price —
+ * input price per token is used. Local models (Ollama) have no price -
  * savings are then honestly shown as $0.00.
  */
 
@@ -16,7 +16,7 @@ export interface TaskModelPrice {
   providerId: string;
   /**
    * USD per 1M INPUT tokens. null when the model is not in the registry or
-   * carries no price (local models) — cost stays unknown, never guessed.
+   * carries no price (local models) - cost stays unknown, never guessed.
    */
   inputPerMToken: number | null;
 }
@@ -86,5 +86,5 @@ export function formatUsd(usd: number): string {
 export function priceLabel(price: TaskModelPrice | null): string {
   if (!price) return 'unknown model';
   const base = price.modelId === price.providerId ? price.modelId : `${price.providerId}/${price.modelId}`;
-  return price.inputPerMToken === null ? `${base} (local/unknown — $0)` : `${base} @ $${price.inputPerMToken}/1M input`;
+  return price.inputPerMToken === null ? `${base} (local/unknown - $0)` : `${base} @ $${price.inputPerMToken}/1M input`;
 }

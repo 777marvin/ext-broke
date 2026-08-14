@@ -59,7 +59,7 @@ interface ToolResultText {
 /**
  * Extract plain text from a tool result output (string or content[] shapes)
  * and return a wrapper that rebuilds the original shape. Returns null for
- * non-text outputs (images, structured payloads) — those are never rewritten.
+ * non-text outputs (images, structured payloads) - those are never rewritten.
  * Same shape handling as savemytoken's truncate (verified against the
  * installed AiderDesk 0.77.x runtime).
  */
@@ -120,7 +120,7 @@ export default class Broke implements Extension {
     this.context = context;
     const config = getConfig();
     context.log(
-      `Broke loaded — level: ${config.level}, maxContextChars: ${config.maxContextChars.toLocaleString()}, summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (${config.summarize.localModel})` : ''}`,
+      `Broke loaded - level: ${config.level}, maxContextChars: ${config.maxContextChars.toLocaleString()}, summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (${config.summarize.localModel})` : ''}`,
       'info',
     );
     const warning = getConfigWarning();
@@ -129,7 +129,7 @@ export default class Broke implements Extension {
     }
     if (isPlaintextRemoteUrl(config.summarize.ollamaUrl)) {
       context.log(
-        `Broke: WARNING — summarizer URL ${config.summarize.ollamaUrl} uses plaintext HTTP to a remote host; conversation content (incl. tool outputs) will be sent unencrypted. Prefer https:// or a local Ollama.`,
+        `Broke: WARNING - summarizer URL ${config.summarize.ollamaUrl} uses plaintext HTTP to a remote host; conversation content (incl. tool outputs) will be sent unencrypted. Prefer https:// or a local Ollama.`,
         'warn',
       );
     }
@@ -146,7 +146,7 @@ export default class Broke implements Extension {
         this.configWatcher = null;
       });
     } catch {
-      // best effort — getConfig() still picks up changes within its TTL
+      // best effort - getConfig() still picks up changes within its TTL
     }
   }
 
@@ -197,15 +197,15 @@ export default class Broke implements Extension {
         return { optimizedMessages: messages };
       }
     } catch (err) {
-      // Never break the model call — compression is best effort.
-      context.log(`Broke: compression failed — ${err instanceof Error ? err.message : String(err)}`, 'error');
+      // Never break the model call - compression is best effort.
+      context.log(`Broke: compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 
   /**
    * Tool-level error compression (errors.toolLevel = on). Rewrites the
    * stored tool result in the task history to its diagnostic essence and
-   * archives the full output under <extension>/errors/. Off by default —
+   * archives the full output under <extension>/errors/. Off by default -
    * unlike the input pass this touches stored history, so the user must
    * opt in explicitly. Never throws; never breaks tool execution.
    */
@@ -231,11 +231,11 @@ export default class Broke implements Extension {
       if (!extracted.matched) return;
 
       const savedPath = saveErrorOutput(taskId, event.toolCallId || event.toolName, redacted);
-      const suffix = savedPath ? ` — full output saved to ${savedPath}` : ' — full output removed';
+      const suffix = savedPath ? ` - full output saved to ${savedPath}` : ' - full output removed';
       return { output: wrap(formatErrorSummary(extracted, suffix)) };
     } catch (err) {
-      // Never break tool execution — compression is best effort.
-      context.log(`Broke: tool-level error compression failed — ${err instanceof Error ? err.message : String(err)}`, 'error');
+      // Never break tool execution - compression is best effort.
+      context.log(`Broke: tool-level error compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 
@@ -260,7 +260,7 @@ export default class Broke implements Extension {
           ?.getTaskContext()
           ?.addLogMessage(
             'warning',
-            `broke: summarization failed ${failures}× in a row — disabled for this task. Check the Ollama status with /broke status (or switch via /broke summarize via cloud).`,
+            `broke: summarization failed ${failures}× in a row - disabled for this task. Check the Ollama status with /broke status (or switch via /broke summarize via cloud).`,
           );
         boundedMapSet(this.lastLogAt, taskId, Date.now());
       }
@@ -285,12 +285,12 @@ export default class Broke implements Extension {
         report.summarizeChars > 0 ? `summarize ${estimateTokens(report.summarizeChars)} (${report.summarizer})` : '',
       ].filter(Boolean);
       // Money line uses the CURRENT task model price (never a stored one).
-      // Local/free models have no price — tokens only, no fake $0.00.
+      // Local/free models have no price - tokens only, no fake $0.00.
       const tokens = estimateTokens(savedChars);
       const money = price?.inputPerMToken ? ` ≈ ${formatUsd(savedCostUsd(tokens, price.inputPerMToken))} at current task model price` : '';
       void this.context
         ?.getTaskContext()
-        ?.addLogMessage('info', `💸 broke: compressed input — saved ≈ ${tokens.toLocaleString()} tokens${money} (${parts.join(', ')})`);
+        ?.addLogMessage('info', `💸 broke: compressed input - saved ≈ ${tokens.toLocaleString()} tokens${money} (${parts.join(', ')})`);
     }
   }
 
@@ -316,21 +316,21 @@ export default class Broke implements Extension {
       config.summarize.via === 'local'
         ? ollama?.reachable
           ? `ollama reachable (${ollama.models.length} models)`
-          : `ollama NOT reachable — local summaries inactive (ollama serve)`
+          : `ollama NOT reachable - local summaries inactive (ollama serve)`
         : `cloud summarizer (${config.summarize.cloudModelId || 'task model'})`;
     const remotePlaintext = config.summarize.via === 'local' && isPlaintextRemoteUrl(config.summarize.ollamaUrl);
     await context
       .getTaskContext()
       ?.addLogMessage(
         'info',
-        `broke active — level: ${config.level}, threshold: ${config.maxContextChars.toLocaleString()} chars, protectedTurns: ${config.protectedTurns}, ${ollamaNote}${remotePlaintext ? ' — WARNING: remote Ollama via plaintext http, data is sent unencrypted' : ''} — /broke help lists all commands`,
+        `broke active - level: ${config.level}, threshold: ${config.maxContextChars.toLocaleString()} chars, protectedTurns: ${config.protectedTurns}, ${ollamaNote}${remotePlaintext ? ' - WARNING: remote Ollama via plaintext http, data is sent unencrypted' : ''} - /broke help lists all commands`,
       );
     this.refreshUI(event.task.id);
   }
 
   /**
    * Refresh UI components. Without a taskId the renderer drops refresh events
-   * whose taskId does not match the displayed task, so we omit it — the event
+   * whose taskId does not match the displayed task, so we omit it - the event
    * then reaches every mounted instance (pattern from savemytoken).
    */
   private refreshUI(_taskId?: string): void {
@@ -346,8 +346,8 @@ export default class Broke implements Extension {
     return [
       {
         name: 'broke',
-        description: 'broke: token-budget compression — status, config and per-task stats — /broke help lists all subcommands',
-        arguments: [{ description: 'subcommand — see /broke help', required: false }],
+        description: 'broke: token-budget compression - status, config and per-task stats - /broke help lists all subcommands',
+        arguments: [{ description: 'subcommand - see /broke help', required: false }],
         async execute(args, context) {
           const config = getConfig();
           const cmd = parseBrokeCommand(args);
@@ -386,12 +386,12 @@ export default class Broke implements Extension {
             case 'help':
               return log(HELP_TEXT);
             case 'unknown':
-              return log(`broke: unknown command — ${cmd.raw} — /broke help lists all subcommands`);
+              return log(`broke: unknown command - ${cmd.raw} - /broke help lists all subcommands`);
             default: {
               const updated = applyBrokeCommand(cmd, config);
               ext.context?.triggerUIComponentsReload();
               ext.refreshUI();
-              return log(`broke: ${updated.message} — /broke help lists all subcommands`);
+              return log(`broke: ${updated.message} - /broke help lists all subcommands`);
             }
           }
         },

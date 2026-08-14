@@ -257,7 +257,7 @@ describe('structuralPass', () => {
   it('keeps the duplicate tool result when its call holder is missing', () => {
     // No assistant message holds these calls (e.g. the holder was compacted
     // away). Dedupe must abort instead of removing the result and orphaning
-    // the call — that would break the next provider call.
+    // the call - that would break the next provider call.
     const msgs = [
       user('brief'),
       toolFor('call-a', 'power---bash', 'same output'),
@@ -439,7 +439,7 @@ describe('summarizePass', () => {
     assert.equal(r1.summarizeCalls, 1);
     assert.equal(calls.n, 1);
     const r2 = await summarizePass(msgs, 1, cfg, deps, state, 'task-sum-2');
-    assert.equal(calls.n, 1); // cache hit — no second LLM call
+    assert.equal(calls.n, 1); // cache hit - no second LLM call
     assert.equal(r2.summarizeCalls, 0);
     assert.ok(r2.messages.some((m) => isSummaryMessage(m)));
   });
@@ -476,7 +476,7 @@ describe('summarizePass', () => {
   });
 
   it('keeps the beginning of oversized regions for the summarizer', async () => {
-    const big = Array.from({ length: 4000 }, (_, i) => `pad line ${i} — filling the conversation with repetitive content`).join('\n');
+    const big = Array.from({ length: 4000 }, (_, i) => `pad line ${i} - filling the conversation with repetitive content`).join('\n');
     const msgs: ContextMessage[] = [
       user('Brief: build the billing module.'),
       assistant('UNIQUE_ANCHOR_START requirement: invoices must be exact.'),

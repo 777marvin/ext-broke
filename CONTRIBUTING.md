@@ -1,7 +1,7 @@
 # Contributing
 
 Thanks for considering a contribution to broke! This project is small and
-deliberate — the following conventions keep it that way.
+deliberate: the following conventions keep it that way.
 
 ## Setup
 
@@ -17,9 +17,9 @@ beyond TypeScript itself (`tsconfig.json`).
 ## What to work on
 
 - Open an issue first for non-trivial changes (bug reports and feature
-  requests both welcome — templates exist).
+  requests both welcome, templates exist).
 - Planned features with implementation specs live in
-  [docs/feats.md](docs/feats.md) — check there before proposing something
+  [docs/feats.md](docs/feats.md): check there before proposing something
   new, and update the doc when you implement a spec.
 - Keep the honest-numbers culture: savings figures in docs are measured,
   not promised. If you change the pipeline, update the affected docs
@@ -37,10 +37,10 @@ beyond TypeScript itself (`tsconfig.json`).
 ## Testing
 
 - New behavior needs regression tests in `tests/` (plain node:test with
-  tsx — no framework). Compression passes are pure functions; test them
+  tsx, no framework). Compression passes are pure functions; test them
   on synthetic conversations.
 - Test fixtures that look like secrets (`sk-…`, `ghp_…`, `AKIA…`) are fake
-  by design — they verify `maskSecrets`. Keep them obviously fake.
+  by design, they verify `maskSecrets`. Keep them obviously fake.
 
 ## Deploying
 

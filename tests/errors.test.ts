@@ -32,7 +32,7 @@ function errorJsonConversation(tscOutput: string): ContextMessage[] {
   return [
     user('Implement the billing module. Requirements: invoices, payments.'),
     toolJson('power---bash', { stdout: tscOutput, stderr: '', exitCode: 2 }),
-    assistant('I see the errors — fixing them now.'),
+    assistant('I see the errors - fixing them now.'),
     user('Also add CSV export.'),
   ];
 }
@@ -42,7 +42,7 @@ function errorConversation(tscOutput: string): ContextMessage[] {
   return [
     user('Implement the billing module. Requirements: invoices, payments.'),
     tool('power---bash', tscOutput),
-    assistant('I see the errors — fixing them now.'),
+    assistant('I see the errors - fixing them now.'),
     user('Also add CSV export.'),
   ];
 }
@@ -137,8 +137,8 @@ describe('extractErrorSummary', () => {
 describe('formatErrorSummary', () => {
   it('wraps the body in the standard marker with line counts', () => {
     const r = extractErrorSummary(TSC_SAMPLE, { contextLines: 8 });
-    const formatted = formatErrorSummary(r, ' — full output removed');
-    assert.match(formatted, /… \[broke: error summary — \d+ lines → \d+ lines\] — full output removed/);
+    const formatted = formatErrorSummary(r, ' - full output removed');
+    assert.match(formatted, /… \[broke: error summary - \d+ lines → \d+ lines\] - full output removed/);
     assert.ok(formatted.includes('error TS2554'));
   });
 });
@@ -317,7 +317,7 @@ describe('saveErrorOutput', () => {
     try {
       const rel = saveErrorOutput('task/../evil', 'call:1?x', 'x', dir);
       // No path-traversal SEGMENT may survive sanitization ('..' glued into
-      // a name like 'task_.._evil' is inert — it is a plain file name).
+      // a name like 'task_.._evil' is inert - it is a plain file name).
       assert.ok(!rel.split(/[\\/]/).includes('..'), rel);
       assert.ok(existsSync(join(dir, 'task_.._evil', 'call_1_x.log')));
     } finally {

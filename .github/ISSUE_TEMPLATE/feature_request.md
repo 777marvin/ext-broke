@@ -7,7 +7,7 @@ assignees: ''
 ---
 
 **Problem**
-What is the pain point? ("When I ..., it costs/saves ..." — concrete
+What is the pain point? ("When I ..., it costs/saves ...", concrete
 numbers beat abstractions.)
 
 **Proposed solution**
@@ -22,4 +22,4 @@ What else did you try (settings, other extensions, built-in compaction)?
 - Any measured numbers (tokens/chars, task sizes)
 
 Note: planned features with implementation specs live in
-[docs/feats.md](docs/feats.md) — check there first.
+[docs/feats.md](docs/feats.md): check there first.

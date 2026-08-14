@@ -7,18 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **All em-dashes removed.** Docs, UI strings and log messages now use
+  plain punctuation (commas, colons, periods) or a spaced hyphen; test
+  assertions on compression markers match the new strings.
+- **README badges are now static.** License and release badges no longer
+  depend on GitHub API lookups, so they render correctly before the
+  repository exists publicly; the CI badge returns once the repo is
+  pushed and Actions has run.
+
 ## [0.3.0] - 2026-08-14
 
 ### Added
 
 - **Live token & cost savings at the task model's price.** The 💸 badge
   tooltip, the chat log line ("saved ≈ N tokens") and `/broke stats` now
-  show the estimated money saved — always computed from the price of the
+  show the estimated money saved, always computed from the price of the
   model CURRENTLY used in the task (resolved via the task agent profile and
   the model registry; local/Ollama models have no price and honestly show
   no money figure).
 - **Honest badge summarizer status.** The badge now distinguishes what is
-  configured (local/cloud) from what was actually used (never yet — with an
+  configured (local/cloud) from what was actually used (never yet, with an
   explanation of when summarization fires), and shows Ollama reachability
   (30 s cached, 3 s check timeout) with a ⚠ when the local backend is down.
 
@@ -29,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results without always removing their matching assistant tool-calls (only
   the first call id was handled, and the holder search stopped 3 messages
   back). A tool-call without its result makes the provider call fail with
-  `AI_MissingToolResultsError` — surfaced by AiderDesk as an Interrupted
+  `AI_MissingToolResultsError`, surfaced by AiderDesk as an Interrupted
   task. Dedupe and empty-result trimming now remove ALL affected calls and
   abort entirely when the holder cannot be found; keeping a duplicate is
   always safer than orphaning a call. Regression tests cover parallel
@@ -41,14 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passed through `maskSecrets`, and the archive is rotation-bounded
   (100 MB cap, oldest files evicted first).
 - **Ollama HTTP errors now count as unreachable.** Previously
-  `ollamaStatus` returned `reachable: true` with `error: "HTTP n"` —
+  `ollamaStatus` returned `reachable: true` with `error: "HTTP n"`,
   contradictory semantics that hid a broken server from status checks.
   Generation timeout reduced 120 s → 60 s so a hung Ollama stalls the
   model call for at most a minute.
 - **Version/default drift.** `metadata.version` was 0.2.0 while
   package.json said 0.2.1; `/broke help` and the settings dialog showed
   stale defaults (120000 chars / 6 turns instead of 60000 / 2).
-- **stats.jsonl no longer persists project paths** (privacy — the field
+- **stats.jsonl no longer persists project paths** (privacy, the field
   was never read).
 
 ### Docs
@@ -56,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **README updated with measured real-world savings** (bmad-build run,
   2026-08-13, 3 tasks / 543 passes: up to ~268k tokens removed from a
   single call's input, ~55 Mio tokens cumulative across all calls, run
-  cost ~0.29 $ on DeepSeek — with the honest caveat that the run used
+  cost ~0.29 $ on DeepSeek, with the honest caveat that the run used
   v0.2.0 before the structured-output fix). Error-compressor section now
   documents `json`/`content` (`{stdout, stderr}`) coverage; roadmap marks
   the stack-trace/log compressor as shipped (F1, v0.2.0/v0.2.1).
@@ -83,9 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Active Log & Stack-Trace Compressor (F1).** Old tool results that are
   compiler/test error output (tsc, Python/pytest tracebacks, Jest/Vitest
   failure blocks, Node stack traces, generic `Error:` lines) are replaced
-  by their diagnostic essence — exception type, failing `file:line`, up to
-  `contextLines` of context — with an explicit
-  `… [broke: error summary — N lines → M lines]` marker. Per-message
+  by their diagnostic essence: exception type, failing `file:line`, up to
+  `contextLines` of context, with an explicit
+  `… [broke: error summary - N lines → M lines]` marker. Per-message
   threshold (`errors.minChars`, default 8000) independent of
   `maxContextChars`: a 2k-line test failure in a small conversation is
   exactly the case worth compressing. Runs before the truncate pass so
@@ -99,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Design & specs for four upcoming context features** (docs/feats.md):
   F2 ST-slicing, F3 state snapshotting + memory flushing, F4 local
-  keyword/vector index — each with verified AiderDesk compatibility,
+  keyword/vector index: each with verified AiderDesk compatibility,
   config schema, commands, acceptance criteria and spike list (F1 shipped
   in 0.2.0).
 
@@ -160,7 +170,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Compression notice threshold raised to 4000 chars (≈ 1000 tokens) —
+- Compression notice threshold raised to 4000 chars (≈ 1000 tokens),
   matching the README; chat noise reduced.
 - Status badge/stats unchanged, but `/broke status` warns when the
   summarizer URL is a plaintext remote host.
@@ -173,7 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Warn when conversation content would be sent unencrypted to a remote
-  Ollama (plaintext HTTP) — in the task log, `/broke status` and README.
+  Ollama (plaintext HTTP), in the task log, `/broke status` and README.
 
 ## [0.1.1] - 2026-08-13
 
@@ -188,7 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Input compression pipeline** on `onOptimizeMessages` (runs before every
   model call, task history untouched):
-  - `structural` level: lossless — drop empty messages, dedupe identical
+  - `structural` level: lossless: drop empty messages, dedupe identical
     adjacent tool results, merge consecutive assistant texts.
   - `truncate` level (default): head+tail truncation of old tool outputs
     with explicit markers, trimming of oversized tool-call inputs.

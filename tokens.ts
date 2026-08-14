@@ -7,7 +7,7 @@ export const STATS_PATH = join(__dirname, 'stats.jsonl');
 /**
  * Token estimation. chars/4 is a deliberately crude heuristic (English prose
  * ≈ 4 chars/token; code ≈ 3-3.5). Broke never claims provider-exact numbers
- * — every figure is labeled as an estimate. The heuristic is consistent,
+ * - every figure is labeled as an estimate. The heuristic is consistent,
  * which is what matters for comparing before/after.
  */
 export function estimateTokens(chars: number): number {
@@ -67,7 +67,7 @@ export interface SavedTokens {
   summarize: number;
 }
 
-/** Fill missing counters with 0 — legacy stats.jsonl records predate some passes. */
+/** Fill missing counters with 0 - legacy stats.jsonl records predate some passes. */
 export function normalizeSavedTokens(saved: Partial<SavedTokens> | undefined): SavedTokens {
   return {
     structural: saved?.structural ?? 0,
@@ -79,11 +79,11 @@ export function normalizeSavedTokens(saved: Partial<SavedTokens> | undefined): S
 
 export interface TaskStats {
   taskId: string;
-  /** NOTE: never persist project paths — stats.jsonl must stay portable (privacy). */
+  /** NOTE: never persist project paths - stats.jsonl must stay portable (privacy). */
   passes: number;
   savedChars: SavedTokens;
   summarizedRanges: number;
-  /** Real summarizer LLM calls (excludes cache reuse) — lets the user see the true cost side. */
+  /** Real summarizer LLM calls (excludes cache reuse) - lets the user see the true cost side. */
   summarizeCalls: number;
   summarizeFailures: number;
   lastSummarizer: 'local' | 'cloud' | 'none';
@@ -112,7 +112,7 @@ const MAX_STATS_FILE_BYTES = 5 * 1024 * 1024;
 /**
  * Append a stats line. Keeps the file bounded by rotation: once the file
  * exceeds the cap, only the most recent half of the lines is kept, then the
- * new line is appended. Stats are best effort — never break the extension.
+ * new line is appended. Stats are best effort - never break the extension.
  * `filePath` is parameterizable so tests run against a temp file.
  */
 export function persistStats(stats: TaskStats, filePath: string = STATS_PATH): void {
@@ -124,12 +124,12 @@ export function persistStats(stats: TaskStats, filePath: string = STATS_PATH): v
     }
     appendFileSync(filePath, `${JSON.stringify(stats)}\n`, 'utf-8');
   } catch {
-    // stats are best effort — never break the extension over them
+    // stats are best effort - never break the extension over them
   }
 }
 
 /**
- * Remove all persisted stats lines for a task (real reset — old task data,
+ * Remove all persisted stats lines for a task (real reset - old task data,
  * including project paths, is actually deleted from disk).
  */
 export function clearTaskStats(taskId: string, filePath: string = STATS_PATH): void {
