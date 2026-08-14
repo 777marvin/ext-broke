@@ -7,6 +7,7 @@ model** instead of your paid one.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 [![Release](https://img.shields.io/badge/release-v0.3.0-blue)](CHANGELOG.md)
+[![CI](https://img.shields.io/github/actions/workflow/status/777marvin/ext-broke/ci.yml)](https://github.com/777marvin/ext-broke/actions)
 
 **Author:** [@777marvin](https://github.com/777marvin), this is my first
 public repository. The extension is in active development, and feedback,
