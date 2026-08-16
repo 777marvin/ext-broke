@@ -1,6 +1,6 @@
 # Project Overview
 
-*Snapshot: v0.3.0 + review fixes F1-F24 closed (2026-08-16)*
+*Snapshot: v0.3.0 + review fixes F1-F24 closed + measurement ledger (2026-08-16)*
 
 ## What broke is
 
@@ -20,19 +20,21 @@ applies to the input of each model call only.
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `index.ts` | 470 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate, reentry guard), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …`), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`) |
+| `index.ts` | 492 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate, reentry guard), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …` incl. measure), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`), per-run measurement persistence in `recordReport` |
 | `compress.ts` | 744 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
 | `output.ts` | 149 | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
 | `errors.ts` | 300 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir); `isCommandTool` classification |
-| `config.ts` | 198 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning |
-| `commands.ts` | 246 | `/broke` parser + all subcommands (status, stats, reset, selftest, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG` |
-| `tokens.ts` | 169 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader) |
+| `config.ts` | 211 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` toggle |
+| `commands.ts` | 298 | `/broke` parser + all subcommands (status, stats, measure, reset, selftest, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
+| `tokens.ts` | 304 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
 | `local.ts` | 127 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
 | `pricing.ts` | 80 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
 | `selftest.ts` | 181 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
-| `ConfigComponent.jsx` | 173 | Settings dialog (gear icon on the extension card), schema-bounded numeric fields |
+| `scripts/measure.ts` | 22 | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
+| `ConfigComponent.jsx` | 184 | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
 | `StatusBadge.jsx` | 61 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state |
-| `tests/commands.test.ts` | 184 | Unit tests: `/broke` parse/apply/format, generated help text, Ollama model-tag matching |
+| `tests/commands.test.ts` | 248 | Unit tests: `/broke` parse/apply/format, generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
+| `tests/measure.test.ts` | 187 | Unit tests: run-record mapping, ledger append/rotation/malformed-skip, summary math (mean/median/max/byTask) |
 | `tests/compress.test.ts` | 783 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
 | `tests/config.test.ts` | 120 | Unit tests: config merge, corrupted-file fallback, pure updates, one-write multi-path persistence |
 | `tests/errors.test.ts` | 404 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap |
@@ -87,13 +89,23 @@ no randomness, byte-reproducible:
 
 These replace the earlier published single-session figures (268k / 55 Mio /
 0.29 $), which could not be reproduced from raw data and were removed.
-The benchmark is a synthetic reference, not a real-session claim; the only
-real-session numbers are the badge and `/broke stats` of your own tasks.
+The benchmark is a synthetic reference, not a real-session claim.
+
+The real-session counterpart is the measurement ledger: with
+`stats.measure` on (default), broke appends one `RunRecord` per real
+compression run to `measure.jsonl` (sizes + per-pass removals, no content,
+no paths, rotation-capped at 5 MB). `/broke measure` (in a task) or
+`npm run measure` (in the extension directory) aggregates the records:
+runs, tasks, per-run mean/median/max and per-task breakdowns - explicitly
+labeled as a sum over individual runs, not a cumulative context claim.
+Together with the badge and `/broke stats`, these are the provable
+real-session numbers.
 
 ## Commands / verification / deploy
 
 - Commands: `npm run typecheck` (tsc --noEmit), `npm test` (tsx --test),
-  `npm run bench` (reference benchmark, see above)
+  `npm run bench` (reference benchmark, see above), `npm run measure`
+  (analyze measure.jsonl, `--file=<path>` for another file)
 - Conventions: Conventional Commits, Keep a Changelog, SemVer + annotated tags
 - Deploy: `.\scripts\deploy.ps1 -Category extensions -Name broke` (from
   this repo) → `~/.aider-desk/extensions/broke/`

@@ -72,6 +72,12 @@ turns by default.
 
 - Broke: `/broke stats`, the 💸 badge: chars/4 heuristic, honest
   estimates, per task.
+- Broke: `/broke measure` (in a task) or `npm run measure` (extension
+  directory): the measurement ledger `measure.jsonl` aggregates per-run
+  sizes and per-pass removals into provable real-session numbers - runs,
+  tasks, per-run mean/median/max, per-task breakdowns. The totals are
+  sums over individual runs of the same evolving conversation and are
+  labeled as such, never presented as a cumulative context claim.
 - savemytoken: `/tokens`: response sizes, truncation counts, USD at real
   model prices.
 - AiderDesk usage stats (task settings) show provider-reported token

@@ -47,6 +47,15 @@ Yes, but the numbers broke itself guarantees are the ones your own tasks
 produce: the 💸 badge and `/broke stats` measure every run with the
 `chars / 4` heuristic and show them per pass, per task.
 
+Want provable real-session numbers instead of assertions? Turn on the
+measurement ledger (`/broke measure on`, default) and broke appends one
+record per real compression run to `measure.jsonl` (sizes and per-pass
+removals only, no content, no paths, rotation-capped at 5 MB). Then
+`/broke measure` in a task - or `npm run measure` in the extension
+directory - summarizes them: runs, tasks, per-run mean/median/max and
+per-task breakdowns, explicitly labeled as a sum over individual runs,
+not a cumulative context claim.
+
 For a reproducible reference there is a deterministic benchmark
 (`npm run bench`): a 351,403-char synthetic session (67 messages, long
 tool loops, a compiler-error dump, duplicated test runs) runs through the
@@ -138,6 +147,8 @@ commands) or from the gear icon on the extension card:
 /broke summarize cloud <provider/model>
 /broke summarize after <turns>     compress only turns older than n
 /broke stats                       per-pass saved chars/tokens
+/broke measure                     summarize the per-run measurement ledger
+/broke measure on | off            record every run to measure.jsonl (default: on)
 /broke reset                       clear this task's stats
 /broke selftest                    run the pipeline on synthetic input
 /broke help                        all commands
@@ -207,6 +218,7 @@ it only changes which model sees the untrusted text first.
 | summarize.afterTurns | 8 | only summarize turns older than N |
 | summarize.minChars | 8000 | min region size for summarization |
 | ui.showStatusBadge | on | 💸 badge in the task status bar |
+| stats.measure | on | one record per compression run in `measure.jsonl` |
 
 ## Status
 
@@ -231,6 +243,7 @@ npm install
 npm run typecheck    # tsc --noEmit
 npm test             # node --test (tsx), pure-function tests
 npm run bench        # deterministic reference benchmark
+npm run measure      # analyze measure.jsonl (per-run real-session records)
 ```
 
 Conventional commits, Keep a Changelog, semantic versioning.

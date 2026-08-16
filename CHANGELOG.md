@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   LLM, byte-reproducible): 113,070 chars removed at the default level
   (32.2%), 315,389 chars at the maximum level (89.8%). Covered by
   determinism tests.
+- **Per-run measurement ledger** (`measure.jsonl`). With `stats.measure`
+  on (default), broke appends one record per real compression run: input
+  and output sizes, per-pass removals, summarizer calls. No content, no
+  paths, rotation-capped at 5 MB. `/broke measure` (in a task) and
+  `npm run measure` (extension directory, `--file=<path>` override)
+  aggregate the records into runs, tasks, per-run mean/median/max and
+  per-task breakdowns - explicitly labeled as a sum over individual runs,
+  not a cumulative context claim. Toggle via `/broke measure on | off`
+  or the settings dialog. This is the provable real-session counterpart
+  to the benchmark.
 
 ### Fixed
 
@@ -88,9 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unverifiable savings figures removed.** The single-session numbers
   published with v0.3.0 (up to ~268k tokens in one call, ~55 Mio
   cumulative, ~0.29 $ run cost) could not be reproduced from raw data and
-  were removed from the README and docs. The badge and `/broke stats`
-  remain the real-session numbers; the reference benchmark (above) is the
-  reproducible claim.
+  were removed from the README and docs. The badge, `/broke stats` and
+  the new per-run measurement ledger (above) are the real-session
+  numbers; the reference benchmark is the reproducible claim.
 - **All em-dashes removed.** Docs, UI strings and log messages now use
   plain punctuation (commas, colons, periods) or a spaced hyphen; test
   assertions on compression markers match the new strings.
