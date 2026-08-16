@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { Config } from './config';
-import { extractErrorSummary, extractOutputText, formatErrorSummary } from './errors';
+import { extractErrorSummary, extractOutputText, formatErrorSummary, isCommandTool } from './errors';
 import { estimateTokens, messageChars, messagesChars, partText } from './tokens';
 
 /**
@@ -505,6 +505,12 @@ export function errorPass(messages: ContextMessage[], protectedTurns: number, op
     const parts = msg.content.map((p) => {
       const part = p as unknown as PartLike;
       if (part.type !== 'tool-result') return p;
+      // Only command/compiler/test tools produce error-shaped output that is
+      // safe to compress. File reads, search results, docs etc. can
+      // legitimately contain lines that look like errors ("Error:" headings,
+      // markdown ● bullets, ✕ checklists) - compressing those would corrupt
+      // the model's view of the file. Same guard as the tool-level path.
+      if (!isCommandTool(typeof part.toolName === 'string' ? part.toolName : '')) return p;
       const output = part.output as { type?: string; value?: unknown } | undefined;
       if (!output) return p;
       // Inspect the output's error-relevant text: plain text payloads AND the

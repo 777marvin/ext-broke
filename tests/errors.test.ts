@@ -248,6 +248,46 @@ describe('errorPass', () => {
     assert.equal(removedChars, 0);
     assert.deepEqual(result, messages);
   });
+
+  it('never compresses file-read output even when it looks like a tsc dump', () => {
+    // Regression: the error pass must only touch command/compiler/test tools.
+    // A file read can legitimately contain pasted compiler output - replacing
+    // it with an "error summary" would corrupt the model's view of the file.
+    const big = `${TSC_SAMPLE}\n${'padding line for size\n'.repeat(300)}`;
+    const messages = [
+      user('First request.'),
+      {
+        id: id(),
+        role: 'tool',
+        content: [{ type: 'tool-result', toolCallId: id(), toolName: 'power---file-read', output: { type: 'text', value: big } }],
+      } as ContextMessage,
+      assistant('Fixing.'),
+      user('Follow-up.'),
+    ];
+    const { messages: result, removedChars } = errorPass(messages, 1, { minChars: 500, contextLines: 8 });
+    assert.equal(removedChars, 0);
+    assert.deepEqual(result, messages);
+  });
+
+  it('never compresses file-read docs with Error: lines or ● bullets', () => {
+    const doc = [
+      'Error: this is a documentation heading, not a crash',
+      ...Array.from({ length: 300 }, (_, i) => `● bullet ${i}: documentation content`),
+    ].join('\n');
+    const messages = [
+      user('First request.'),
+      {
+        id: id(),
+        role: 'tool',
+        content: [{ type: 'tool-result', toolCallId: id(), toolName: 'power---file-read', output: { type: 'text', value: doc } }],
+      } as ContextMessage,
+      assistant('Fixing.'),
+      user('Follow-up.'),
+    ];
+    const { messages: result, removedChars } = errorPass(messages, 1, { minChars: 500, contextLines: 8 });
+    assert.equal(removedChars, 0);
+    assert.deepEqual(result, messages);
+  });
 });
 
 describe('error compression in the pipeline', () => {

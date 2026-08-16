@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ollama is down). The summarize pass is now gated per task; the gate
   clears after a successful summary, `/broke reset`, or a summarizer
   backend/model change, and the badge shows the disabled state.
+- **Error compression only touches command/compiler/test tools.** The
+  input error pass compressed ANY tool result whose text matched error
+  patterns, so file reads and docs with "Error:" lines, ● bullets or ✕
+  checklists could be replaced by an "error summary", corrupting the
+  model's view of the file. Non-command tools are now skipped, matching
+  the existing tool-level behavior.
 
 ### Changed
 
