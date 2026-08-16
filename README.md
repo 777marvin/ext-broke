@@ -165,6 +165,20 @@ After 3 consecutive summarize failures, broke disables summarization for
 that task and tells you why. The badge tooltip shows the disabled state;
 `/broke reset` or changing the summarizer backend/model re-enables it.
 
+## Security notes
+
+The summarize pass condenses conversation content (tool outputs, web
+content, files) with a small model and feeds the summary back into the
+main model's context. When that content is attacker-influenced, prompt
+injection can survive the condensation: the summarizer prompt tells the
+model to treat its input as untrusted data, and common secret patterns
+are masked before the text leaves, but both are mitigations, not a hard
+boundary. Treat compressed summaries with the same caution as the raw
+web/file content any tool fetches: broke itself never executes the
+summarizer's output, it only stores it as history. Switching
+`summarize.via` to the task's own cloud model does not remove the risk,
+it only changes which model sees the untrusted text first.
+
 ## Configuration
 
 | Setting | Default | Description |
