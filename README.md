@@ -43,22 +43,29 @@ exactly as it is.
 
 ## Does it actually save money?
 
-Measured in one long real session (3 tasks, 543 compression runs,
-`deepseek-v4-flash`, 2026-08-13):
+Yes, but the numbers broke itself guarantees are the ones your own tasks
+produce: the 💸 badge and `/broke stats` measure every run with the
+`chars / 4` heuristic and show them per pass, per task.
 
-- up to **~268k tokens** were removed from the input of a single request;
-- across all requests of the session, roughly **55 million** were not re-sent;
-- the whole session cost about **0.29 $** on DeepSeek (prompt caching
-  makes cache reads 10× cheaper there); on a pricier model the same
-  savings would show up far more clearly in money.
+For a reproducible reference there is a deterministic benchmark
+(`npm run bench`): a 351,403-char synthetic session (67 messages, long
+tool loops, a compiler-error dump, duplicated test runs) runs through the
+real pipeline with the shipped defaults and a fixed stub summarizer. No
+LLM, no randomness, byte-reproducible:
 
-**Honest caveats:** those numbers are *estimates* (a `chars / 4`
-heuristic) and were measured with v0.2.0, before the structured-output
-error-compression fix. The badge shows *gross* input savings; the
-summarizer's own calls are listed separately in `/broke stats`. Every
-cloud summarization costs one extra request; it only pays off when the old
-region is large (roughly > 37k characters), which is why the default is
-the free local one. Details: [docs/overview.md](docs/overview.md).
+- shipped default level (`truncate`): **113,070 chars removed**
+  (~28,268 tokens, 32.2% of the input);
+- maximum level (`summarize`): **315,389 chars removed**
+  (~78,847 tokens, 89.8% of the input; the old turns collapse into one
+  ~400-char summary while the last 2 turns stay untouched).
+
+**Honest caveats:** these are *synthetic* reference numbers, not a real
+session, and the token conversion is the `chars / 4` estimate. The badge
+shows *gross* input savings; the summarizer's own calls are listed
+separately in `/broke stats`. Every cloud summarization costs one extra
+request; it only pays off when the old region is large (roughly > 37k
+characters), which is why the default is the free local one. Details:
+[docs/overview.md](docs/overview.md).
 
 ## Install
 
@@ -223,6 +230,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 npm install
 npm run typecheck    # tsc --noEmit
 npm test             # node --test (tsx), pure-function tests
+npm run bench        # deterministic reference benchmark
 ```
 
 Conventional commits, Keep a Changelog, semantic versioning.

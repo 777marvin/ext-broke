@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Deterministic reference benchmark** (`npm run bench`,
+  scripts/bench.ts). A 351,403-char synthetic session runs through the
+  real pipeline with the shipped defaults and a fixed stub summarizer (no
+  LLM, byte-reproducible): 113,070 chars removed at the default level
+  (32.2%), 315,389 chars at the maximum level (89.8%). Covered by
+  determinism tests.
+
 ### Fixed
 
 - **Summarize auto-disable now actually disables.** After 3 consecutive
@@ -76,6 +85,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Unverifiable savings figures removed.** The single-session numbers
+  published with v0.3.0 (up to ~268k tokens in one call, ~55 Mio
+  cumulative, ~0.29 $ run cost) could not be reproduced from raw data and
+  were removed from the README and docs. The badge and `/broke stats`
+  remain the real-session numbers; the reference benchmark (above) is the
+  reproducible claim.
 - **All em-dashes removed.** Docs, UI strings and log messages now use
   plain punctuation (commas, colons, periods) or a spaced hyphen; test
   assertions on compression markers match the new strings.
@@ -130,13 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Docs
 
-- **README updated with measured real-world savings** (bmad-build run,
-  2026-08-13, 3 tasks / 543 passes: up to ~268k tokens removed from a
-  single call's input, ~55 Mio tokens cumulative across all calls, run
-  cost ~0.29 $ on DeepSeek, with the honest caveat that the run used
-  v0.2.0 before the structured-output fix). Error-compressor section now
-  documents `json`/`content` (`{stdout, stderr}`) coverage; roadmap marks
-  the stack-trace/log compressor as shipped (F1, v0.2.0/v0.2.1).
+- **README updated with a savings explanation.** Error-compressor section
+  now documents `json`/`content` (`{stdout, stderr}`) coverage; roadmap
+  marks the stack-trace/log compressor as shipped (F1, v0.2.0/v0.2.1).
+  (The session numbers published with this update could not be reproduced
+  and were removed later, see the Unreleased correction entry.)
 
 ## [0.2.1] - 2026-08-13
 

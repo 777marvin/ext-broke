@@ -72,16 +72,28 @@ Protected: the task brief (first user message) and the last `protectedTurns`
 auto-disables for that task (badge shows the state); a successful summary,
 `/broke reset` or a summarizer backend/model change re-enables it.
 
-## Measured impact
+## Reference benchmark
 
-bmad-build run (2026-08-13, 3 tasks, 543 compression passes,
-deepseek-v4-flash): up to ~268k tokens removed from a single call's input;
-~55 Mio tokens cumulative across all calls; run cost ~0.29 $ on DeepSeek.
-Caveat: run used v0.2.0, before the structured-output error-compression fix.
+`npm run bench` (scripts/bench.ts) pushes a deterministic 351,403-char
+synthetic session (67 messages: long tool loops, a compiler-error dump,
+duplicated test runs, protected working-set tail) through the real
+pipeline with the shipped defaults and a fixed stub summarizer. No LLM,
+no randomness, byte-reproducible:
+
+- shipped default level (`truncate`): 113,070 chars removed
+  (~28,268 tokens, 32.2% of the input);
+- maximum level (`summarize`): 315,389 chars removed
+  (~78,847 tokens, 89.8% of the input).
+
+These replace the earlier published single-session figures (268k / 55 Mio /
+0.29 $), which could not be reproduced from raw data and were removed.
+The benchmark is a synthetic reference, not a real-session claim; the only
+real-session numbers are the badge and `/broke stats` of your own tasks.
 
 ## Commands / verification / deploy
 
-- Commands: `npm run typecheck` (tsc --noEmit), `npm test` (tsx --test)
+- Commands: `npm run typecheck` (tsc --noEmit), `npm test` (tsx --test),
+  `npm run bench` (reference benchmark, see above)
 - Conventions: Conventional Commits, Keep a Changelog, SemVer + annotated tags
 - Deploy: `.\scripts\deploy.ps1 -Category extensions -Name broke` (from
   this repo) → `~/.aider-desk/extensions/broke/`
