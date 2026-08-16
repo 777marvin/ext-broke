@@ -5,6 +5,7 @@ import {
   compressibleRange,
   compressMessages,
   createCompressState,
+  errorPass,
   isSummaryMessage,
   maskSecrets,
   structuralPass,
@@ -308,6 +309,15 @@ describe('structuralPass', () => {
     assert.ok(JSON.stringify(assistants[0].content).includes('part two'));
   });
 
+  it('counts merges as 0 saved chars - no phantom savings (F5)', () => {
+    // Merging keeps the full text in the context (plus a separator), so it
+    // must not count as saved chars.
+    const msgs = [user('brief'), assistant('part one'), assistant('part two'), user('q2')];
+    const { messages: out, removedChars } = structuralPass(msgs, 1);
+    assert.equal(out.filter((m) => m.role === 'assistant').length, 1); // the merge DID happen
+    assert.equal(removedChars, 0); // but it reports no savings
+  });
+
   it('drops empty assistant messages', () => {
     const msgs = [user('brief'), assistant(''), assistant('real work'), user('q2')];
     const { messages: out } = structuralPass(msgs, 1);
@@ -413,6 +423,31 @@ describe('truncatePass', () => {
     ];
     const { removedChars } = truncatePass(msgs, 3, 100, 20, 2000);
     assert.equal(removedChars, 0);
+  });
+});
+
+describe('errorPass', () => {
+  it('never reports negative savings when the summary is LONGER than the input (F18)', () => {
+    // A single short tsc error line: the marker line alone is longer than
+    // the input, so the savings must be clamped to 0. The rewrite still
+    // happens (the redacted summary replaces the raw text).
+    const msgs: ContextMessage[] = [
+      user('brief'),
+      assistant('running'),
+      tool('power---bash', 'src/app.ts:1:1 - error TS2322: boom'),
+      user('q2'),
+    ];
+    const { messages: out, removedChars } = errorPass(msgs, 1, { minChars: 5, contextLines: 8 });
+    assert.equal(removedChars, 0);
+    assert.ok(JSON.stringify(out[2].content).includes('broke: error summary'), 'matched error output is still replaced by its redacted summary');
+  });
+
+  it('still compresses a large matching output', () => {
+    const big = Array.from({ length: 300 }, (_, i) => `src/billing.ts:${10 + i}:5 - error TS2554: Expected 2 arguments, but got 1.`).join('\n');
+    const msgs: ContextMessage[] = [user('brief'), assistant('running'), tool('power---bash', big), user('q2')];
+    const { messages: out, removedChars } = errorPass(msgs, 1, { minChars: 8000, contextLines: 8 });
+    assert.ok(removedChars > 0);
+    assert.ok(JSON.stringify(out[2].content).includes('broke: error summary'));
   });
 });
 
@@ -662,6 +697,29 @@ describe('compressMessages', () => {
     assert.equal(calls.n, 1);
   });
 
+  it('invalidates the summary cache when the summarizer config changes (F14)', async () => {
+    const msgs = summaryConversation();
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const base = (summarize: Partial<Config['summarize']>): Config => ({
+      ...summarizeConfig(summarize),
+      level: 'summarize',
+      maxContextChars: 100,
+      protectedTurns: 1,
+    });
+    const r1 = await compressMessages(msgs, base({}), deps, state, 'task-f14');
+    assert.equal(r1.report.summarizeCalls, 1);
+    // Same config: cache reuse, no new LLM call.
+    const r2 = await compressMessages(msgs, base({}), deps, state, 'task-f14');
+    assert.equal(r2.report.summarizeCalls, 0);
+    assert.equal(calls.n, 1);
+    // Switched model: the stale summary must not be reused - fresh call.
+    const r3 = await compressMessages(msgs, base({ localModel: 'llama3.2:3b' }), deps, state, 'task-f14');
+    assert.equal(r3.report.summarizeCalls, 1);
+    assert.equal(calls.n, 2);
+  });
+
   it('compresses a single-prompt tool loop with default settings', async () => {
     // Regression: real AiderDesk sessions are often one task brief plus a
     // long tool loop (few user turns). The old turn-based region protection
@@ -704,16 +762,58 @@ describe('compressMessages', () => {
 });
 
 describe('maskSecrets', () => {
-  it('redacts known secret patterns', () => {
-    const input =
-      'key=sk-abcdef1234567890abcdef1234567890 bearer Bearer abc.def.ghi1234567890 pat=github_pat_abcdefghijklmnopqrstuvwxyz123456 ghp_abcdefghijklmnopqrstuvwxyz1234567890 AKIA1234567890ABCDEF';
-    const masked = maskSecrets(input);
-    assert.ok(!masked.includes('sk-abcdef1234567890abcdef1234567890'));
-    assert.ok(!masked.includes('abc.def.ghi1234567890'));
-    assert.ok(!masked.includes('github_pat_abcdefghijklmnopqrstuvwxyz123456'));
-    assert.ok(!masked.includes('ghp_abcdefghijklmnopqrstuvwxyz1234567890'));
-    assert.ok(!masked.includes('AKIA1234567890ABCDEF'));
-    assert.ok(masked.includes('[REDACTED]'));
+  // Secret-looking inputs are constructed at runtime so the repo never
+  // contains literal token shapes (keeps secret scanners quiet and the
+  // tests portable).
+  it('redacts one pattern per case (F8)', () => {
+    const cases: { name: string; input: string; expected: string }[] = [
+      { name: 'sk- key', input: `key: ${'sk-' + 'B'.repeat(32)}`, expected: 'key: [REDACTED]' },
+      { name: 'AKIA key', input: `aws: ${'AKIA' + 'C'.repeat(16)}`, expected: 'aws: [REDACTED]' },
+      { name: 'ASIA session token', input: `aws: ${'ASIA' + 'D'.repeat(16)}`, expected: 'aws: [REDACTED]' },
+      { name: 'github fine-grained pat', input: `pat: ${'github_pat_' + 'e'.repeat(22)}`, expected: 'pat: [REDACTED]' },
+      { name: 'classic gh token', input: `tok: ${'ghp_' + 'f'.repeat(36)}`, expected: 'tok: [REDACTED]' },
+      { name: 'slack bot token', input: `s: ${'xoxb-' + 'g'.repeat(12)}`, expected: 's: [REDACTED]' },
+      { name: 'jwt', input: `jwt: ${'eyJ' + 'h'.repeat(10) + '.' + 'i'.repeat(10) + '.' + 'j'.repeat(10)}`, expected: 'jwt: [REDACTED-JWT]' },
+      { name: 'bearer header', input: `auth: Bearer ${'k'.repeat(24)}`, expected: 'auth: Bearer [REDACTED]' },
+      { name: 'basic header', input: `auth: Basic ${'Q'.repeat(24) + '=='}`, expected: 'auth: Basic [REDACTED]' },
+      {
+        name: 'slack webhook url',
+        input: 'url: https://hooks.slack.com/services/T0000000/B0000000/XXXXXXXXXXXXXX',
+        expected: 'url: [REDACTED-SLACK-WEBHOOK]',
+      },
+      {
+        name: 'discord webhook url',
+        input: 'url: https://discord.com/api/webhooks/123456789/abcdefghijklmnop',
+        expected: 'url: [REDACTED-DISCORD-WEBHOOK]',
+      },
+      {
+        name: 'connection string',
+        input: 'db: postgres://user:s3cr3tpw@db.local:5432/app',
+        expected: 'db: postgres://[REDACTED]@db.local:5432/app',
+      },
+      {
+        name: 'azure sas sig',
+        input: 'u: https://acct.blob.core.windows.net/c?sv=2024-01-01&sig=BASE64SIG&se=2025-01-01',
+        expected: 'u: https://acct.blob.core.windows.net/c?sv=2024-01-01&sig=[REDACTED]&se=2025-01-01',
+      },
+      { name: 'password assignment', input: 'cfg: password=hunter2', expected: 'cfg: password=[REDACTED]' },
+      { name: 'token assignment', input: 'cfg: token=abc123', expected: 'cfg: token=[REDACTED]' },
+      { name: 'quoted api_key assignment', input: 'cfg: api_key="abc123"', expected: 'cfg: api_key=[REDACTED]' },
+      { name: 'npmrc authToken line', input: '//registry.npmjs.org/:_authToken=abc123', expected: '//registry.npmjs.org/:_authToken=[REDACTED]' },
+      {
+        name: 'pem private key',
+        input: 'k: -----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----',
+        expected: 'k: [REDACTED-PRIVATE-KEY]',
+      },
+    ];
+    for (const c of cases) {
+      assert.equal(maskSecrets(c.input), c.expected, c.name);
+    }
+  });
+
+  it('leaves non-secret text untouched', () => {
+    const text = 'plain prose: the build failed with 3 errors, no secrets here.';
+    assert.equal(maskSecrets(text), text);
   });
 });
 

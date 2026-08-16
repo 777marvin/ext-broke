@@ -97,6 +97,9 @@ Extensions are hot-reloaded by AiderDesk: no restart needed.
 - **Privacy:** a non-loopback `summarize.ollamaUrl` sends conversation
   content (including tool outputs) to that host. Plaintext `http://`
   remote URLs trigger a warning. Prefer `https://` or keep Ollama local.
+  Common secret patterns are masked before the content is sent, but this
+  is regex-based and best effort - never point the summarizer at
+  content you cannot afford to leak.
 
 ## Usage
 
