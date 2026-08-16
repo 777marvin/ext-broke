@@ -534,6 +534,75 @@ describe('summarizePass', () => {
     assert.equal(r.summarizeCalls, 1);
     assert.equal(r.messages, msgs); // untouched
   });
+
+  it('keeps regions with rich parts (images/files) untouched', async () => {
+    const msgs: ContextMessage[] = [
+      user('Brief: build the billing module.'),
+      assistant('Step 1: reading the module.'),
+      tool('power---file-read', 'file content line a\nfile content line b'),
+      {
+        id: id(),
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Add a discount field - here is a screenshot:' },
+          { type: 'image', image: 'https://example.com/screenshot.png' },
+        ],
+      },
+      assistant('Step 2: editing.'),
+      tool('power---file-edit', 'edit ok'),
+      user('Run the tests.'),
+      assistant('Step 3: running tests.'),
+      tool('power---bash', 'all tests pass'),
+      user('Protected tail.'),
+    ];
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const r = await summarizePass(msgs, 1, summarizeConfig(), deps, state, 'task-sum-rich');
+    assert.equal(calls.n, 0); // never replace an image with text-only output
+    assert.equal(r.summarizeCalls, 0);
+    assert.equal(r.failed, false);
+    assert.equal(r.messages, msgs); // untouched
+  });
+
+  it('still summarizes when the rich part sits in the protected tail', async () => {
+    const msgs: ContextMessage[] = [
+      user('Brief: build the billing module.'),
+      assistant('Step 1: reading the module.'),
+      tool('power---file-read', 'file content line a\nfile content line b'),
+      user('Add a discount field.'),
+      assistant('Step 2: editing.'),
+      tool('power---file-edit', 'edit ok'),
+      user('Add CSV export.'),
+      assistant('Step 3: running tests.'),
+      tool('power---bash', 'all tests pass'),
+      user('Add PDF support.'),
+      assistant('Step 4: editing again.'),
+      tool('power---file-edit', 'edit ok'),
+      {
+        id: id(),
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Look at this error screenshot:' },
+          { type: 'image', image: 'https://example.com/screenshot.png' },
+        ],
+      },
+      assistant('Step 5: after the screenshot.'),
+      tool('power---bash', 'ok'),
+    ];
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const r = await summarizePass(msgs, 2, summarizeConfig(), deps, state, 'task-sum-rich-tail');
+    assert.equal(calls.n, 1); // region is rich-free, summarization proceeds
+    assert.ok(r.messages.some((m) => isSummaryMessage(m)));
+    // The protected screenshot survives in the result.
+    assert.ok(
+      r.messages.some(
+        (m) => Array.isArray(m.content) && (m.content as { type?: string }[]).some((p) => p.type === 'image'),
+      ),
+    );
+  });
 });
 
 describe('compressMessages', () => {

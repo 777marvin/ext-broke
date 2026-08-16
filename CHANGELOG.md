@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checklists could be replaced by an "error summary", corrupting the
   model's view of the file. Non-command tools are now skipped, matching
   the existing tool-level behavior.
+- **Summarization never silently drops images, files or reasoning parts.**
+  Replacing a region with a text-only summary discarded rich parts
+  (screenshots, file attachments, reasoning) in old turns. Regions
+  carrying such parts are now left untouched (truncate still shrinks
+  their text), and `error-json` tool results keep their payload in the
+  summarizer input instead of contributing nothing.
 
 ### Changed
 

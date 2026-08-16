@@ -184,6 +184,26 @@ function hasRichParts(message: ContextMessage): boolean {
   });
 }
 
+/**
+ * True when a message carries parts that summarization cannot turn into
+ * text: images, files, reasoning (dropped by partText) and tool results
+ * whose output type has no text extraction. Summarize-level compression is
+ * lossy by contract, but these parts would be dropped SILENTLY, so the pass
+ * must skip regions containing them instead.
+ */
+function hasUnsummarizableParts(message: ContextMessage): boolean {
+  if (!Array.isArray(message.content)) return false;
+  return message.content.some((p) => {
+    const part = p as unknown as PartLike;
+    if (part.type === 'tool-result') {
+      const output = part.output as { type?: string } | undefined;
+      const type = output?.type ?? '';
+      return !['text', 'error-text', 'json', 'error-json', 'content'].includes(type);
+    }
+    return part.type !== 'text' && part.type !== 'tool-call';
+  });
+}
+
 // ---------------------------------------------------------------------------
 // structural pass (lossless)
 // ---------------------------------------------------------------------------
@@ -586,6 +606,13 @@ export async function summarizePass(
   const { start, end } = compressibleRange(messages, protectedTurns);
   const region = messages.slice(start, end);
   if (region.length === 0) return noop;
+
+  // Rich parts (images, files, reasoning) must never be silently discarded:
+  // structuralPass keeps them and truncatePass leaves non-text outputs
+  // alone, so summarize must not replace a region carrying them with a
+  // text-only summary either. Skip the pass - truncate still shrinks the
+  // oversized text parts of the same region.
+  if (region.some((m) => hasUnsummarizableParts(m))) return noop;
 
   const regionChars = messagesChars(region);
   if (regionChars < config.summarize.minChars) return noop;

@@ -25,7 +25,7 @@ export function partText(part: { type: string; [key: string]: unknown }): string
     if (output.type === 'text' || output.type === 'error-text') {
       return typeof output.value === 'string' ? output.value : '';
     }
-    if (output.type === 'json' || output.type === 'content') {
+    if (output.type === 'json' || output.type === 'error-json' || output.type === 'content') {
       try {
         return JSON.stringify(output.value);
       } catch {
