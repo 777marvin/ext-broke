@@ -92,7 +92,9 @@ Extensions are hot-reloaded by AiderDesk: no restart needed.
 - AiderDesk ≥ 0.77, Node.js ≥ 18
 - Optional: [Ollama](https://ollama.com) running (`ollama pull
   qwen2.5-coder:3b`) for the free local summarizer. broke degrades
-  gracefully when Ollama is offline.
+  gracefully when Ollama is offline: requests fail fast (at most 60 s per
+  attempt, covering the full response, not just the connection), and after
+  3 consecutive failures summarization auto-disables for that task.
 - **Privacy:** a non-loopback `summarize.ollamaUrl` sends conversation
   content (including tool outputs) to that host. Plaintext `http://`
   remote URLs trigger a warning. Prefer `https://` or keep Ollama local.
@@ -142,7 +144,10 @@ passes over everything older than the protected turns:
 2. **errors**: old tool results that are compiler/test error output (tsc,
    Python/pytest, Jest/Vitest, Node stack traces) are replaced by their
    diagnostic essence with an explicit
-   `… [broke: error summary - N lines → M lines]` marker.
+   `… [broke: error summary - N lines → M lines]` marker. Only
+   command/compiler/test tools are compressed: file reads, search results
+   and docs that merely *look* like errors (an `Error:` heading, `●`
+   bullets) are never rewritten.
 3. **truncate**: old tool outputs over 200 lines / 20 KB are cut to
    head+tail; oversized tool-call inputs are replaced by a `__broke`
    preview.
@@ -150,9 +155,13 @@ passes over everything older than the protected turns:
    is big enough, it is replaced by one `[broke-compacted]` summary. The
    summary is cached per task: unchanged regions are reused without extra
    calls; a regeneration happens only when new turns enter the region.
+   Images, file attachments and reasoning parts are never silently
+   dropped: regions containing them are skipped (the truncate pass still
+   shrinks their text parts).
 
 After 3 consecutive summarize failures, broke disables summarization for
-that task and tells you why.
+that task and tells you why. The badge tooltip shows the disabled state;
+`/broke reset` or changing the summarizer backend/model re-enables it.
 
 ## Configuration
 
