@@ -1,6 +1,6 @@
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { Config } from './config';
-import { compressMessages, createCompressState, type SummarizeDeps } from './compress';
+import { compressMessages, createCompressState, errorPass, structuralPass, truncatePass, type SummarizeDeps } from './compress';
 import { estimateTokens, messagesChars } from './tokens';
 
 let seq = 0;
@@ -12,14 +12,15 @@ function textMessage(role: 'user' | 'assistant', text: string): ContextMessage {
   return { id: id(), role, content: text };
 }
 
-function toolMessage(toolName: string, value: string): ContextMessage {
+/** Tool message whose result references a REAL tool-call id (the caller passes it in). */
+function toolMessage(toolName: string, value: string, callId: string): ContextMessage {
   return {
     id: id(),
     role: 'tool',
     content: [
       {
         type: 'tool-result',
-        toolCallId: id(),
+        toolCallId: callId,
         toolName,
         output: { type: 'text', value },
       },
@@ -27,14 +28,24 @@ function toolMessage(toolName: string, value: string): ContextMessage {
   };
 }
 
-function assistantWithToolCall(toolName: string, input: Record<string, unknown>): ContextMessage {
+/**
+ * Assistant message issuing one tool-call. Returns the message AND the call
+ * id so tool results can reference the actual call - the dedupe pass pairs
+ * results with their holder via the call id, and self-generated ids made the
+ * selftest's "duplicate adjacent result" scenario never actually dedupe.
+ */
+function assistantWithToolCall(toolName: string, input: Record<string, unknown>): { message: ContextMessage; callId: string } {
+  const callId = id();
   return {
-    id: id(),
-    role: 'assistant',
-    content: [
-      { type: 'text', text: 'Running a tool…' },
-      { type: 'tool-call', toolCallId: id(), toolName, input },
-    ],
+    callId,
+    message: {
+      id: id(),
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Running a tool…' },
+        { type: 'tool-call', toolCallId: callId, toolName, input },
+      ],
+    },
   };
 }
 
@@ -46,6 +57,9 @@ function assistantWithToolCall(toolName: string, input: Record<string, unknown>)
  * - an empty assistant message (structural drop)
  * - enough turns to make the region summarizable (summarize)
  */
+/** The duplicated bash output: the selftest asserts it appears exactly once after the run. */
+const DUPLICATE_OUTPUT = 'PASS  tests/billing.test.ts (42 tests)';
+
 export function buildSyntheticMessages(): ContextMessage[] {
   const bigOutput = Array.from({ length: 500 }, (_, i) => `line ${i}: const x${i} = ${i * 7}; // padding for a large tool result`).join('\n');
   const tscErrorOutput =
@@ -55,30 +69,38 @@ export function buildSyntheticMessages(): ContextMessage[] {
     textMessage('user', 'Implement the billing module. Requirements: invoices, payments, CSV export.'),
   ];
   // turn 1
-  messages.push(assistantWithToolCall('power---file-read', { filePath: 'src/billing.ts' }));
-  messages.push(toolMessage('power---file-read', bigOutput));
+  const fileRead = assistantWithToolCall('power---file-read', { filePath: 'src/billing.ts' });
+  messages.push(fileRead.message);
+  messages.push(toolMessage('power---file-read', bigOutput, fileRead.callId));
   messages.push(textMessage('assistant', 'The file is large. I will implement the module step by step.'));
-  // turn 2
-  messages.push(assistantWithToolCall('power---bash', { command: 'npm test -- --no-color' }));
-  messages.push(toolMessage('power---bash', 'PASS  tests/billing.test.ts (42 tests)'));
-  // duplicate adjacent result (dedupe target)
-  messages.push(toolMessage('power---bash', 'PASS  tests/billing.test.ts (42 tests)'));
+  // turn 2 - the same test run twice with identical output: the second
+  // call+result pair is the structural dedupe target.
+  const run1 = assistantWithToolCall('power---bash', { command: 'npm test -- --no-color' });
+  messages.push(run1.message);
+  messages.push(toolMessage('power---bash', DUPLICATE_OUTPUT, run1.callId));
+  const run2 = assistantWithToolCall('power---bash', { command: 'npm test -- --no-color' });
+  messages.push(run2.message);
+  messages.push(toolMessage('power---bash', DUPLICATE_OUTPUT, run2.callId));
   // turn 3
   messages.push(textMessage('assistant', ''));
-  messages.push(assistantWithToolCall('power---grep', { pattern: 'invoice', filePattern: 'src/**/*.ts' }));
-  messages.push(toolMessage('power---grep', 'src/billing.ts:10: export function createInvoice()'));
+  const grep1 = assistantWithToolCall('power---grep', { pattern: 'invoice', filePattern: 'src/**/*.ts' });
+  messages.push(grep1.message);
+  messages.push(toolMessage('power---grep', 'src/billing.ts:10: export function createInvoice()', grep1.callId));
   // turn 4 (region user turn 1)
   messages.push(textMessage('user', 'Also add a discount field to invoices.'));
-  messages.push(assistantWithToolCall('power---file-edit', { filePath: 'src/billing.ts', searchTerm: 'total', replacementText: 'discountedTotal' }));
-  messages.push(toolMessage('power---file-edit', 'Successfully edited src/billing.ts.'));
+  const edit = assistantWithToolCall('power---file-edit', { filePath: 'src/billing.ts', searchTerm: 'total', replacementText: 'discountedTotal' });
+  messages.push(edit.message);
+  messages.push(toolMessage('power---file-edit', 'Successfully edited src/billing.ts.', edit.callId));
   // turn 5 (region user turn 2)
   messages.push(textMessage('user', 'Run the tests again and fix what fails.'));
-  messages.push(assistantWithToolCall('power---bash', { command: 'npx tsc --noEmit --no-color' }));
-  messages.push(toolMessage('power---bash', tscErrorOutput));
+  const tsc = assistantWithToolCall('power---bash', { command: 'npx tsc --noEmit --no-color' });
+  messages.push(tsc.message);
+  messages.push(toolMessage('power---bash', tscErrorOutput, tsc.callId));
   // turn 6 (protected tail)
   messages.push(textMessage('user', 'Also export the CSV with the discount applied.'));
-  messages.push(assistantWithToolCall('power---grep', { pattern: 'exportCsv', filePattern: 'src/**/*.ts' }));
-  messages.push(toolMessage('power---grep', 'src/billing.ts:42: export function exportCsv()'));
+  const grep2 = assistantWithToolCall('power---grep', { pattern: 'exportCsv', filePattern: 'src/**/*.ts' });
+  messages.push(grep2.message);
+  messages.push(toolMessage('power---grep', 'src/billing.ts:42: export function exportCsv()', grep2.callId));
   return messages;
 }
 
@@ -125,7 +147,11 @@ export async function runSelfTest(config: Config): Promise<SelfTestResult> {
   const { messages: result, report } = await compressMessages(messages, exerciseConfig, deps, state, 'selftest-task');
 
   const after = messagesChars(result);
-  const levelApplied = config.enabled ? config.level : 'structural';
+  // The level that was ACTUALLY exercised, not the user-facing one: labeling
+  // passes "NOT exercised" while their numbers were reported contradicts
+  // itself when the extension is disabled (enabled=false used to force the
+  // label to 'structural' while the pipeline still ran at the real level).
+  const levelApplied = exerciseConfig.level;
   lines.push(`  result: ${result.length} messages, ${after.toLocaleString()} chars (≈ ${estimateTokens(after).toLocaleString()} tokens)`);
   lines.push(`  structural:  ${report.structuralChars.toLocaleString()} chars removed (always exercised)`);
   lines.push(
@@ -140,11 +166,28 @@ export async function runSelfTest(config: Config): Promise<SelfTestResult> {
   lines.push(`  total saved: ${(before - after).toLocaleString()} chars (≈ ${estimateTokens(before - after).toLocaleString()} tokens) - ${report.touched ? 'pipeline active' : 'nothing to do'}`);
 
   const hasMarker = result.some((m) => typeof m.content === 'string' && m.content.startsWith('[broke-compacted]'));
-  const hasErrorSummary = result.some(
-    (m) => Array.isArray(m.content) && m.content.some((p) => (p as { output?: { value?: unknown } }).output?.value?.toString().includes('[broke: error summary')),
-  );
+  // F11: assert the dedupe REALLY happened. Each check looks at the output
+  // of ITS OWN pass: the final result after a summarize run replaces the
+  // whole region with the summary, which would hide every intermediate
+  // marker and label applied passes as "no". The duplicated output appears
+  // twice in the input and must appear exactly once after structuralPass.
+  const structuralOut = structuralPass(messages, exerciseConfig.protectedTurns).messages;
+  const dedupeApplied = JSON.stringify(structuralOut).split(DUPLICATE_OUTPUT).length - 1 === 1;
+  const errorOut = errorPass(structuralOut, exerciseConfig.protectedTurns, {
+    minChars: exerciseConfig.errors.minChars,
+    contextLines: exerciseConfig.errors.contextLines,
+  }).messages;
+  const hasErrorSummary = JSON.stringify(errorOut).includes('[broke: error summary');
+  const truncateOut = truncatePass(
+    errorOut,
+    exerciseConfig.protectedTurns,
+    exerciseConfig.truncate.maxLines,
+    exerciseConfig.truncate.maxKB,
+    exerciseConfig.truncate.maxInputChars,
+  ).messages;
+  const truncationApplied = JSON.stringify(truncateOut).includes('[broke: truncated');
   lines.push(
-    `  checks: summary message present: ${hasMarker ? 'yes' : 'no'}, error summary applied: ${hasErrorSummary ? 'yes' : 'no'}, truncation applied: ${report.truncateChars > 0 ? 'yes' : 'no'}, dedupe/merge applied: ${report.structuralChars > 0 ? 'yes' : 'no'}`,
+    `  checks: summary message present: ${hasMarker ? 'yes' : 'no'}, error summary applied: ${hasErrorSummary ? 'yes' : 'no'}, truncation applied: ${truncationApplied ? 'yes' : 'no'}, dedupe applied: ${dedupeApplied ? 'yes' : 'no'}, structural cleanup applied: ${report.structuralChars > 0 ? 'yes' : 'no'}`,
   );
 
   return { lines, touched: report.touched };
