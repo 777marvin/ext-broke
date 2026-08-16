@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 
@@ -129,16 +129,24 @@ export function getConfigWarning(): string | null {
   return configWarning;
 }
 
+/** Read + validate one config file (no cache). Corrupted files fall back to defaults. */
+export function loadConfigFile(filePath: string): { config: Config; warning: string | null } {
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    return { config: mergeConfig(JSON.parse(raw)), warning: null };
+  } catch (err) {
+    return {
+      config: DEFAULT_CONFIG,
+      warning: `config.json unreadable (${err instanceof Error ? err.message : String(err)}) - running on defaults`,
+    };
+  }
+}
+
 export function getConfig(): Config {
   if (cachedConfig) return cachedConfig;
-  try {
-    const raw = readFileSync(CONFIG_PATH, 'utf-8');
-    cachedConfig = mergeConfig(JSON.parse(raw));
-    configWarning = null;
-  } catch (err) {
-    cachedConfig = DEFAULT_CONFIG;
-    configWarning = `config.json unreadable (${err instanceof Error ? err.message : String(err)}) - running on defaults`;
-  }
+  const loaded = loadConfigFile(CONFIG_PATH);
+  cachedConfig = loaded.config;
+  configWarning = loaded.warning;
   return cachedConfig;
 }
 
@@ -147,17 +155,26 @@ export function invalidateConfigCache(): void {
   configWarning = null;
 }
 
-/** Atomic write: temp file + rename, so a crash mid-write cannot corrupt config.json. */
-export function saveConfig(config: Config): void {
-  const tmpPath = `${CONFIG_PATH}.tmp`;
+/**
+ * Atomic write: temp file + fsync + rename, so a crash mid-write cannot
+ * corrupt config.json and a power loss cannot leave the renamed file
+ * empty (fsync flushes the data to disk before the rename).
+ */
+export function saveConfig(config: Config, filePath: string = CONFIG_PATH): void {
+  const tmpPath = `${filePath}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf-8');
-  renameSync(tmpPath, CONFIG_PATH);
-  invalidateConfigCache();
+  const fd = openSync(tmpPath, 'r+');
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmpPath, filePath);
+  if (filePath === CONFIG_PATH) invalidateConfigCache();
 }
 
-/** Update a single dotted path (e.g. 'summarize.localModel') and persist. */
-export function updateConfigPath(path: string, value: unknown): Config {
-  const current = getConfig();
+/** Apply dotted-path updates to a config WITHOUT touching the disk (pure). */
+export function applyConfigUpdates(current: Config, updates: Array<[string, unknown]>): Config {
   const clone: Record<string, unknown> = {
     ...current,
     truncate: { ...current.truncate },
@@ -165,18 +182,35 @@ export function updateConfigPath(path: string, value: unknown): Config {
     summarize: { ...current.summarize },
     ui: { ...current.ui },
   };
-  const parts = path.split('.');
-  let target: Record<string, unknown> = clone;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const key = parts[i];
-    const next = target[key];
-    if (!next || typeof next !== 'object' || Array.isArray(next)) {
-      target[key] = {};
+  for (const [path, value] of updates) {
+    const parts = path.split('.');
+    let target: Record<string, unknown> = clone;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const key = parts[i];
+      const next = target[key];
+      if (!next || typeof next !== 'object' || Array.isArray(next)) {
+        target[key] = {};
+      }
+      target = target[key] as Record<string, unknown>;
     }
-    target = target[key] as Record<string, unknown>;
+    target[parts[parts.length - 1]] = value;
   }
-  target[parts[parts.length - 1]] = value;
-  const config = ConfigSchema.parse(clone);
-  saveConfig(config);
+  return ConfigSchema.parse(clone);
+}
+
+/**
+ * Apply several dotted-path updates and persist them in ONE atomic write.
+ * Multi-path commands (/broke truncate) must never leave a half-updated
+ * config on disk when a write fails in between.
+ */
+export function updateConfigPaths(updates: Array<[string, unknown]>, filePath: string = CONFIG_PATH): Config {
+  const current = loadConfigFile(filePath).config;
+  const config = applyConfigUpdates(current, updates);
+  saveConfig(config, filePath);
   return config;
+}
+
+/** Update a single dotted path (e.g. 'summarize.localModel') and persist. */
+export function updateConfigPath(path: string, value: unknown, filePath: string = CONFIG_PATH): Config {
+  return updateConfigPaths([[path, value]], filePath);
 }

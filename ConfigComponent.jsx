@@ -2,17 +2,22 @@
   const { Select, Checkbox, Input } = ui;
 
   // Validated number field: uncontrolled input (no re-render while typing),
-  // value committed on blur/Enter, invalid input reset to the last valid value.
-  const numberField = (label, value, onChange, min = 1) => (
+  // value committed on blur/Enter, invalid input reset to the last valid
+  // value. min/max mirror the ConfigSchema bounds so the dialog can never
+  // produce a config that saveConfigData rejects. Floats are truncated:
+  // every numeric field is z.number().int() in the schema.
+  const numberField = (label, value, onChange, min = 1, max = undefined) => (
     <Input
       label={label}
       type="number"
       min={String(min)}
+      max={max === undefined ? undefined : String(max)}
       defaultValue={String(value ?? '')}
       onBlur={(e) => {
-        const n = Number(e.target.value);
-        if (Number.isFinite(n) && n >= min) {
+        const n = Math.trunc(Number(e.target.value));
+        if (Number.isFinite(n) && n >= min && (max === undefined || n <= max)) {
           if (n !== value) onChange(n);
+          e.target.value = String(n);
         } else {
           e.target.value = String(value ?? '');
         }
@@ -68,7 +73,7 @@
           )}
           {numberField('Protected turns (never compress the last N)', cfg.protectedTurns ?? 2, (n) =>
             updateConfig({ ...config, protectedTurns: n }),
-          )}
+          1, 50)}
         </div>
         <p className="text-xs text-text-secondary -mt-2">
           chars/4 ≈ tokens. The default (60000 chars ≈ 15k tokens) engages before AiderDesk's built-in compaction
@@ -90,7 +95,7 @@
           )}
           {numberField('Context lines', errors.contextLines ?? 8, (n) =>
             updateConfig({ ...config, errors: { ...errors, contextLines: n } }),
-          )}
+          1, 30)}
         </div>
         <Checkbox
           label="Tool-level rewrite (rewrites stored history, archives full output)"
@@ -151,7 +156,7 @@
         <div className="flex gap-4">
           {numberField('Summarize only turns older than (user turns)', summarize.afterTurns ?? 8, (n) =>
             updateConfig({ ...config, summarize: { ...summarize, afterTurns: n } }),
-          )}
+          2, 100)}
           {numberField('Min region chars', summarize.minChars ?? 8000, (n) =>
             updateConfig({ ...config, summarize: { ...summarize, minChars: n } }),
           )}

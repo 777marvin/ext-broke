@@ -502,7 +502,18 @@ export default class Broke implements Extension {
   }
 
   async saveConfigData(configData: unknown): Promise<unknown> {
-    const parsed = ConfigSchema.parse(configData);
+    let parsed: Config;
+    try {
+      parsed = ConfigSchema.parse(configData);
+    } catch (err) {
+      // A value outside the schema bounds must not fail silently: log the
+      // violation and keep the last valid config.
+      this.context?.log(
+        `Broke: settings not saved - invalid value (${err instanceof Error ? err.message : String(err)}). Keeping the previous config.`,
+        'error',
+      );
+      return getConfig();
+    }
     saveConfig(parsed);
     // Re-register UI components (badge may be toggled) and refresh data.
     this.context?.triggerUIComponentsReload();

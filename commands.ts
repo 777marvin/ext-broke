@@ -1,10 +1,15 @@
 import type { Config } from './config';
-import { DEFAULT_CONFIG, updateConfigPath } from './config';
+import { DEFAULT_CONFIG, updateConfigPath, updateConfigPaths } from './config';
 import { isPlaintextRemoteUrl, ollamaStatus } from './local';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from './pricing';
 import { estimateTokens, type TaskStats, totalSavedChars } from './tokens';
 
-export const HELP_TEXT = `broke - token budget compression
+/**
+ * Help text with the defaults interpolated from DEFAULT_CONFIG: hardcoded
+ * numbers in help output drift from the schema the moment a default changes.
+ */
+function buildHelpText(d: Config): string {
+  return `broke - token budget compression
 
 Usage: /broke <subcommand>
 
@@ -12,24 +17,27 @@ Usage: /broke <subcommand>
   on | off                      enable / disable the compression pipeline
   level <structural|truncate|summarize>
                                 compression depth (default: truncate)
-  maxchars <n>                  engage lossy passes above ~n chars (default 60000)
-  protect <turns>               never compress the last n user turns (default 2)
-  truncate <lines> <kb>         old tool output limits (default 200 20)
-  errors on | off               compress compiler/test output (default: on)
-  errors minchars <n>           compress matching outputs ≥ n chars (default 8000)
-  errors lines <n>              context lines kept around the failure (default 8)
-  errors toollevel <on|off>     rewrite stored history at tool level (default: off)
-  summarize via <local|cloud>   summarizer backend (default: local = Ollama)
-  summarize model <name>        Ollama model tag (default: qwen2.5-coder:3b)
+  maxchars <n>                  engage lossy passes above ~n chars (default ${d.maxContextChars})
+  protect <turns>               never compress the last n user turns (default ${d.protectedTurns})
+  truncate <lines> <kb>         old tool output limits (default ${d.truncate.maxLines} ${d.truncate.maxKB})
+  errors on | off               compress compiler/test output (default: ${d.errors.enabled ? 'on' : 'off'})
+  errors minchars <n>           compress matching outputs ≥ n chars (default ${d.errors.minChars})
+  errors lines <n>              context lines kept around the failure (default ${d.errors.contextLines})
+  errors toollevel <on|off>     rewrite stored history at tool level (default: ${d.errors.toolLevel ? 'on' : 'off'})
+  summarize via <local|cloud>   summarizer backend (default: ${d.summarize.via}${d.summarize.via === 'local' ? ' = Ollama' : ''})
+  summarize model <name>        Ollama model tag (default: ${d.summarize.localModel})
   summarize cloud <provider/model>
                                 AiderDesk model for cloud summaries ('' = task model)
-  summarize after <turns>       summarize only turns older than n user turns (default 8)
+  summarize after <turns>       summarize only turns older than n user turns (default ${d.summarize.afterTurns})
   stats                         per-pass saved chars/tokens for this task
   reset                         clear this task's stats
   selftest                      run the pipeline on synthetic input and log results
   help                          this text
 
 All estimates use the chars/4 heuristic - honest numbers, not provider counts.`;
+}
+
+export const HELP_TEXT = buildHelpText(DEFAULT_CONFIG);
 
 export type BrokeCommand =
   | { kind: 'status' }
@@ -130,36 +138,50 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
   }
 }
 
-/** Apply a parsed command to the config; returns the new config and a human-readable confirmation. */
-export function applyBrokeCommand(cmd: BrokeCommand, config: Config): { config: Config; message: string } {
+/**
+ * Apply a parsed command to the config; returns the new config and a
+ * human-readable confirmation. `filePath` defaults to the real config.json
+ * and exists so tests can run against a temp file.
+ */
+export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: string): { config: Config; message: string } {
   switch (cmd.kind) {
     case 'toggle':
-      return { config: updateConfigPath('enabled', cmd.enabled), message: `broke ${cmd.enabled ? 'enabled' : 'disabled'}` };
+      return { config: updateConfigPath('enabled', cmd.enabled, filePath), message: `broke ${cmd.enabled ? 'enabled' : 'disabled'}` };
     case 'level':
-      return { config: updateConfigPath('level', cmd.level), message: `level → ${cmd.level}` };
+      return { config: updateConfigPath('level', cmd.level, filePath), message: `level → ${cmd.level}` };
     case 'maxchars':
-      return { config: updateConfigPath('maxContextChars', cmd.value), message: `maxContextChars → ${cmd.value.toLocaleString()} chars (≈ ${estimateTokens(cmd.value).toLocaleString()} tokens)` };
+      return { config: updateConfigPath('maxContextChars', cmd.value, filePath), message: `maxContextChars → ${cmd.value.toLocaleString()} chars (≈ ${estimateTokens(cmd.value).toLocaleString()} tokens)` };
     case 'protect':
-      return { config: updateConfigPath('protectedTurns', cmd.value), message: `protectedTurns → ${cmd.value}` };
+      return { config: updateConfigPath('protectedTurns', cmd.value, filePath), message: `protectedTurns → ${cmd.value}` };
     case 'truncate':
-      updateConfigPath('truncate.maxLines', cmd.lines);
-      return { config: updateConfigPath('truncate.maxKB', cmd.kb), message: `truncate limits → ${cmd.lines} lines / ${cmd.kb} KB` };
+      // One atomic write for both limits: two consecutive writes could leave
+      // a half-updated config if the first succeeds and the second fails.
+      return {
+        config: updateConfigPaths(
+          [
+            ['truncate.maxLines', cmd.lines],
+            ['truncate.maxKB', cmd.kb],
+          ],
+          filePath,
+        ),
+        message: `truncate limits → ${cmd.lines} lines / ${cmd.kb} KB`,
+      };
     case 'errors-toggle':
-      return { config: updateConfigPath('errors.enabled', cmd.enabled), message: `error compression ${cmd.enabled ? 'enabled' : 'disabled'}` };
+      return { config: updateConfigPath('errors.enabled', cmd.enabled, filePath), message: `error compression ${cmd.enabled ? 'enabled' : 'disabled'}` };
     case 'errors-minchars':
-      return { config: updateConfigPath('errors.minChars', cmd.value), message: `errors minChars → ${cmd.value.toLocaleString()} chars` };
+      return { config: updateConfigPath('errors.minChars', cmd.value, filePath), message: `errors minChars → ${cmd.value.toLocaleString()} chars` };
     case 'errors-lines':
-      return { config: updateConfigPath('errors.contextLines', cmd.value), message: `errors contextLines → ${cmd.value}` };
+      return { config: updateConfigPath('errors.contextLines', cmd.value, filePath), message: `errors contextLines → ${cmd.value}` };
     case 'errors-toollevel':
-      return { config: updateConfigPath('errors.toolLevel', cmd.enabled), message: `error tool-level rewriting ${cmd.enabled ? 'enabled' : 'disabled'} - rewrites stored history` };
+      return { config: updateConfigPath('errors.toolLevel', cmd.enabled, filePath), message: `error tool-level rewriting ${cmd.enabled ? 'enabled' : 'disabled'} - rewrites stored history` };
     case 'summarize-via':
-      return { config: updateConfigPath('summarize.via', cmd.via), message: `summarizer → ${cmd.via}` };
+      return { config: updateConfigPath('summarize.via', cmd.via, filePath), message: `summarizer → ${cmd.via}` };
     case 'summarize-model':
-      return { config: updateConfigPath('summarize.localModel', cmd.model), message: `local summarizer model → ${cmd.model}` };
+      return { config: updateConfigPath('summarize.localModel', cmd.model, filePath), message: `local summarizer model → ${cmd.model}` };
     case 'summarize-cloud':
-      return { config: updateConfigPath('summarize.cloudModelId', cmd.modelId), message: `cloud summarizer model → ${cmd.modelId || 'task model'}` };
+      return { config: updateConfigPath('summarize.cloudModelId', cmd.modelId, filePath), message: `cloud summarizer model → ${cmd.modelId || 'task model'}` };
     case 'summarize-after':
-      return { config: updateConfigPath('summarize.afterTurns', cmd.turns), message: `summarize after → ${cmd.turns} turns` };
+      return { config: updateConfigPath('summarize.afterTurns', cmd.turns, filePath), message: `summarize after → ${cmd.turns} turns` };
     default:
       return { config, message: '' };
   }
