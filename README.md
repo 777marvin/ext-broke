@@ -47,7 +47,7 @@ Measured in one long real session (3 tasks, 543 compression runs,
 `deepseek-v4-flash`, 2026-08-13):
 
 - up to **~268k tokens** were removed from the input of a single request;
-- across all requests of the session, roughly **550.000** in  total were not re-sent;
+- across all requests of the session, roughly **55 million** were not re-sent;
 - the whole session cost about **0.29 $** on DeepSeek (prompt caching
   makes cache reads 10× cheaper there); on a pricier model the same
   savings would show up far more clearly in money.

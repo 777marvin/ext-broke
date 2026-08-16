@@ -40,13 +40,14 @@ Two consequences:
 | Lever | When | Loss |
 |---|---|---|
 | Structural pass (dedupe, drop empties, merge) | every call | none (lossless) |
+| Error pass (compiler/test output → diagnostic essence) | above `errors.minChars`, old turns only | error-dump detail |
 | Truncate pass (head+tail of old tool outputs, trim tool-call inputs) | above threshold | middle of old outputs |
 | Summarize pass (LLM summary of old turns) | above threshold, old turns only | detail of old turns |
 | AiderDesk `Compact` / `Smart` compaction | at 30%/200k | same idea, reactive |
 
 Rule of thumb: **the last N turns are the working set, never compress
 them.** Everything older is increasingly redundant (the model already acted
-on it; the file system already reflects it). Broke protects the last 6
+on it; the file system already reflects it). Broke protects the last 2
 turns by default.
 
 ### C. Compress output tokens (one-time)
@@ -81,7 +82,7 @@ turns by default.
 Two different things, both real:
 
 1. **Transient (per call)**: every input the model sees is compressed,
-   but the stored task history stays intact. Broke v0.1 does this. Pros:
+   but the stored task history stays intact. Broke does this. Pros:
    reversible, no information destroyed in the log. Cons: the compression
    work repeats per call (mitigated by the summary cache).
 2. **Persistent**: the stored conversation is rewritten (old turns
@@ -90,14 +91,18 @@ Two different things, both real:
    destructive, hard to undo.
 
 Recommended: **Broke transient for daily work + built-in `Compact`/Smart
-as the emergency brake.** If you want persistent compression on demand,
-`/compact`-style rewriting is a natural Broke v0.2 feature (`broke commit`).
+as the emergency brake.** Persistent compression on demand is a planned
+Broke feature (F3 state snapshotting & memory flushing, see
+docs/feats.md).
 
 ## Honest numbers
 
 - chars/4 is a heuristic: English prose ≈ 4 chars/token, code ≈ 3–3.5,
   JSON with keys ≈ 3. The heuristic is *consistent*, which is what makes
   before/after comparisons meaningful.
+- Merging adjacent assistant messages keeps the full text in the context
+  (only the message framing disappears), so merges count 0 saved chars in
+  the stats: the badge never inflates savings with merges.
 - A 3B local model summary of ~8k tokens of history costs ~0 cloud tokens
   and ~20–60 s of local time; the same summary via a cloud model costs
   input tokens of the summarizer call (usually cheaper than the turns it

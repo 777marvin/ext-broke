@@ -1,6 +1,6 @@
 # Project Overview
 
-*Snapshot: v0.3.0 + unreleased fixes (2026-08-16)*
+*Snapshot: v0.3.0 + review fixes F1-F24 closed (2026-08-16)*
 
 ## What broke is
 
@@ -20,20 +20,25 @@ applies to the input of each model call only.
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `index.ts` | 495 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …`), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`) |
-| `compress.ts` | 797 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
-| `errors.ts` | 365 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in `text` **and** structured `json`/`content` outputs (`{ stdout, stderr, exitCode }`), extracts the diagnostic essence, archives full output at tool level; `isCommandTool` classification |
-| `config.ts` | 182 | Zod schema, defaults, atomic `config.json` writes, cache invalidation, corrupted-config warning |
-| `commands.ts` | 224 | `/broke` parser + all subcommands (status, stats, reset, selftest, help, level/threshold/limit tuning) |
-| `tokens.ts` | 178 | Token estimation (chars/4), part text extraction (incl. `error-json`), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset) |
-| `local.ts` | 135 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
-| `selftest.ts` | 151 | `/broke selftest`: synthetic conversation, forced-low thresholds, per-pass savings |
-| `ConfigComponent.jsx` | 177 | Settings dialog (gear icon on the extension card) |
-| `StatusBadge.jsx` | 64 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state |
-| `tests/compress.test.ts` | 734 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate |
-| `tests/errors.test.ts` | 414 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification |
-| `tests/local.test.ts` | 137 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts |
-| `tests/pricing.test.ts` | 65 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats privacy |
+| `index.ts` | 470 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate, reentry guard), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …`), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`) |
+| `compress.ts` | 744 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
+| `output.ts` | 149 | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
+| `errors.ts` | 300 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir); `isCommandTool` classification |
+| `config.ts` | 198 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning |
+| `commands.ts` | 246 | `/broke` parser + all subcommands (status, stats, reset, selftest, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG` |
+| `tokens.ts` | 169 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader) |
+| `local.ts` | 127 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
+| `pricing.ts` | 80 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
+| `selftest.ts` | 181 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
+| `ConfigComponent.jsx` | 173 | Settings dialog (gear icon on the extension card), schema-bounded numeric fields |
+| `StatusBadge.jsx` | 61 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state |
+| `tests/commands.test.ts` | 184 | Unit tests: `/broke` parse/apply/format, generated help text, Ollama model-tag matching |
+| `tests/compress.test.ts` | 783 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
+| `tests/config.test.ts` | 120 | Unit tests: config merge, corrupted-file fallback, pure updates, one-write multi-path persistence |
+| `tests/errors.test.ts` | 404 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap |
+| `tests/local.test.ts` | 125 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts |
+| `tests/pricing.test.ts` | 135 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats persistence privacy, stats loader TTL, task-stats reset |
+| `tests/selftest.test.ts` | 51 | Unit tests: synthetic-call-id linking, dedupe really applied, honest per-pass labels |
 
 ## How the pipeline works
 
@@ -54,10 +59,11 @@ everything older than the protected region:
    marker; tool-call inputs over 2000 chars → `__broke` preview.
 4. **summarize**: region ≥ `afterTurns` (8) user turns and input above
    `maxContextChars` (60000 ≈ 15k tokens) → one `[broke-compacted]`
-   summary message, cached per task (tool-loop steps append to the cache;
-   regeneration only on new user turns or ≥ `minChars` of new content).
-   Regions carrying images, file attachments or reasoning parts are
-   skipped entirely (never silently dropped); truncate still shrinks
+   summary message, cached per task + summarizer-config fingerprint
+   (backend/model changes invalidate the cache; tool-loop steps append to
+   it; regeneration only on new user turns or ≥ `minChars` of new
+   content). Regions carrying images, file attachments or reasoning parts
+   are skipped entirely (never silently dropped); truncate still shrinks
    their text parts.
 
 Protected: the task brief (first user message) and the last `protectedTurns`
@@ -88,4 +94,4 @@ Caveat: run used v0.2.0, before the structured-output error-compression fix.
 - `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
 - `docs/local-models.md`: local-model capabilities on this hardware (RTX 3050, 4 GB VRAM)
 - `docs/feats.md`: specs for F2 ST-slicing, F3 state snapshotting/memory flushing, F4 local keyword/vector index (F1 shipped in v0.2.0)
-- `docs/review-backlog.md`: open findings from the 2026-08-16 review (severity, location, fix approach)
+- `docs/review-backlog.md`: findings from the 2026-08-16 review, all closed (severity, location, fix approach, commit mapping)

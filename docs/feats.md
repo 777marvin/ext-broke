@@ -65,8 +65,9 @@ by F1–F3.
   `addContextMessage` are used? Does the next prompt re-hydrate from that
   file? If yes, flushing must also document/accept the desync or be blocked.
 - **S3 (F3/F4):** Does `scripts/deploy.ps1` preserve extension subfolders
-  (`snapshots/`, `index/`)? `config.json` is preserved; confirm the same for
-  new folders or exclude them from deployment.
+  (`snapshots/`, `index/`)? `config.json` is preserved. Resolved for
+  `errors/`: the preserve list covers it since F12 (with a size cap on
+  copy). `snapshots/`/`index/` still need the same treatment.
 - **S4 (F2):** Capture the exact `toolName` strings of file-read and file-edit
   tools in a real session (`onToolCalled` debug log). The allowlist must
   match reality (names differ between docs and runtime).
@@ -91,8 +92,8 @@ Fully compatible, two verified docking points:
 - **Primary: input pass in `onOptimizeMessages`** (matches Broke's
   "stored history untouched" promise; same architecture as the existing
   `truncate` pass). Tool results are messages with `tool` role and
-  `tool-result` parts; their text is available via the existing
-  `toolResultText`/`partText` helpers.
+  `tool-result` parts; their text is available via the canonical
+  extractors in `output.ts` (`partText` / `extractOutputText`).
 - **Optional follow-up: tool-level rewrite in `onToolFinished`** (output is
   modifiable per `ToolFinishedEvent`; `ExtensionContext.truncateToolResult`
   exists for the "save full output to temp file" path). Config-flag controlled
