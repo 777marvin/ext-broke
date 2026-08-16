@@ -2,7 +2,7 @@ import type { Config } from './config';
 import { DEFAULT_CONFIG, updateConfigPath, updateConfigPaths } from './config';
 import { isPlaintextRemoteUrl, ollamaStatus } from './local';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from './pricing';
-import { estimateTokens, type TaskStats, totalSavedChars } from './tokens';
+import { estimateTokens, type MeasureSummary, type TaskStats, totalSavedChars } from './tokens';
 
 /**
  * Help text with the defaults interpolated from DEFAULT_CONFIG: hardcoded
@@ -30,6 +30,8 @@ Usage: /broke <subcommand>
                                 AiderDesk model for cloud summaries ('' = task model)
   summarize after <turns>       summarize only turns older than n user turns (default ${d.summarize.afterTurns})
   stats                         per-pass saved chars/tokens for this task
+  measure                       summarize the per-run measurement ledger (measure.jsonl)
+  measure on | off              record every compression run to measure.jsonl (default: ${d.stats.measure ? 'on' : 'off'})
   reset                         clear this task's stats
   selftest                      run the pipeline on synthetic input and log results
   help                          this text
@@ -55,6 +57,8 @@ export type BrokeCommand =
   | { kind: 'summarize-cloud'; modelId: string }
   | { kind: 'summarize-after'; turns: number }
   | { kind: 'stats' }
+  | { kind: 'measure' }
+  | { kind: 'measure-toggle'; enabled: boolean }
   | { kind: 'reset' }
   | { kind: 'selftest' }
   | { kind: 'help' }
@@ -127,6 +131,13 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
     }
     case 'stats':
       return { kind: 'stats' };
+    case 'measure': {
+      const opt = rest[0];
+      if (opt === 'on') return { kind: 'measure-toggle', enabled: true };
+      if (opt === 'off') return { kind: 'measure-toggle', enabled: false };
+      if (opt === undefined) return { kind: 'measure' };
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
     case 'reset':
       return { kind: 'reset' };
     case 'selftest':
@@ -182,6 +193,11 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
       return { config: updateConfigPath('summarize.cloudModelId', cmd.modelId, filePath), message: `cloud summarizer model → ${cmd.modelId || 'task model'}` };
     case 'summarize-after':
       return { config: updateConfigPath('summarize.afterTurns', cmd.turns, filePath), message: `summarize after → ${cmd.turns} turns` };
+    case 'measure-toggle':
+      return {
+        config: updateConfigPath('stats.measure', cmd.enabled, filePath),
+        message: `per-run measurement ${cmd.enabled ? 'enabled' : 'disabled'} (records go to measure.jsonl)`,
+      };
     default:
       return { config, message: '' };
   }
@@ -225,6 +241,43 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
     `  last summarizer: ${stats.lastSummarizer}`,
     `  level: ${config.level} | maxContextChars: ${config.maxContextChars.toLocaleString()} | protectedTurns: ${config.protectedTurns}`,
   ];
+  return lines.join('\n');
+}
+
+/**
+ * Human-readable measurement summary. Honest framing: the totals sum input
+ * sizes PER RUN, and the same region of one conversation is compressed again
+ * on every model call - so the sum is NOT a cumulative context claim, and we
+ * say so in the output.
+ */
+export function formatMeasure(summary: MeasureSummary | null): string {
+  if (!summary) {
+    return (
+      'broke measure - no measurement records yet.\n' +
+      'broke records one line per compression run to measure.jsonl (config: stats.measure).\n' +
+      'Record while working with /broke measure on, then run /broke measure again (or npm run measure).'
+    );
+  }
+  const spanDays = Math.round((summary.spanMs / 86_400_000) * 10) / 10;
+  const reduction =
+    summary.charsBefore > 0 ? Math.round(((summary.charsBefore - summary.charsAfter) / summary.charsBefore) * 1000) / 10 : 0;
+  const lines = [
+    `broke measure - ${summary.runs} run(s) across ${summary.tasks} task(s)${summary.spanMs > 0 ? ` over ${spanDays} day(s)` : ''}`,
+    `  input per run:   ${fmtChars(summary.charsBefore)} (sum over runs - the same conversation is compressed on every model call, NOT a cumulative context claim)`,
+    `  output per run:  ${fmtChars(summary.charsAfter)} (${reduction}% smaller on average across runs)`,
+    `  saved total:     ${fmtChars(summary.savedChars)}`,
+    `  saved per run:   mean ${fmtChars(summary.meanSavedCharsPerRun)} | median ${fmtChars(summary.medianSavedCharsPerRun)} | max ${fmtChars(summary.maxSavedCharsPerRun)}`,
+    `  summarizer calls: ${summary.summarizeCalls} (true cost side - cache reuse not counted)`,
+  ];
+  if (summary.byTask.length > 0) {
+    lines.push('  per task:');
+    for (const t of summary.byTask.slice(0, 5)) {
+      lines.push(`    ${t.taskId}: ${t.runs} run(s), ${fmtChars(t.savedChars)}`);
+    }
+    if (summary.byTask.length > 5) {
+      lines.push(`    ... and ${summary.byTask.length - 5} more task(s)`);
+    }
+  }
   return lines.join('\n');
 }
 

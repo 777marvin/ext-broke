@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   applyBrokeCommand,
+  formatMeasure,
   formatStats,
   hasOllamaModel,
   HELP_TEXT,
@@ -91,6 +92,13 @@ describe('parseBrokeCommand', () => {
     assert.equal(kind(['help']), 'help');
     expectUnknown(['bogus']);
   });
+
+  it('parses measure and measure on|off', () => {
+    assert.deepEqual(parseBrokeCommand(['measure']), { kind: 'measure' });
+    assert.deepEqual(parseBrokeCommand(['measure', 'on']), { kind: 'measure-toggle', enabled: true });
+    assert.deepEqual(parseBrokeCommand(['measure', 'off']), { kind: 'measure-toggle', enabled: false });
+    expectUnknown(['measure', 'maybe']);
+  });
 });
 
 describe('applyBrokeCommand', () => {
@@ -149,10 +157,18 @@ describe('applyBrokeCommand', () => {
 
   it('returns a confirmation message for every applying command', () => {
     withTemp((file) => {
-      for (const args of [['off'], ['level', 'summarize'], ['maxchars', '90000'], ['truncate', '150', '30'], ['summarize', 'via', 'cloud']]) {
+      for (const args of [['off'], ['level', 'summarize'], ['maxchars', '90000'], ['truncate', '150', '30'], ['summarize', 'via', 'cloud'], ['measure', 'off']]) {
         const { message } = applyBrokeCommand(parseBrokeCommand(args), DEFAULT_CONFIG, file);
         assert.ok(message.length > 0, `missing confirmation for: ${args.join(' ')}`);
       }
+    });
+  });
+
+  it('persists the measurement toggle under stats.measure', () => {
+    withTemp((file) => {
+      const { config } = applyBrokeCommand(parseBrokeCommand(['measure', 'off']), DEFAULT_CONFIG, file);
+      assert.equal(config.stats.measure, false);
+      assert.equal(onDisk(file).stats.measure, false);
     });
   });
 });
@@ -185,6 +201,60 @@ describe('HELP_TEXT', () => {
     assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.errors.minChars)));
     assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.summarize.afterTurns)));
     assert.ok(HELP_TEXT.includes(DEFAULT_CONFIG.summarize.localModel));
+  });
+
+  it('documents the measure commands with the stats.measure default', () => {
+    assert.ok(HELP_TEXT.includes('measure'));
+    assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.stats.measure ? 'on' : 'off')));
+  });
+});
+
+describe('formatMeasure', () => {
+  it('shows the honest framing for an empty ledger', () => {
+    const out = formatMeasure(null);
+    assert.ok(out.includes('no measurement records'));
+    assert.ok(out.includes('stats.measure'));
+    assert.ok(out.includes('npm run measure'));
+  });
+
+  it('summarizes records and labels the totals as sum-over-runs', () => {
+    const out = formatMeasure({
+      runs: 2,
+      tasks: 1,
+      spanMs: 0,
+      charsBefore: 20000,
+      charsAfter: 15000,
+      savedChars: 5000,
+      savedTokens: 1250,
+      meanSavedCharsPerRun: 2500,
+      medianSavedCharsPerRun: 2500,
+      maxSavedCharsPerRun: 3000,
+      summarizeCalls: 0,
+      byTask: [{ taskId: 't1', runs: 2, savedChars: 5000 }],
+    });
+    assert.ok(out.includes('2 run(s)'));
+    assert.ok(out.includes('sum over runs'));
+    assert.ok(out.includes('NOT a cumulative context claim'));
+    assert.ok(out.includes('25%'));
+    assert.ok(out.includes('per task'));
+  });
+
+  it('rounds the reduction percentage', () => {
+    const out = formatMeasure({
+      runs: 1,
+      tasks: 1,
+      spanMs: 0,
+      charsBefore: 30000,
+      charsAfter: 20000,
+      savedChars: 10000,
+      savedTokens: 2500,
+      meanSavedCharsPerRun: 10000,
+      medianSavedCharsPerRun: 10000,
+      maxSavedCharsPerRun: 10000,
+      summarizeCalls: 0,
+      byTask: [],
+    });
+    assert.ok(out.includes('33.3%'));
   });
 });
 

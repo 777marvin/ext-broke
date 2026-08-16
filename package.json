@@ -6,7 +6,8 @@
   "scripts": {
     "test": "tsx --test \"tests/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "bench": "tsx scripts/bench.ts"
+    "bench": "tsx scripts/bench.ts",
+    "measure": "tsx scripts/measure.ts"
   },
   "keywords": [
     "aiderdesk",

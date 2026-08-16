@@ -1,9 +1,11 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContextMessage } from '@aiderdesk/extensions';
+import type { CompressReport } from './compress';
 import { partText } from './output';
 
 export const STATS_PATH = join(__dirname, 'stats.jsonl');
+export const MEASURE_PATH = join(__dirname, 'measure.jsonl');
 
 /**
  * Token estimation. chars/4 is a deliberately crude heuristic (English prose
@@ -79,24 +81,35 @@ export function totalSavedChars(stats: TaskStats): number {
 }
 
 const MAX_STATS_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_MEASURE_FILE_BYTES = 5 * 1024 * 1024;
 
 /**
- * Append a stats line. Keeps the file bounded by rotation: once the file
- * exceeds the cap, only the most recent half of the lines is kept, then the
- * new line is appended. Stats are best effort - never break the extension.
- * `filePath` is parameterizable so tests run against a temp file.
+ * Append one JSON line to a jsonl ledger, rotating it once the file exceeds
+ * `maxBytes`: only the most recent half of the lines is kept. Shared by the
+ * stats ledger (throttled) and the measurement ledger (per run). Best effort
+ * - ledger writes must never break the extension. `maxBytes` is
+ * parameterizable so rotation is testable with tiny caps.
  */
-export function persistStats(stats: TaskStats, filePath: string = STATS_PATH): void {
+export function appendJsonLine(filePath: string, line: string, maxBytes: number): void {
   try {
-    if (existsSync(filePath) && readFileSync(filePath).length > MAX_STATS_FILE_BYTES) {
+    if (existsSync(filePath) && readFileSync(filePath).length > maxBytes) {
       const lines = readFileSync(filePath, 'utf-8').split('\n').filter((l) => l.trim());
       const kept = lines.slice(-Math.ceil(lines.length / 2));
       writeFileSync(filePath, kept.length ? `${kept.join('\n')}\n` : '', 'utf-8');
     }
-    appendFileSync(filePath, `${JSON.stringify(stats)}\n`, 'utf-8');
+    appendFileSync(filePath, `${line}\n`, 'utf-8');
   } catch {
-    // stats are best effort - never break the extension over them
+    // ledgers are best effort - never break the extension over them
   }
+}
+
+/**
+ * Append a stats line. Keeps the file bounded by rotation (see
+ * appendJsonLine). `filePath` is parameterizable so tests run against a temp
+ * file.
+ */
+export function persistStats(stats: TaskStats, filePath: string = STATS_PATH): void {
+  appendJsonLine(filePath, JSON.stringify(stats), MAX_STATS_FILE_BYTES);
 }
 
 /**
@@ -181,5 +194,135 @@ export function createStatsLoader(filePath: string = STATS_PATH, ttlMs: number =
     invalidate(taskId) {
       cache.delete(taskId);
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Measurement ledger (measure.jsonl): one record per real compression run.
+// This is the provable real-session counterpart to the deterministic
+// benchmark in scripts/bench.ts. Records carry sizes and per-pass removals
+// only - no paths, no message content (privacy).
+// ---------------------------------------------------------------------------
+
+export interface RunRecord {
+  kind: 'run';
+  taskId: string;
+  /** Epoch ms when the compression run happened. */
+  at: number;
+  /** Input size before compression (chars, incl. all messages). */
+  charsBefore: number;
+  /** Input size after compression (chars). */
+  charsAfter: number;
+  /** Total chars removed = charsBefore - charsAfter. */
+  savedChars: number;
+  structuralChars: number;
+  errorChars: number;
+  truncateChars: number;
+  summarizeChars: number;
+  /** Real summarizer LLM calls this run (0 = cache reuse). */
+  summarizeCalls: number;
+  summarizer: 'local' | 'cloud' | 'none';
+}
+
+/** Map a compression report to its measurement record (pure). */
+export function buildRunRecord(taskId: string, report: CompressReport): RunRecord {
+  return {
+    kind: 'run',
+    taskId,
+    at: Date.now(),
+    charsBefore: report.totalCharsBefore,
+    charsAfter: report.totalCharsAfter,
+    savedChars: report.totalCharsBefore - report.totalCharsAfter,
+    structuralChars: report.structuralChars,
+    errorChars: report.errorChars,
+    truncateChars: report.truncateChars,
+    summarizeChars: report.summarizeChars,
+    summarizeCalls: report.summarizeCalls,
+    summarizer: report.summarizer,
+  };
+}
+
+/** Append one run record to the measurement ledger (rotation-capped, best effort). */
+export function persistRunRecord(record: RunRecord, filePath: string = MEASURE_PATH, maxBytes: number = MAX_MEASURE_FILE_BYTES): void {
+  appendJsonLine(filePath, JSON.stringify(record), maxBytes);
+}
+
+/** Load all run records (oldest first). Malformed lines are skipped. */
+export function loadRunRecords(filePath: string = MEASURE_PATH): RunRecord[] {
+  try {
+    if (!existsSync(filePath)) return [];
+    const records: RunRecord[] = [];
+    for (const line of readFileSync(filePath, 'utf-8').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as RunRecord;
+        if (parsed.kind === 'run' && typeof parsed.taskId === 'string' && typeof parsed.charsBefore === 'number') {
+          records.push(parsed);
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+    return records;
+  } catch {
+    return [];
+  }
+}
+
+export interface MeasureSummary {
+  runs: number;
+  tasks: number;
+  /** Epoch span from first to last record (0 when only one record). */
+  spanMs: number;
+  charsBefore: number;
+  charsAfter: number;
+  savedChars: number;
+  savedTokens: number;
+  meanSavedCharsPerRun: number;
+  medianSavedCharsPerRun: number;
+  maxSavedCharsPerRun: number;
+  summarizeCalls: number;
+  /** Per-task breakdown, sorted by savedChars descending. */
+  byTask: Array<{ taskId: string; runs: number; savedChars: number }>;
+}
+
+/**
+ * Aggregate run records. The totals are a SUM OVER INDIVIDUAL RUNS of the
+ * same evolving conversation - they are NOT a cumulative context claim (the
+ * same region is compressed again on every model call). Returns null when
+ * there are no records.
+ */
+export function summarizeRunRecords(records: RunRecord[]): MeasureSummary | null {
+  if (records.length === 0) return null;
+  const savedPerRun = records.map((r) => r.savedChars);
+  const sorted = [...savedPerRun].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 1 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+  const byTask = new Map<string, { runs: number; savedChars: number }>();
+  for (const r of records) {
+    const entry = byTask.get(r.taskId) ?? { runs: 0, savedChars: 0 };
+    entry.runs += 1;
+    entry.savedChars += r.savedChars;
+    byTask.set(r.taskId, entry);
+  }
+  const charsBefore = records.reduce((sum, r) => sum + r.charsBefore, 0);
+  const charsAfter = records.reduce((sum, r) => sum + r.charsAfter, 0);
+  const savedChars = records.reduce((sum, r) => sum + r.savedChars, 0);
+  const ats = records.map((r) => r.at).sort((a, b) => a - b);
+  return {
+    runs: records.length,
+    tasks: byTask.size,
+    spanMs: ats.length > 1 ? ats[ats.length - 1] - ats[0] : 0,
+    charsBefore,
+    charsAfter,
+    savedChars,
+    savedTokens: estimateTokens(savedChars),
+    meanSavedCharsPerRun: Math.round(savedChars / records.length),
+    medianSavedCharsPerRun: median,
+    maxSavedCharsPerRun: sorted[sorted.length - 1],
+    summarizeCalls: records.reduce((sum, r) => sum + r.summarizeCalls, 0),
+    byTask: [...byTask.entries()]
+      .map(([taskId, entry]) => ({ taskId, runs: entry.runs, savedChars: entry.savedChars }))
+      .sort((a, b) => b.savedChars - a.savedChars),
   };
 }

@@ -9,7 +9,7 @@ import type {
   ToolFinishedEvent,
   UIComponentDefinition,
 } from '@aiderdesk/extensions';
-import { applyBrokeCommand, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand } from './commands';
+import { applyBrokeCommand, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand } from './commands';
 import {
   compressMessages,
   createCompressState,
@@ -24,7 +24,20 @@ import { isPlaintextRemoteUrl, ollamaGenerate, ollamaStatus, type OllamaStatus }
 import { extractOutputText } from './output';
 import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from './pricing';
 import { runSelfTest } from './selftest';
-import { clearTaskStats, createStatsLoader, emptyStats, estimateTokens, persistStats, totalSavedChars, type StatsLoader, type TaskStats } from './tokens';
+import {
+  buildRunRecord,
+  clearTaskStats,
+  createStatsLoader,
+  emptyStats,
+  estimateTokens,
+  loadRunRecords,
+  persistRunRecord,
+  persistStats,
+  summarizeRunRecords,
+  totalSavedChars,
+  type StatsLoader,
+  type TaskStats,
+} from './tokens';
 import { boundedMapSet } from './compress';
 
 // Load the JSX templates once at module level (official template pattern).
@@ -276,6 +289,11 @@ export default class Broke implements Extension {
       boundedMapSet(this.lastPersistAt, taskId, Date.now());
       persistStats(stats);
     }
+    // Per-run measurement ledger (NOT throttled - one record per real run is
+    // the point). Rotation-capped like stats.jsonl, config-gated, best effort.
+    if (getConfig().stats.measure) {
+      persistRunRecord(buildRunRecord(taskId, report));
+    }
 
     const savedChars = report.structuralChars + report.errorChars + report.truncateChars + report.summarizeChars;
     const lastLog = this.lastLogAt.get(taskId) ?? 0;
@@ -388,6 +406,10 @@ export default class Broke implements Extension {
             case 'selftest': {
               const result = await runSelfTest(config);
               return log(result.lines.join('\n'));
+            }
+            case 'measure': {
+              const summary = summarizeRunRecords(loadRunRecords());
+              return log(formatMeasure(summary));
             }
             case 'help':
               return log(HELP_TEXT);

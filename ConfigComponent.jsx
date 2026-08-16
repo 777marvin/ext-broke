@@ -33,6 +33,7 @@
   const truncate = cfg.truncate ?? {};
   const errors = cfg.errors ?? {};
   const uiCfg = cfg.ui ?? {};
+  const statsCfg = cfg.stats ?? {};
 
   return (
     <div className="flex flex-col gap-5">
@@ -170,12 +171,22 @@
 
       {/* 6 - UI */}
       <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium">UI</p>
+        <p className="text-sm font-medium">UI &amp; measurement</p>
         <Checkbox
           label="Show the 💸 saved-tokens badge in the task status bar"
           checked={uiCfg.showStatusBadge ?? true}
           onChange={(checked) => updateConfig({ ...config, ui: { ...uiCfg, showStatusBadge: checked } })}
         />
+        <Checkbox
+          label="Record every compression run to measure.jsonl"
+          checked={statsCfg.measure ?? true}
+          onChange={(checked) => updateConfig({ ...config, stats: { ...statsCfg, measure: checked } })}
+        />
+        <p className="text-xs text-text-secondary -mt-2">
+          Per-run records (sizes + per-pass removals, no content, no paths) are what <span className="font-mono">/broke
+          measure</span> and <span className="font-mono">npm run measure</span> analyze - the provable real-session
+          numbers. The file rotates at 5 MB.
+        </p>
       </div>
     </div>
   );

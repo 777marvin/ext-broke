@@ -66,6 +66,18 @@ const UiSchema = z.object({
 });
 const uiDefault = UiSchema.parse({});
 
+const StatsSchema = z.object({
+  /**
+   * Append one record per real compression run to measure.jsonl (taskId,
+   * timestamps, input/output chars, per-pass removals). These per-run
+   * records are what /broke measure and `npm run measure` analyze - the
+   * provable real-session numbers. No paths, no content, rotation-capped
+   * like stats.jsonl.
+   */
+  measure: z.boolean().default(true),
+});
+const statsDefault = StatsSchema.parse({});
+
 export const ConfigSchema = z.object({
   /** Master switch - /broke off disables the whole pipeline. */
   enabled: z.boolean().default(true),
@@ -93,6 +105,7 @@ export const ConfigSchema = z.object({
   errors: ErrorsSchema.default(errorsDefault),
   summarize: SummarizeSchema.default(summarizeDefault),
   ui: UiSchema.default(uiDefault),
+  stats: StatsSchema.default(statsDefault),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -181,6 +194,7 @@ export function applyConfigUpdates(current: Config, updates: Array<[string, unkn
     errors: { ...current.errors },
     summarize: { ...current.summarize },
     ui: { ...current.ui },
+    stats: { ...current.stats },
   };
   for (const [path, value] of updates) {
     const parts = path.split('.');
