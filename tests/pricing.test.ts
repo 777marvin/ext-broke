@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from '../pricing';
-import { createStatsLoader, emptyStats, loadTaskStats, persistStats } from '../tokens';
+import { clearTaskStats, createStatsLoader, emptyStats, loadTaskStats, persistStats } from '../tokens';
 
 const price = (inputPerMToken: number | null): TaskModelPrice => ({
   modelId: 'gpt-4o',
@@ -58,6 +58,46 @@ describe('stats persistence privacy', () => {
       const loaded = loadTaskStats('task-1', file);
       assert.equal(loaded?.passes, 3);
       assert.equal(loaded?.savedChars.structural, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('clearTaskStats', () => {
+  it('removes only the matching task lines and keeps others', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-stats-clear-'));
+    const file = join(dir, 'stats.jsonl');
+    try {
+      persistStats({ ...emptyStats('task-1'), passes: 1 }, file);
+      persistStats({ ...emptyStats('task-2'), passes: 2 }, file);
+      persistStats({ ...emptyStats('task-1'), passes: 3 }, file);
+
+      clearTaskStats('task-1', file);
+
+      assert.equal(loadTaskStats('task-1', file), null, 'all task-1 lines are gone');
+      assert.equal(loadTaskStats('task-2', file)?.passes, 2, 'other tasks survive the reset');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops malformed lines instead of crashing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-stats-clear-'));
+    const file = join(dir, 'stats.jsonl');
+    try {
+      persistStats({ ...emptyStats('task-1'), passes: 1 }, file);
+      const line = readFileSync(file, 'utf-8').trim();
+      persistStats({ ...emptyStats('task-2'), passes: 2 }, file);
+      // Corrupt the first line in place (keep its taskId unparseable).
+      const rewritten = readFileSync(file, 'utf-8').replace(line, '{not json');
+      writeFileSync(file, rewritten, 'utf-8');
+
+      clearTaskStats('task-2', file);
+
+      assert.equal(loadTaskStats('task-2', file), null);
+      assert.equal(loadTaskStats('task-1', file), null, 'malformed lines are dropped during the rewrite');
+      assert.equal(readFileSync(file, 'utf-8').trim(), '', 'no leftover garbage lines');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
