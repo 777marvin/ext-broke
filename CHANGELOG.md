@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carrying such parts are now left untouched (truncate still shrinks
   their text), and `error-json` tool results keep their payload in the
   summarizer input instead of contributing nothing.
+- **Ollama timeouts now cover the response body.** The request timeout
+  ended as soon as the response headers arrived; a server that then
+  stalled its body hung the summarization (and with it the model call)
+  indefinitely. The whole request (headers AND body) is now inside the
+  abort window, and timeouts fail fast with a clear message.
 
 ### Changed
 

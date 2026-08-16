@@ -31,14 +31,32 @@ const REQUEST_TIMEOUT_MS = 60_000;
 /** Status checks must never block task init or commands - short timeout. */
 const STATUS_TIMEOUT_MS = 3_000;
 
-async function request(baseUrl: string, path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+/**
+ * Fetch JSON from the Ollama API. The timeout covers the WHOLE request:
+ * fetch() resolves as soon as the response headers arrive, so reading the
+ * body outside the abort window could hang forever on a server that sends
+ * headers and then stalls (exactly what the "hung Ollama must not stall
+ * the task" rule forbids). Non-ok responses throw with the status and a
+ * snippet of the error body.
+ */
+async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, { ...init, signal: controller.signal });
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, { ...init, signal: controller.signal });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}${text ? `: ${text.slice(0, 300)}` : ''}`);
+    }
+    return (await res.json()) as T;
   } finally {
     clearTimeout(timer);
   }
+}
+
+function errorMessage(err: unknown, timeoutMs: number): string {
+  if (err instanceof Error && err.name === 'AbortError') return `timeout after ${timeoutMs} ms`;
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** True when the URL is plaintext HTTP to a non-loopback host. */
@@ -56,13 +74,9 @@ export function isPlaintextRemoteUrl(url: string): boolean {
 /** Check whether Ollama is reachable and list the available models. */
 export async function ollamaStatus(baseUrl: string, timeoutMs = STATUS_TIMEOUT_MS): Promise<OllamaStatus> {
   try {
-    const res = await request(baseUrl, '/api/tags', undefined, timeoutMs);
-    if (!res.ok) {
-      // An HTTP error means the server answered - but it is NOT usable for
-      // summarization, so it must not count as reachable.
-      return { reachable: false, models: [], error: `HTTP ${res.status}` };
-    }
-    const body = (await res.json()) as { models?: { name?: string }[] };
+    // An HTTP error throws here (requestJson) - the server answered but is
+    // NOT usable for summarization, so it must not count as reachable.
+    const body = await requestJson<{ models?: { name?: string }[] }>(baseUrl, '/api/tags', undefined, timeoutMs);
     return {
       reachable: true,
       models: (body.models ?? []).map((m) => m.name ?? '').filter(Boolean),
@@ -71,18 +85,26 @@ export async function ollamaStatus(baseUrl: string, timeoutMs = STATUS_TIMEOUT_M
     return {
       reachable: false,
       models: [],
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err, timeoutMs),
     };
   }
 }
 
 /**
  * Generate text with a local Ollama model. Non-streaming; fails loudly with
- * a descriptive error so callers can fall back gracefully.
+ * a descriptive error so callers can fall back gracefully. The timeout
+ * covers headers AND body, so a stalled response fails fast instead of
+ * blocking the model call that waits for this summarization.
  */
-export async function ollamaGenerate(baseUrl: string, model: string, prompt: string, maxTokens = 1024): Promise<OllamaGenerateResult> {
+export async function ollamaGenerate(
+  baseUrl: string,
+  model: string,
+  prompt: string,
+  maxTokens = 1024,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<OllamaGenerateResult> {
   try {
-    const res = await request(
+    const body = await requestJson<{ response?: string; total_duration?: number; error?: string }>(
       baseUrl,
       '/api/generate',
       {
@@ -95,12 +117,8 @@ export async function ollamaGenerate(baseUrl: string, model: string, prompt: str
           options: { num_predict: maxTokens, temperature: 0.2 },
         }),
       },
-      REQUEST_TIMEOUT_MS,
+      timeoutMs,
     );
-    if (!res.ok) {
-      return { ok: false, error: `Ollama HTTP ${res.status}: ${(await res.text()).slice(0, 300)}` };
-    }
-    const body = (await res.json()) as { response?: string; total_duration?: number; error?: string };
     if (body.error) {
       return { ok: false, error: body.error };
     }
@@ -109,6 +127,9 @@ export async function ollamaGenerate(baseUrl: string, model: string, prompt: str
     }
     return { ok: true, text: body.response, durationMs: body.total_duration ? Math.round(body.total_duration / 1e6) : undefined };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    // Keep the established message shapes ("Ollama HTTP n: ...", plain
+    // body errors); only the abort case gets a dedicated timeout message.
+    const message = errorMessage(err, timeoutMs);
+    return { ok: false, error: message.startsWith('HTTP ') || message.startsWith('timeout after ') ? `Ollama ${message}` : message };
   }
 }
