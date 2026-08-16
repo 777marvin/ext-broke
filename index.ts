@@ -87,6 +87,13 @@ export default class Broke implements Extension {
   private readonly summarizeFailures = new Map<string, number>();
   /** Tasks whose summarize pass is auto-disabled after repeated failures. */
   private readonly summarizeDisabled = new Map<string, true>();
+  /**
+   * Reentry guard: the cloud summarizer calls task.generateText, and that
+   * call can fire onOptimizeMessages again on the same extension instance.
+   * Without the guard the summarizer's own input would be compressed again
+   * (double compression or unbounded recursion).
+   */
+  private optimizing = false;
   private ollamaStatusCache: { at: number; status: OllamaStatus } | null = null;
 
   onLoad(context: ExtensionContext): void {
@@ -135,6 +142,7 @@ export default class Broke implements Extension {
   // input the model sees is already compressed.
   // -------------------------------------------------------------------------
   async onOptimizeMessages(event: OptimizeMessagesEvent, context: ExtensionContext): Promise<Partial<OptimizeMessagesEvent> | void> {
+    if (this.optimizing) return;
     const config = getConfig();
     if (!config.enabled) return;
 
@@ -157,6 +165,7 @@ export default class Broke implements Extension {
       },
     };
 
+    this.optimizing = true;
     try {
       const { messages, report } = await compressMessages(event.optimizedMessages, config, deps, this.state, taskId, {
         summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
@@ -174,6 +183,8 @@ export default class Broke implements Extension {
     } catch (err) {
       // Never break the model call - compression is best effort.
       context.log(`Broke: compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      this.optimizing = false;
     }
   }
 
