@@ -218,6 +218,7 @@ Conventional commits, Keep a Changelog, semantic versioning.
 - [docs/aiderdesk-builtin.md](docs/aiderdesk-builtin.md): what AiderDesk already saves on its own (verified from source)
 - [docs/local-models.md](docs/local-models.md): what local models can really do on this hardware (RTX 3050, 4 GB VRAM)
 - [docs/feats.md](docs/feats.md): roadmap and feature specs
+- [docs/review-backlog.md](docs/review-backlog.md): open findings from the code review (severity, fix approach)
 
 ## License
 

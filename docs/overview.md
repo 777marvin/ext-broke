@@ -1,6 +1,6 @@
 # Project Overview
 
-*Snapshot: v0.3.0 (2026-08-14)*
+*Snapshot: v0.3.0 + unreleased fixes (2026-08-16)*
 
 ## What broke is
 
@@ -20,18 +20,19 @@ applies to the input of each model call only.
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `index.ts` | 475 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …`), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`) |
-| `compress.ts` | 753 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass`, `summarizePass` (with `maskSecrets` + prompt-injection hardening), `compressMessages` |
-| `errors.ts` | 365 | F1 error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in `text` **and** structured `json`/`content` outputs (`{ stdout, stderr, exitCode }`), extracts the diagnostic essence, archives full output at tool level |
+| `index.ts` | 495 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …`), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`) |
+| `compress.ts` | 797 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
+| `errors.ts` | 365 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in `text` **and** structured `json`/`content` outputs (`{ stdout, stderr, exitCode }`), extracts the diagnostic essence, archives full output at tool level; `isCommandTool` classification |
 | `config.ts` | 182 | Zod schema, defaults, atomic `config.json` writes, cache invalidation, corrupted-config warning |
 | `commands.ts` | 224 | `/broke` parser + all subcommands (status, stats, reset, selftest, help, level/threshold/limit tuning) |
-| `tokens.ts` | 178 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset) |
-| `local.ts` | 114 | Ollama HTTP client (`/api/generate`, status probe with 3 s timeout), plaintext-remote-URL detection |
+| `tokens.ts` | 178 | Token estimation (chars/4), part text extraction (incl. `error-json`), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset) |
+| `local.ts` | 135 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
 | `selftest.ts` | 151 | `/broke selftest`: synthetic conversation, forced-low thresholds, per-pass savings |
 | `ConfigComponent.jsx` | 177 | Settings dialog (gear icon on the extension card) |
-| `StatusBadge.jsx` | 63 | 💸 badge in the task status bar, per-pass breakdown in the tooltip |
-| `tests/compress.test.ts` | 644 | Unit tests: region computation, structural/truncate/error passes, summary handling |
-| `tests/errors.test.ts` | 374 | Unit tests: error extraction for plain + structured outputs |
+| `StatusBadge.jsx` | 64 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state |
+| `tests/compress.test.ts` | 734 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate |
+| `tests/errors.test.ts` | 414 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification |
+| `tests/local.test.ts` | 137 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts |
 | `tests/pricing.test.ts` | 65 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats privacy |
 
 ## How the pipeline works
@@ -44,7 +45,10 @@ everything older than the protected region:
 2. **errors** (F1): compiler/test output becomes its diagnostic essence
    with an explicit `… [broke: error summary - N lines → M lines]` marker.
    Engages per-message above `errors.minChars` (default 8000), before
-   truncate. Optionally rewrites stored history at tool level
+   truncate. Only command/compiler/test tools are compressed (same
+   `isCommandTool` guard as the tool-level path): file reads, search
+   results and docs that merely look like errors are never rewritten.
+   Optionally rewrites stored history at tool level
    (`errors.toolLevel`, archives originals under `<extension>/errors/`).
 3. **truncate**: old tool outputs over 200 lines / 20 KB → head+tail with
    marker; tool-call inputs over 2000 chars → `__broke` preview.
@@ -52,11 +56,15 @@ everything older than the protected region:
    `maxContextChars` (60000 ≈ 15k tokens) → one `[broke-compacted]`
    summary message, cached per task (tool-loop steps append to the cache;
    regeneration only on new user turns or ≥ `minChars` of new content).
+   Regions carrying images, file attachments or reasoning parts are
+   skipped entirely (never silently dropped); truncate still shrinks
+   their text parts.
 
 Protected: the task brief (first user message) and the last `protectedTurns`
 (2) user turns; sessions with fewer user turns protect only the current step
 (last 5 messages). After 3 consecutive summarize failures the pass
-auto-disables for that task.
+auto-disables for that task (badge shows the state); a successful summary,
+`/broke reset` or a summarizer backend/model change re-enables it.
 
 ## Measured impact
 
@@ -80,3 +88,4 @@ Caveat: run used v0.2.0, before the structured-output error-compression fix.
 - `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
 - `docs/local-models.md`: local-model capabilities on this hardware (RTX 3050, 4 GB VRAM)
 - `docs/feats.md`: specs for F2 ST-slicing, F3 state snapshotting/memory flushing, F4 local keyword/vector index (F1 shipped in v0.2.0)
+- `docs/review-backlog.md`: open findings from the 2026-08-16 review (severity, location, fix approach)
