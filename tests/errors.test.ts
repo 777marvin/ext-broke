@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ContextMessage } from '@aiderdesk/extensions';
@@ -341,12 +341,18 @@ describe('isCommandTool', () => {
 });
 
 describe('saveErrorOutput', () => {
-  it('archives the output under <dir>/<task>/<call>.log', () => {
+  it('archives the output under <dir>/<task>/<call>-<hash>.log', () => {
     const dir = mkdtempSync(join(tmpdir(), 'broke-errors-'));
     try {
       const rel = saveErrorOutput('task-1', 'call-1', 'full output', dir);
-      assert.equal(rel, join('errors', 'task-1', 'call-1.log'));
-      assert.equal(readFileSync(join(dir, 'task-1', 'call-1.log'), 'utf-8'), 'full output');
+      // Task dir AND file name carry an 8-char hash suffix of the original
+      // id (F16) - derive the real dir name from disk instead of guessing.
+      assert.ok(/^errors[\\/]task-1-[0-9a-f]{8}[\\/]call-1-[0-9a-f]{8}\.log$/.test(rel), rel);
+      const taskDirs = readdirSync(dir);
+      assert.equal(taskDirs.length, 1);
+      const files = readdirSync(join(dir, taskDirs[0]));
+      assert.equal(files.length, 1);
+      assert.equal(readFileSync(join(dir, taskDirs[0], files[0]), 'utf-8'), 'full output');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -359,7 +365,28 @@ describe('saveErrorOutput', () => {
       // No path-traversal SEGMENT may survive sanitization ('..' glued into
       // a name like 'task_.._evil' is inert - it is a plain file name).
       assert.ok(!rel.split(/[\\/]/).includes('..'), rel);
-      assert.ok(existsSync(join(dir, 'task_.._evil', 'call_1_x.log')));
+      const taskDirs = readdirSync(dir);
+      assert.equal(taskDirs.length, 1);
+      assert.ok(taskDirs[0].startsWith('task_.._evil-'), taskDirs[0]);
+      const files = readdirSync(join(dir, taskDirs[0]));
+      assert.equal(files.length, 1);
+      assert.ok(/^call_1_x-[0-9a-f]{8}\.log$/.test(files[0]), files[0]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('never collides for long ids sharing the same 80-char prefix (F16)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-errors-'));
+    try {
+      const longA = 'a'.repeat(120);
+      const longB = 'a'.repeat(80) + 'b'.repeat(40);
+      saveErrorOutput('task-1', longA, 'first', dir);
+      saveErrorOutput('task-1', longB, 'second', dir);
+      const taskDirs = readdirSync(dir);
+      assert.equal(taskDirs.length, 1);
+      const files = readdirSync(join(dir, taskDirs[0]));
+      assert.equal(files.length, 2, 'shared-prefix ids must not overwrite each other');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -371,16 +398,20 @@ describe('saveErrorOutput', () => {
       // 8 files x 50B = 400B; cap 300B -> 5 files must survive (down to 250B).
       for (let i = 0; i < 4; i++) saveErrorOutput('a', `c${i}`, 'x'.repeat(50), dir);
       for (let i = 0; i < 4; i++) saveErrorOutput('b', `c${i}`, 'x'.repeat(50), dir);
+      const dirs = readdirSync(dir);
+      const dirA = dirs.find((d) => d.startsWith('a-'));
+      const dirB = dirs.find((d) => d.startsWith('b-'));
+      assert.ok(dirA && dirB, 'both task dirs must exist');
       // Make a-specific files older than b-specific files, so eviction is observable.
       const past = new Date(Date.now() - 3600_000);
       const { utimesSync } = require('node:fs');
-      for (let i = 0; i < 4; i++) {
-        utimesSync(join(dir, 'a', `c${i}.log`), past, past);
+      for (const f of readdirSync(join(dir, dirA))) {
+        utimesSync(join(dir, dirA, f), past, past);
       }
       enforceArchiveCap(dir, 300, 200);
       const count = (d: string): number => readdirSync(join(dir, d)).filter((f) => f.endsWith('.log')).length;
-      assert.equal(count('a'), 0, 'oldest task files are evicted first');
-      assert.equal(count('b'), 4, 'newer files survive');
+      assert.equal(count(dirA), 0, 'oldest task files are evicted first');
+      assert.equal(count(dirB), 4, 'newer files survive');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -192,6 +192,18 @@ function fmtChars(chars: number): string {
 }
 
 /**
+ * True when the configured local model is actually installed. Exact tag
+ * match wins; a base-name (no tag) config matches any tag of that model.
+ * A TAG config never matches other tags: `qwen2.5-coder:3b` configured
+ * with only `:7b` installed must report NOT found, not a false positive.
+ */
+export function hasOllamaModel(models: string[], configured: string): boolean {
+  if (models.includes(configured)) return true;
+  if (configured.includes(':')) return false;
+  return models.some((m) => m.startsWith(`${configured}:`));
+}
+
+/**
  * Human-readable stats block. `price` is the current task model price -
  * the money line is computed from it, so the saved $ is always the price
  * of the model the task is using right now.
@@ -228,7 +240,7 @@ export async function formatStatus(config: Config, stats: TaskStats | null, pric
   ];
   if (ollama) {
     if (ollama.reachable) {
-      const hasModel = ollama.models.includes(config.summarize.localModel) || ollama.models.some((m) => m.startsWith(config.summarize.localModel.split(':')[0]));
+      const hasModel = hasOllamaModel(ollama.models, config.summarize.localModel);
       lines.push(`  ollama ${ollama.version ? `v${ollama.version} ` : ''}reachable at ${config.summarize.ollamaUrl} - ${ollama.models.length} model(s) installed${hasModel ? '' : `, ${config.summarize.localModel} NOT found (run: ollama pull ${config.summarize.localModel})`}`);
     } else {
       lines.push(`  ollama NOT reachable at ${config.summarize.ollamaUrl} - local summarization is inactive (${ollama.error ?? 'unknown error'}). Start it with: ollama serve`);

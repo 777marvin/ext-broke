@@ -21,7 +21,8 @@
   .git, node_modules and sensitive files (.env*, *.pem, *.key, *.p12,
   *.pfx, *.log, .aider*, stats.jsonl) are never copied from the working
   tree. Existing runtime files in the target (config.json, stats.jsonl,
-  node_modules) are preserved across the deploy.
+  node_modules, and errors/ up to 100 MB) are preserved across the
+  deploy.
 
 .PARAMETER Category
   skills | extensions | agents
@@ -194,6 +195,23 @@ try {
       $p = Join-Path $Target $rel
       if (Test-Path $p) {
         Copy-Item -Path $p -Destination (Join-Path $tmp $rel) -Recurse -Force
+      }
+    }
+    # The errors/ archive is preserved with a size cap: it is the only thing
+    # that makes "full output saved to errors/..." references survive a
+    # deploy, but it is debug data and must not drag gigabytes along.
+    if ($Category -eq 'extensions') {
+      $errSrc = Join-Path $Target 'errors'
+      if (Test-Path $errSrc) {
+        $errSize = (Get-ChildItem -Path $errSrc -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+        if (-not $errSize) { $errSize = 0 }
+        $maxErrorsPreserveBytes = 100MB
+        if ($errSize -le $maxErrorsPreserveBytes) {
+          Copy-Item -Path $errSrc -Destination (Join-Path $tmp 'errors') -Recurse -Force
+        }
+        else {
+          Write-Host "[!] errors/ archive exceeds 100 MB - not preserved across the deploy." -ForegroundColor Yellow
+        }
       }
     }
     # Preserved node_modules + changed package.json = stale dependencies.

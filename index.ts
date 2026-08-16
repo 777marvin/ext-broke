@@ -100,10 +100,23 @@ function extractToolResultText(output: unknown): ToolResultText | null {
   return null;
 }
 
+/**
+ * The metadata version comes from package.json (single source of truth):
+ * a hardcoded string drifts from the released version.
+ */
+function loadPackageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8')) as { version?: string };
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 export default class Broke implements Extension {
   static metadata = {
     name: 'Broke',
-    version: '0.3.0',
+    version: loadPackageVersion(),
     description:
       'Token budget extension: progressive input compression (structural + truncate + summarize) with local-model (Ollama) summarization offload',
     author: '777marvin',

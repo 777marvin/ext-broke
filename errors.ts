@@ -8,6 +8,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 /** Directory where full tool outputs are archived when errors.toolLevel is on. */
@@ -18,8 +19,16 @@ export const MAX_ERRORS_DIR_BYTES = 100 * 1024 * 1024;
 /** After eviction the archive is trimmed to this watermark (hysteresis). */
 const EVICT_DOWN_TO_BYTES = 80 * 1024 * 1024;
 
+/**
+ * File-system-safe name: invalid chars replaced, truncated to 80 chars, plus
+ * an 8-char hash suffix of the ORIGINAL string. Two long ids sharing the
+ * same 80-char prefix would otherwise collide and overwrite each other's
+ * archive file.
+ */
 function safeName(s: string): string {
-  return s.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'unknown';
+  const base = s.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'unknown';
+  const hash = createHash('sha1').update(s).digest('hex').slice(0, 8);
+  return `${base}-${hash}`;
 }
 
 /**

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   applyBrokeCommand,
   formatStats,
+  hasOllamaModel,
   HELP_TEXT,
   parseBrokeCommand,
   type BrokeCommand,
@@ -184,5 +185,22 @@ describe('HELP_TEXT', () => {
     assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.errors.minChars)));
     assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.summarize.afterTurns)));
     assert.ok(HELP_TEXT.includes(DEFAULT_CONFIG.summarize.localModel));
+  });
+});
+
+describe('hasOllamaModel', () => {
+  it('matches the exact tag first (F15)', () => {
+    assert.equal(hasOllamaModel(['qwen2.5-coder:3b'], 'qwen2.5-coder:3b'), true);
+    assert.equal(hasOllamaModel(['qwen2.5-coder:7b'], 'qwen2.5-coder:3b'), false, 'a tag config must not match other tags');
+  });
+
+  it('matches any tag for an untagged base-name config', () => {
+    assert.equal(hasOllamaModel(['qwen2.5-coder:3b'], 'qwen2.5-coder'), true);
+    assert.equal(hasOllamaModel(['qwen2.5-coder:7b'], 'qwen2.5-coder'), true);
+  });
+
+  it('reports missing models honestly', () => {
+    assert.equal(hasOllamaModel([], 'qwen2.5-coder:3b'), false);
+    assert.equal(hasOllamaModel(['llama3.2:1b'], 'qwen2.5-coder:3b'), false);
   });
 });

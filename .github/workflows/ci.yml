@@ -35,3 +35,16 @@ jobs:
           ./scripts/deploy.ps1 -Category extensions -Name smoke-nonexistent -DryRun
           if ($LASTEXITCODE -ne 0) { throw 'deploy.ps1 standalone dry run failed' }
           Write-Output 'deploy.ps1 standalone smoke test passed.'
+
+  deploy-script-windows:
+    name: deploy.ps1 standalone smoke test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke-test deploy.ps1 in standalone mode
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/deploy.ps1 -Category extensions -Name smoke-nonexistent -DryRun
+          if ($LASTEXITCODE -ne 0) { throw 'deploy.ps1 standalone dry run failed' }
+          Write-Output 'deploy.ps1 standalone smoke test passed.'

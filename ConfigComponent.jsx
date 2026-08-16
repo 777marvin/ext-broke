@@ -168,7 +168,7 @@
         </p>
       </div>
 
-      {/* 5 - UI */}
+      {/* 6 - UI */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">UI</p>
         <Checkbox
