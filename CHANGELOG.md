@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Summarize auto-disable now actually disables.** After 3 consecutive
+  summarizer failures the extension logged "disabled for this task" but
+  kept retrying on every model call (each retry stalls up to 60 s when
+  Ollama is down). The summarize pass is now gated per task; the gate
+  clears after a successful summary, `/broke reset`, or a summarizer
+  backend/model change, and the badge shows the disabled state.
+
 ### Changed
 
 - **All em-dashes removed.** Docs, UI strings and log messages now use

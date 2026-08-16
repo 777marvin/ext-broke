@@ -685,12 +685,23 @@ export async function summarizePass(
 // pipeline entry
 // ---------------------------------------------------------------------------
 
+export interface CompressOptions {
+  /**
+   * Suppress the LLM summarize pass for this run. Set by the extension when
+   * a task was auto-disabled after repeated summarizer failures - the gate
+   * lives here (not in summarizePass) so the suppression is explicit and
+   * testable at the pipeline level.
+   */
+  summarizeDisabled?: boolean;
+}
+
 export async function compressMessages(
   messages: ContextMessage[],
   config: Config,
   deps: SummarizeDeps,
   state: CompressState,
   taskId: string,
+  opts: CompressOptions = {},
 ): Promise<{ messages: ContextMessage[]; report: CompressReport }> {
   const totalCharsBefore = messagesChars(messages);
   const report = emptyReport(totalCharsBefore);
@@ -726,7 +737,7 @@ export async function compressMessages(
 
   // Pass 4 - summarize (lossy, LLM). Isolated: a summarizer failure must not
   // discard the structural/truncate savings nor break the model call.
-  if (config.level === 'summarize' && totalCharsBefore > config.maxContextChars) {
+  if (config.level === 'summarize' && !opts.summarizeDisabled && totalCharsBefore > config.maxContextChars) {
     try {
       const summarized = await summarizePass(work, config.protectedTurns, config, deps, state, taskId);
       report.summarizeChars = summarized.removedChars;

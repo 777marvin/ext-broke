@@ -8,6 +8,7 @@
   const failed = data.summarizeFailures ?? 0;
   const ollama = data.ollama ?? null;
   const cost = data.cost ?? { savedUsd: null, modelLabel: null };
+  const disabled = data.summarizeDisabled ?? false;
 
   const backendLabel = configured === 'local' ? 'local (Ollama)' : configured === 'cloud' ? 'cloud' : 'off';
   const usedLabel = used === 'local' ? 'local (Ollama)' : used === 'cloud' ? 'cloud' : 'never yet';
@@ -32,7 +33,7 @@
     `saved ≈ ${total.toLocaleString()} input tokens${money} (chars/4 estimate)`,
     cost.modelLabel ? `  at current task model: ${cost.modelLabel}` : '',
     `  structural: ${(s.structural ?? 0).toLocaleString()} | truncate: ${(s.truncate ?? 0).toLocaleString()} | summarize: ${(s.summarize ?? 0).toLocaleString()}`,
-    `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` - ${failed} failure(s)` : ''}`,
+    `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` - ${failed} failure(s)` : ''}${disabled ? ' - auto-disabled after repeated failures (/broke reset re-enables)' : ''}`,
     ollamaNote ? `  ${ollamaNote}` : '',
     'click the task input for /broke stats',
   ]

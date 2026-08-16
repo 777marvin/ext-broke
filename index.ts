@@ -114,6 +114,8 @@ export default class Broke implements Extension {
   private readonly statsByTask = new Map<string, TaskStats>();
   private readonly lastLogAt = new Map<string, number>();
   private readonly summarizeFailures = new Map<string, number>();
+  /** Tasks whose summarize pass is auto-disabled after repeated failures. */
+  private readonly summarizeDisabled = new Map<string, true>();
   private ollamaStatusCache: { at: number; status: OllamaStatus } | null = null;
 
   onLoad(context: ExtensionContext): void {
@@ -185,7 +187,9 @@ export default class Broke implements Extension {
     };
 
     try {
-      const { messages, report } = await compressMessages(event.optimizedMessages, config, deps, this.state, taskId);
+      const { messages, report } = await compressMessages(event.optimizedMessages, config, deps, this.state, taskId, {
+        summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
+      });
       // Price lookup only when something was actually compressed (it is
       // cached afterwards; the badge warms it on task open).
       const price = report.touched ? await resolveTaskModelPrice(context) : null;
@@ -254,8 +258,11 @@ export default class Broke implements Extension {
       boundedMapSet(this.summarizeFailures, taskId, failures);
       if (failures >= MAX_SUMMARIZE_FAILURES) {
         this.summarizeFailures.delete(taskId);
+        // Real disable: the gate is passed to compressMessages on every
+        // model call so the summarizer is not retried (each retry costs a
+        // full REQUEST_TIMEOUT_MS when Ollama is down).
+        boundedMapSet(this.summarizeDisabled, taskId, true);
         this.state.cachedSummaryByTask.delete(taskId);
-        // Soft-disable summarization for this task to avoid repeated slow failures.
         void this.context
           ?.getTaskContext()
           ?.addLogMessage(
@@ -264,8 +271,12 @@ export default class Broke implements Extension {
           );
         boundedMapSet(this.lastLogAt, taskId, Date.now());
       }
-    } else {
+    } else if (report.summarizer !== 'none') {
+      // Only a REAL summarize run resets the failure state - a skipped pass
+      // (gate active) reports summarizeFailed=false too and must never
+      // re-enable summarization (that would toggle the gate every call).
       this.summarizeFailures.delete(taskId);
+      this.summarizeDisabled.delete(taskId);
     }
     if (report.summarizer !== 'none') {
       stats.lastSummarizer = report.summarizer;
@@ -376,8 +387,9 @@ export default class Broke implements Extension {
                 clearTaskStats(taskId);
                 ext.state.cachedSummaryByTask.delete(taskId);
                 ext.summarizeFailures.delete(taskId);
+                ext.summarizeDisabled.delete(taskId);
               }
-              return log('broke: stats cleared for this task (incl. persisted history)');
+              return log('broke: stats cleared for this task (incl. persisted history; summarization re-enabled)');
             }
             case 'selftest': {
               const result = await runSelfTest(config);
@@ -389,6 +401,13 @@ export default class Broke implements Extension {
               return log(`broke: unknown command - ${cmd.raw} - /broke help lists all subcommands`);
             default: {
               const updated = applyBrokeCommand(cmd, config);
+              // Reconfiguring the summarizer backend/model is an explicit
+              // retry intent: clear the auto-disable so the new setup runs.
+              const taskId = context.getTaskContext()?.data.id;
+              if (taskId && (cmd.kind === 'summarize-via' || cmd.kind === 'summarize-model' || cmd.kind === 'summarize-cloud')) {
+                ext.summarizeDisabled.delete(taskId);
+                ext.summarizeFailures.delete(taskId);
+              }
               ext.context?.triggerUIComponentsReload();
               ext.refreshUI();
               return log(`broke: ${updated.message} - /broke help lists all subcommands`);
@@ -451,6 +470,7 @@ export default class Broke implements Extension {
       },
       totalSavedTokens: totalTokens,
       summarizeFailures: stats?.summarizeFailures ?? 0,
+      summarizeDisabled: this.summarizeDisabled.get(context.getTaskContext()?.data.id ?? '') === true,
       inTask: !!context.getTaskContext(),
       now: Date.now(),
     };

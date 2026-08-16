@@ -611,6 +611,27 @@ describe('compressMessages', () => {
     assert.ok(report.structuralChars >= 0);
     assert.equal(report.summarizeCalls, 0);
   });
+
+  it('skips the summarize pass when summarizeDisabled is set', async () => {
+    const msgs = summaryConversation();
+    const cfg: Config = {
+      ...summarizeConfig(),
+      level: 'summarize',
+      maxContextChars: 100,
+      protectedTurns: 1,
+    };
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const { messages: out, report } = await compressMessages(msgs, cfg, deps, state, 'task-int-4', {
+      summarizeDisabled: true,
+    });
+    assert.equal(calls.n, 0); // the disabled summarizer must not be retried
+    assert.equal(report.summarizeCalls, 0);
+    assert.equal(report.summarizeFailed, false); // a skipped pass is NOT a failure
+    assert.equal(report.summarizer, 'none');
+    assert.deepEqual(out, msgs); // no other pass changed the messages
+  });
 });
 
 describe('maskSecrets', () => {
