@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from '../pricing';
-import { emptyStats, loadTaskStats, persistStats } from '../tokens';
+import { createStatsLoader, emptyStats, loadTaskStats, persistStats } from '../tokens';
 
 const price = (inputPerMToken: number | null): TaskModelPrice => ({
   modelId: 'gpt-4o',
@@ -58,6 +58,54 @@ describe('stats persistence privacy', () => {
       const loaded = loadTaskStats('task-1', file);
       assert.equal(loaded?.passes, 3);
       assert.equal(loaded?.savedChars.structural, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('createStatsLoader', () => {
+  it('caches reads within the TTL and re-reads after it (F6)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-stats-loader-'));
+    const file = join(dir, 'stats.jsonl');
+    const loader = createStatsLoader(file, 60_000);
+    try {
+      persistStats({ ...emptyStats('task-1'), passes: 1 }, file);
+      assert.equal(loader.get('task-1')?.passes, 1);
+
+      // The file changed on disk, but the TTL has not elapsed: cached value.
+      persistStats({ ...emptyStats('task-1'), passes: 2 }, file);
+      assert.equal(loader.get('task-1')?.passes, 1);
+
+      // A file change must never be invisible after the TTL expires.
+      const ttlLoader = createStatsLoader(file, -1); // TTL already over
+      assert.equal(ttlLoader.get('task-1')?.passes, 2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('invalidate drops the cache immediately (F6)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-stats-loader-'));
+    const file = join(dir, 'stats.jsonl');
+    const loader = createStatsLoader(file, 60_000);
+    try {
+      persistStats({ ...emptyStats('task-1'), passes: 1 }, file);
+      assert.equal(loader.get('task-1')?.passes, 1);
+      persistStats({ ...emptyStats('task-1'), passes: 2 }, file);
+      loader.invalidate('task-1');
+      assert.equal(loader.get('task-1')?.passes, 2, 'a reset must be visible immediately');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null for unknown tasks', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-stats-loader-'));
+    const file = join(dir, 'stats.jsonl');
+    const loader = createStatsLoader(file, 60_000);
+    try {
+      assert.equal(loader.get('never-seen'), null);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

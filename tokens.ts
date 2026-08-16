@@ -176,3 +176,39 @@ export function loadTaskStats(taskId: string, filePath: string = STATS_PATH): Ta
     return null;
   }
 }
+
+export interface StatsLoader {
+  /**
+   * Cached load: re-reads the file at most once per `ttlMs` per task.
+   * Badge refreshes call this on every UI tick, and each uncached read
+   * scans the whole stats.jsonl synchronously (up to 5 MB).
+   */
+  get(taskId: string): TaskStats | null;
+  /** Drop the cache for a task (after /broke reset cleared the persisted lines). */
+  invalidate(taskId: string): void;
+}
+
+/** Cache bounded like the extension's other per-task maps (evict oldest). */
+function boundedCacheSet<K, V>(map: Map<K, V>, key: K, value: V, max = 500): void {
+  if (map.size >= max && !map.has(key)) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+  map.set(key, value);
+}
+
+export function createStatsLoader(filePath: string = STATS_PATH, ttlMs: number = 30_000): StatsLoader {
+  const cache = new Map<string, { at: number; stats: TaskStats | null }>();
+  return {
+    get(taskId) {
+      const hit = cache.get(taskId);
+      if (hit && Date.now() - hit.at < ttlMs) return hit.stats;
+      const stats = loadTaskStats(taskId, filePath);
+      boundedCacheSet(cache, taskId, { at: Date.now(), stats });
+      return stats;
+    },
+    invalidate(taskId) {
+      cache.delete(taskId);
+    },
+  };
+}

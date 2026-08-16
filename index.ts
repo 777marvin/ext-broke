@@ -23,7 +23,7 @@ import { extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput
 import { isPlaintextRemoteUrl, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
 import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from './pricing';
 import { runSelfTest } from './selftest';
-import { clearTaskStats, emptyStats, estimateTokens, loadTaskStats, persistStats, totalSavedChars, type TaskStats } from './tokens';
+import { clearTaskStats, createStatsLoader, emptyStats, estimateTokens, persistStats, totalSavedChars, type StatsLoader, type TaskStats } from './tokens';
 import { boundedMapSet } from './compress';
 
 // Load the JSX templates once at module level (official template pattern).
@@ -49,6 +49,8 @@ const LOG_MIN_SAVED_CHARS = 4000;
 const MAX_SUMMARIZE_FAILURES = 3;
 /** How long the badge may reuse the last Ollama status check (short: UI must stay honest). */
 const OLLAMA_STATUS_TTL_MS = 30_000;
+/** Persist stats at most this often per task - stats.jsonl is debug data, not a ledger. */
+const STATS_PERSIST_MIN_MS = 60_000;
 
 interface ToolResultText {
   text: string;
@@ -112,6 +114,9 @@ export default class Broke implements Extension {
   private configWatcher: FSWatcher | null = null;
   private readonly state: CompressState = createCompressState();
   private readonly statsByTask = new Map<string, TaskStats>();
+  /** TTL-cached reads of stats.jsonl - a badge refresh must not re-scan 5 MB per tick. */
+  private readonly statsLoader: StatsLoader = createStatsLoader();
+  private readonly lastPersistAt = new Map<string, number>();
   private readonly lastLogAt = new Map<string, number>();
   private readonly summarizeFailures = new Map<string, number>();
   /** Tasks whose summarize pass is auto-disabled after repeated failures. */
@@ -244,7 +249,11 @@ export default class Broke implements Extension {
   }
 
   private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null): void {
-    const stats = this.statsByTask.get(taskId) ?? loadTaskStats(taskId) ?? emptyStats(taskId);
+    // No-op runs (nothing compressed, nothing attempted) are not compression
+    // runs: counting them inflates `passes` and appends a stats line on
+    // EVERY model call.
+    if (!report.touched) return;
+    const stats = this.statsByTask.get(taskId) ?? this.statsLoader.get(taskId) ?? emptyStats(taskId);
     stats.passes += 1;
     stats.savedChars.structural += report.structuralChars;
     stats.savedChars.error += report.errorChars;
@@ -283,7 +292,13 @@ export default class Broke implements Extension {
     }
     stats.lastRunAt = Date.now();
     boundedMapSet(this.statsByTask, taskId, stats);
-    persistStats(stats);
+    // Throttled persistence: an active task compresses on every model call;
+    // writing stats.jsonl synchronously each time is needless disk churn.
+    const lastPersist = this.lastPersistAt.get(taskId) ?? 0;
+    if (Date.now() - lastPersist >= STATS_PERSIST_MIN_MS) {
+      boundedMapSet(this.lastPersistAt, taskId, Date.now());
+      persistStats(stats);
+    }
 
     const savedChars = report.structuralChars + report.errorChars + report.truncateChars + report.summarizeChars;
     const lastLog = this.lastLogAt.get(taskId) ?? 0;
@@ -385,6 +400,8 @@ export default class Broke implements Extension {
                 // Real reset: remove the task's persisted lines from stats.jsonl
                 // and drop the summarize cache so nothing stale survives.
                 clearTaskStats(taskId);
+                ext.statsLoader.invalidate(taskId);
+                ext.lastPersistAt.delete(taskId);
                 ext.state.cachedSummaryByTask.delete(taskId);
                 ext.summarizeFailures.delete(taskId);
                 ext.summarizeDisabled.delete(taskId);
@@ -421,7 +438,7 @@ export default class Broke implements Extension {
   private statsFor(context: ExtensionContext): TaskStats | null {
     const taskId = context.getTaskContext()?.data.id;
     if (!taskId) return null;
-    return this.statsByTask.get(taskId) ?? loadTaskStats(taskId);
+    return this.statsByTask.get(taskId) ?? this.statsLoader.get(taskId);
   }
 
   // -------------------------------------------------------------------------
