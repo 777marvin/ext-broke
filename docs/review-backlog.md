@@ -1,12 +1,30 @@
 # Review Backlog
 
-Open findings from the ruthless self-review of 2026-08-16 (typecheck clean,
+Findings from the ruthless self-review of 2026-08-16 (typecheck clean,
 80/80 tests green at review time). Severity: 🔴 high, 🟡 medium, ⚪ nit.
 Each finding lists the location, the problem and a concrete fix approach.
 
 Fixed in the same review round (see CHANGELOG, commits 77437a0..b0dc2a9):
 F1 summarize auto-disable gate, F2 error pass command-tool guard, F3
 rich-part protection in summarize, F4 Ollama body timeout.
+
+**All remaining findings are closed** (2026-08-16, commits
+1256f9d..99581c8, 126/126 tests green):
+
+| Finding | Commit | Finding | Commit |
+|---|---|---|---|
+| F5 | 1256f9d | F15 | b97744d |
+| F6 | d9c6168 | F16 | b97744d |
+| F7 | 50e0218 | F17 | b97744d |
+| F8 | 1256f9d | F18 | 1256f9d |
+| F9 | cd5cbe1 | F19 | 4c0741c |
+| F10 | d4e748f | F20 | b97744d |
+| F11 | 4c0741c | F21 | 50e0218 |
+| F12 | b97744d | F22 | 50e0218 |
+| F13 | 50e0218 | F23 | b97744d |
+| F14 | 1256f9d | F24 | 5b1e46d |
+
+The entries below remain as the record of what was found.
 
 ## 🔴 High
 
@@ -145,14 +163,21 @@ Cosmetic.
 
 ## Test gaps
 
-Untested modules: `commands.ts` (parse/apply/format), `config.ts`
-(mergeConfig, updateConfigPath, corrupted-config fallback), `index.ts`
-orchestration (onToolFinished, recordReport, failure counter), `selftest.ts`
-itself, `clearTaskStats`. The F1-F4 round added regression tests for each
-fixed bug - the remaining gaps above should get the same treatment.
+Closed: `commands.ts` (parse/apply/format, help text, Ollama model check)
+covered by tests/commands.test.ts; `config.ts` (mergeConfig, loadConfigFile
+fallback, applyConfigUpdates purity, updateConfigPaths) by
+tests/config.test.ts; `selftest.ts` (call-id linking, real dedupe, honest
+labels) by tests/selftest.test.ts; `clearTaskStats` (99581c8) by
+tests/pricing.test.ts. The `index.ts` orchestration (onToolFinished,
+recordReport, failure counter) is not covered by unit tests: it needs the
+AiderDesk runtime, and the gate/counter logic it drives is tested at the
+compressMessages level instead. Suite: 126/126.
 
 ## Work log
 
 - 2026-08-16: F1-F4 fixed, tested (80/80), committed; README and
   docs/overview.md updated to match the implemented behavior; this file
   created to record the rest.
+- 2026-08-16: F5-F24 fixed in seven increments (1256f9d, d9c6168, 50e0218,
+  4c0741c, b97744d, d4e748f, 5b1e46d), docs and test gaps closed
+  (cd5cbe1, 99581c8); suite 126/126 green.

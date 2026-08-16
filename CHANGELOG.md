@@ -32,6 +32,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stalled its body hung the summarization (and with it the model call)
   indefinitely. The whole request (headers AND body) is now inside the
   abort window, and timeouts fail fast with a clear message.
+- **Honest numbers and I/O.** Merging adjacent assistant messages now
+  counts 0 saved chars (the full text stays in the context); `passes`
+  increments and stats persistence only happen when a run actually
+  compressed something, persistence is throttled to one write per minute
+  per task, badge reads use a 30 s TTL cache instead of re-scanning up to
+  5 MB per refresh, and error summaries never report negative savings.
+- **Config safety.** Numeric settings fields enforce the schema bounds and
+  integer-only input with a readable error instead of a silent save
+  failure; `/broke truncate` applies both limits in one atomic write;
+  saveConfig fsyncs before the rename; the help text is generated from
+  DEFAULT_CONFIG; metadata.version comes from package.json.
+- **Summary cache follows summarizer config.** Switching the summarizer
+  backend/model invalidates cached summaries instead of reusing stale
+  ones; the Ollama model check matches the exact tag first and no longer
+  reports a model as available when only a different tag exists.
+- **Selftest and archive hygiene.** Synthetic tool results link to real
+  tool-call ids, so the dedupe scenario really dedupes and per-pass checks
+  assert intermediate outputs; error archive file names carry a hash
+  suffix (long ids no longer silently overwrite each other); the deploy
+  script preserves the errors/ archive (100 MB cap).
+- **Reentry guard.** The cloud summarizer's task.generateText call can
+  re-fire onOptimizeMessages; a guard prevents the summarizer's own input
+  from being compressed again (double compression or recursion).
+- **Extractor consolidation.** The four duplicated tool-output extractors
+  (toolResultText, extractToolResultText, extractOutputText, partText)
+  became one canonical implementation in output.ts with the shape
+  handling as explicit options. No functional change.
+
+### Security
+
+- **Secret masking widened.** JWTs, Slack tokens, AWS session tokens, HTTP
+  Basic auth, key assignments (`password=...`), Slack/Discord webhook
+  URLs, connection strings and Azure SAS signatures are now masked before
+  content reaches the summarizer; the prompt and docs state plainly that
+  the masking is best effort.
+- **Summarizer prompt-injection risk documented.** The summarize pass
+  condenses potentially attacker-influenced web/file content with a small
+  model, and injected instructions can survive the condensation into the
+  main model's context. The untrusted-data prompt and the masking
+  mitigate, they are not a hard boundary; the risk is now documented in
+  the README security notes.
 
 ### Changed
 
