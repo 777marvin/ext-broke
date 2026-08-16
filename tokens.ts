@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContextMessage } from '@aiderdesk/extensions';
+import { partText } from './output';
 
 export const STATS_PATH = join(__dirname, 'stats.jsonl');
 
@@ -12,36 +13,6 @@ export const STATS_PATH = join(__dirname, 'stats.jsonl');
  */
 export function estimateTokens(chars: number): number {
   return Math.round(chars / 4);
-}
-
-/** Extract the text payload of a message part (text / tool-result / tool-call). */
-export function partText(part: { type: string; [key: string]: unknown }): string {
-  if (part.type === 'text') {
-    return typeof part.text === 'string' ? part.text : '';
-  }
-  if (part.type === 'tool-result') {
-    const output = part.output as { type?: string; value?: unknown } | undefined;
-    if (!output) return '';
-    if (output.type === 'text' || output.type === 'error-text') {
-      return typeof output.value === 'string' ? output.value : '';
-    }
-    if (output.type === 'json' || output.type === 'error-json' || output.type === 'content') {
-      try {
-        return JSON.stringify(output.value);
-      } catch {
-        return '';
-      }
-    }
-    return '';
-  }
-  if (part.type === 'tool-call') {
-    try {
-      return JSON.stringify(part.input);
-    } catch {
-      return '';
-    }
-  }
-  return '';
 }
 
 /** Estimate the character size of a single message. */

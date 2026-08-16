@@ -21,6 +21,7 @@ import {
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, saveConfig, type Config } from './config';
 import { extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
 import { isPlaintextRemoteUrl, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
+import { extractOutputText } from './output';
 import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from './pricing';
 import { runSelfTest } from './selftest';
 import { clearTaskStats, createStatsLoader, emptyStats, estimateTokens, persistStats, totalSavedChars, type StatsLoader, type TaskStats } from './tokens';
@@ -51,54 +52,6 @@ const MAX_SUMMARIZE_FAILURES = 3;
 const OLLAMA_STATUS_TTL_MS = 30_000;
 /** Persist stats at most this often per task - stats.jsonl is debug data, not a ledger. */
 const STATS_PERSIST_MIN_MS = 60_000;
-
-interface ToolResultText {
-  text: string;
-  /** Rebuild a full output value of the same shape from the rewritten text. */
-  wrap: (text: string) => unknown;
-}
-
-/**
- * Extract plain text from a tool result output (string or content[] shapes)
- * and return a wrapper that rebuilds the original shape. Returns null for
- * non-text outputs (images, structured payloads) - those are never rewritten.
- * Same shape handling as savemytoken's truncate (verified against the
- * installed AiderDesk 0.77.x runtime).
- */
-function extractToolResultText(output: unknown): ToolResultText | null {
-  if (typeof output === 'string') {
-    return { text: output, wrap: (t) => t };
-  }
-  if (output && typeof output === 'object') {
-    const record = output as Record<string, unknown>;
-    const content = record.content;
-    if (Array.isArray(content) && content.length > 0) {
-      const textParts = content.filter(
-        (part): part is { type: 'text'; text: string } =>
-          !!part && typeof part === 'object' && (part as { type?: string }).type === 'text' && typeof (part as { text?: unknown }).text === 'string',
-      );
-      if (textParts.length === content.length) {
-        const text = textParts.map((p) => p.text ?? '').join('\n');
-        return {
-          text,
-          wrap: (t) => ({ ...(output as object), content: [{ type: 'text' as const, text: t }] }),
-        };
-      }
-    }
-    // Structured command output (power---bash etc.): { stdout, stderr, exitCode }.
-    // The error compressor must see stdout/stderr, not skip the payload.
-    const stdout = typeof record.stdout === 'string' ? record.stdout : '';
-    const stderr = typeof record.stderr === 'string' ? record.stderr : '';
-    if (stdout || stderr) {
-      const text = stderr ? `${stdout}\n${stderr}` : stdout;
-      return {
-        text,
-        wrap: (t) => ({ ...record, stdout: t, stderr: '' }),
-      };
-    }
-  }
-  return null;
-}
 
 /**
  * The metadata version comes from package.json (single source of truth):
@@ -241,7 +194,7 @@ export default class Broke implements Extension {
     const taskId = task.data.id;
 
     try {
-      const extractedText = extractToolResultText(event.output);
+      const extractedText = extractOutputText(event.output, { eventOutput: true });
       if (!extractedText) return;
       const { text, wrap } = extractedText;
       if (text.length < config.errors.minChars) return;

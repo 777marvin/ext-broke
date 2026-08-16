@@ -98,45 +98,6 @@ export interface ErrorSummaryOptions {
   contextLines: number;
 }
 
-export interface OutputText {
-  /** Error-relevant text: the plain payload, or stdout+stderr of a structured payload. */
-  text: string;
-  /**
-   * Rebuild the output with `summary` in place of the original text.
-   * Plain payloads become the summary string; structured payloads keep their
-   * shape (exitCode etc.) with stdout replaced and stderr emptied.
-   */
-  wrap: (summary: string) => { type?: string; value?: unknown };
-}
-
-/**
- * Extract error-relevant text from a tool-result output, covering both the
- * plain `text`/`error-text` payloads and the structured `json`/`content`
- * payloads that command tools (power---bash etc.) produce as
- * `{ stdout, stderr, exitCode }`. Previously only plain text was inspected,
- * which silently skipped every bash/test run because those arrive as JSON.
- * Returns null when the output carries no string payload worth inspecting.
- */
-export function extractOutputText(output: { type?: string; value?: unknown } | undefined): OutputText | null {
-  if (!output) return null;
-  if (output.type === 'text' || output.type === 'error-text') {
-    if (typeof output.value !== 'string') return null;
-    return { text: output.value, wrap: (summary) => ({ ...output, value: summary }) };
-  }
-  if (output.type === 'json' || output.type === 'content') {
-    const value = output.value as { stdout?: unknown; stderr?: unknown } | null | undefined;
-    if (!value || typeof value !== 'object') return null;
-    const stdout = typeof value.stdout === 'string' ? value.stdout : '';
-    const stderr = typeof value.stderr === 'string' ? value.stderr : '';
-    if (!stdout && !stderr) return null;
-    return {
-      text: stderr ? `${stdout}\n${stderr}` : stdout,
-      wrap: (summary) => ({ ...output, value: { ...value, stdout: summary, stderr: '' } }),
-    };
-  }
-  return null;
-}
-
 export interface ErrorSummaryResult {
   matched: boolean;
   /** Lines of the original text. */

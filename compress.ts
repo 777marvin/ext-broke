@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { Config } from './config';
-import { extractErrorSummary, extractOutputText, formatErrorSummary, isCommandTool } from './errors';
-import { estimateTokens, messageChars, messagesChars, partText } from './tokens';
+import { extractErrorSummary, formatErrorSummary, isCommandTool } from './errors';
+import { extractOutputText, partText } from './output';
+import { estimateTokens, messageChars, messagesChars } from './tokens';
 
 /**
  * The compression pipeline. Runs on the messages that are about to be sent
@@ -139,22 +140,6 @@ interface PartLike {
   [key: string]: unknown;
 }
 
-function toolResultText(part: PartLike): string {
-  const output = part.output as { type?: string; value?: unknown } | undefined;
-  if (!output) return '';
-  if (output.type === 'text' || output.type === 'error-text') {
-    return typeof output.value === 'string' ? output.value : '';
-  }
-  if (output.type === 'json' || output.type === 'content') {
-    try {
-      return JSON.stringify(output.value);
-    } catch {
-      return '';
-    }
-  }
-  return '';
-}
-
 function assistantText(message: ContextMessage): string {
   if (typeof message.content === 'string') return message.content;
   if (Array.isArray(message.content)) {
@@ -243,7 +228,7 @@ export function structuralPass(messages: ContextMessage[], protectedTurns: numbe
     if (inRegion && msg.role === 'tool' && Array.isArray(msg.content)) {
       const parts = msg.content as unknown as PartLike[];
       const emptyParts = parts.filter(
-        (p) => p.type === 'tool-result' && toolResultText(p).trim().length === 0,
+        (p) => p.type === 'tool-result' && partText(p).trim().length === 0,
       );
       let working: ContextMessage = msg;
       if (emptyParts.length > 0) {
@@ -304,7 +289,7 @@ function sameToolResult(a: ContextMessage, b: ContextMessage): boolean {
     const y = bParts[i];
     if (x.type !== 'tool-result' || y.type !== 'tool-result') return false;
     if (x.toolName !== y.toolName) return false;
-    if (toolResultText(x) !== toolResultText(y)) return false;
+    if (partText(x) !== partText(y)) return false;
   }
   return true;
 }
