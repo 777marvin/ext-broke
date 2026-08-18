@@ -2,7 +2,6 @@ import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
   CommandDefinition,
-  ContextMessage,
   Extension,
   ExtensionContext,
   OptimizeMessagesEvent,
@@ -67,79 +66,6 @@ const OLLAMA_STATUS_TTL_MS = 30_000;
 /** Persist stats at most this often per task - stats.jsonl is debug data, not a ledger. */
 const STATS_PERSIST_MIN_MS = 60_000;
 
-// ---------------------------------------------------------------------------
-// TEMPORARY S1 spike (docs/feats.md): log what onOptimizeMessages receives.
-// Question: does the event see Aider-CLI injected content (context files,
-// /add, repo map) as messages/parts? Logs STRUCTURE ONLY (role counts, part
-// type signatures, file part names, tool names, repo-map heuristic) - no
-// message content, no secret-bearing data. One line per task; removed after
-// the spike is resolved.
-// ---------------------------------------------------------------------------
-const SPIKE_S1_MAX_SIGNATURES = 25;
-
-function spikePartSignature(content: ContextMessage['content']): string {
-  if (typeof content === 'string') return `text:${content.length}`;
-  return content
-    .map((p) => {
-      switch (p.type) {
-        case 'text':
-          return `text:${p.text.length}`;
-        case 'file':
-          return `file:${p.filename ?? '?'}`;
-        case 'image':
-          return 'image';
-        case 'reasoning':
-          return `reasoning:${p.text.length}`;
-        case 'tool-call':
-          return `call:${p.toolName}`;
-        case 'tool-result':
-          return `result:${p.toolName}`;
-        default:
-          return `part:${(p as { type: string }).type}`;
-      }
-    })
-    .join(',');
-}
-
-/** Cheap "is this text likely a repo map" hint: marker word or tree glyphs. */
-function spikeLooksLikeRepoMap(text: string): boolean {
-  return /repo[\s_-]?map/i.test(text) || /[│├└─]/.test(text);
-}
-
-function spikeDump(msgs: ContextMessage[]): string {
-  const roles = new Map<string, number>();
-  const files = new Set<string>();
-  const toolNames = new Set<string>();
-  let chars = 0;
-  let repoMapHint = false;
-  const sigs: string[] = [];
-  for (const m of msgs) {
-    roles.set(m.role, (roles.get(m.role) ?? 0) + 1);
-    const content = m.content;
-    if (typeof content === 'string') {
-      chars += content.length;
-      if (m.role === 'user' && spikeLooksLikeRepoMap(content.slice(0, 2000))) repoMapHint = true;
-    } else {
-      for (const p of content) {
-        if (p.type === 'text') {
-          chars += p.text.length;
-          if (m.role === 'user' && spikeLooksLikeRepoMap(p.text.slice(0, 2000))) repoMapHint = true;
-        } else if (p.type === 'file') {
-          if (p.filename) files.add(p.filename);
-        } else if (p.type === 'tool-call' || p.type === 'tool-result') {
-          toolNames.add(p.toolName);
-        }
-      }
-    }
-    if (sigs.length < SPIKE_S1_MAX_SIGNATURES) sigs.push(`${m.role}[${spikePartSignature(content)}]`);
-  }
-  const roleStr = [...roles.entries()].map(([r, n]) => `${r}:${n}`).join(',');
-  const fileList = [...files].slice(0, 5);
-  const fileStr = files.size ? ` files:[${fileList.join(',')}${files.size > 5 ? `,+${files.size - 5}` : ''}]` : '';
-  const toolStr = toolNames.size ? ` tools:[${[...toolNames].sort().join(',')}]` : '';
-  return `{total:${msgs.length},${roleStr},chars:${chars},repoMapHint:${repoMapHint}${fileStr}${toolStr}} sig0..${sigs.length - 1}: ${sigs.join(' ')}`;
-}
-
 /**
  * The metadata version comes from package.json (single source of truth):
  * a hardcoded string drifts from the released version.
@@ -182,8 +108,6 @@ export default class Broke implements Extension {
    */
   private optimizing = false;
   private ollamaStatusCache: { at: number; status: OllamaStatus } | null = null;
-  /** S1 spike: tasks whose message structure was already logged (once per task). */
-  private readonly spikeS1Logged = new Map<string, true>();
 
   onLoad(context: ExtensionContext): void {
     this.context = context;
@@ -238,10 +162,6 @@ export default class Broke implements Extension {
     const task = context.getTaskContext();
     if (!task) return;
     const taskId = task.data.id;
-
-    // TEMPORARY S1 spike: fires even with broke disabled, so a test session
-    // can observe the pure event structure. Removed after the spike.
-    this.spikeS1(event, taskId, context);
 
     const deps: SummarizeDeps = {
       generateLocal: async (model, prompt) => {
@@ -315,23 +235,6 @@ export default class Broke implements Extension {
     } catch (err) {
       // Never break tool execution - compression is best effort.
       context.log(`Broke: tool-level error compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
-    }
-  }
-
-  /**
-   * TEMPORARY S1 spike: dump the onOptimizeMessages message structure once
-   * per task (per extension session) to the app log. Never throws.
-   */
-  private spikeS1(event: OptimizeMessagesEvent, taskId: string, context: ExtensionContext): void {
-    if (this.spikeS1Logged.has(taskId)) return;
-    boundedMapSet(this.spikeS1Logged, taskId, true);
-    try {
-      context.log(
-        `BROKE-SPIKE-S1 task=${taskId} original=${spikeDump(event.originalMessages ?? [])} optimized=${spikeDump(event.optimizedMessages ?? [])}`,
-        'info',
-      );
-    } catch (err) {
-      context.log(`BROKE-SPIKE-S1 failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 
