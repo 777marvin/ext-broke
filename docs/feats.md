@@ -63,10 +63,25 @@ by F1–F3.
 
 ## Shared spike list (resolve during development)
 
-- **S1 (F2):** Does `onOptimizeMessages` see file contents injected by the
-  Aider CLI (context files, `/add`, repo map)? If yes, an input-level slice
-  pass can cover the Aider path that tool hooks cannot. Verify with a debug
-  log of message roles/part types in a real task.
+- **S1 (F2) - resolved 2026-08-18.** Empirically verified in a real task
+  (temporary debug log of message roles/part types in `onOptimizeMessages`;
+  session with `includeRepoMap: true`, `includeContextFiles: false`, no
+  files added):
+  - The repo map arrives as a synthetic first user message, but only as a
+    compact file-name listing (~430 chars for this repo) - never file
+    contents. Nothing sliceable.
+  - No `file` parts and no file contents appear anywhere in the event's
+    messages; the stored task context (`context.json`) holds only the bare
+    conversation, the repo map is prepended at event assembly.
+  - Rule-file content, the skills list and reminders are not part of the
+    event messages either (they are injected at prompt level, outside the
+    message stream; the test session's rule files failed to load, so the
+    rule-file path could not be observed).
+  - Conclusion: an input-level slice pass cannot slice Aider-injected file
+    contents; the documented "context files bypass hooks" gap stands. Open
+    sub-case: a task with an explicitly added context file (drop / read-only
+    add) could not be tested from the extension side - if `file` parts
+    appear in that case, the input pass could cover them.
 - **S2 (F3):** What happens to `{project}/.aider-desk/tasks/{id}/.aider.chat.history.md`
   (written by the Python connector) when `TaskContext.removeMessagesUpTo` +
   `addContextMessage` are used? Does the next prompt re-hydrate from that
@@ -75,9 +90,13 @@ by F1–F3.
   (`snapshots/`, `index/`)? `config.json` is preserved. Resolved for
   `errors/`: the preserve list covers it since F12 (with a size cap on
   copy). `snapshots/`/`index/` still need the same treatment.
-- **S4 (F2):** Capture the exact `toolName` strings of file-read and file-edit
-  tools in a real session (`onToolCalled` debug log). The allowlist must
-  match reality (names differ between docs and runtime).
+- **S4 (F2) - partially resolved 2026-08-18.** Real `toolName` strings
+  observed via the tool-call/tool-result parts in `onOptimizeMessages` of a
+  power-tools session: `power---file_read` (read), `power---file_edit`
+  (edit/write), `power---bash`/`power---glob`/`power---grep` (command tools).
+  The allowlist must still feature-detect: names differ across environments
+  (Aider-native tools vs. power tools) and `onToolCalled`-based capture in a
+  UI session remains unverified.
 
 ---
 
@@ -206,8 +225,11 @@ compatible (`ToolCalledEvent`/`ToolFinishedEvent` expose mutable `input` and
 - Skipped when: `output` has `isError`, contains image parts, or the path is
   not sliceable (extension allowlist, skip `node_modules`/`dist`/`vendor`).
 - Known gap (documented in README, not a bug): Aider CLI context files
-  (repo map, `/add`, connector-injected content) bypass tool hooks. S1 may
-  close this with an input-level pass; out of scope for v1.
+  (repo map, `/add`, connector-injected content) bypass tool hooks. S1
+  (2026-08-18) confirmed: `onOptimizeMessages` sees the repo map only as a
+  short file-name listing, never file contents - an input-level pass cannot
+  close the gap, so it stays out of scope for v1 (only the open context-file
+  sub-case could change this; see S1).
 
 ### Design
 
