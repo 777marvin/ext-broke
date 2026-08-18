@@ -12,12 +12,19 @@ be resolved during the corresponding feature's development.
 
 ## Roadmap
 
-| # | Feature | Version | Effort | Status |
-|---|---------|---------|--------|--------|
+| # | Feature | Target version | Effort | Status |
+|---|---------|----------------|--------|--------|
 | F1 | Active Log & Stack-Trace Compressor | 0.2.0 | S | shipped |
-| F2 | ST-Slicing (Semantic Context Thinning) | 0.3.0 | M | planned |
-| F3 | State Snapshotting & Memory Flushing | 0.4.0 | M | planned |
-| F4 | Local Keyword/Vector Index with snippet summaries | 0.5.0 | L | planned |
+| F2 | ST-Slicing (Semantic Context Thinning) | TBD | M | planned |
+| F3 | State Snapshotting & Memory Flushing | TBD | M | planned |
+| F4 | Local Keyword/Vector Index with snippet summaries | TBD | L | planned |
+
+**Version reality check (2026-08-18):** v0.3.0 and v0.4.0 are released
+(current: v0.4.0, 2026-08-17) and shipped F1 improvements, the reference
+benchmark and the measurement ledger. F2-F4 are **not** implemented in any
+released version. The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
+F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without F2/F3)
+and stay TBD until the features are actually scheduled.
 
 Rationale for the order: F1 is a small pure-function pass that slots into the
 existing pipeline (quick win, validates the config/command/stats extension
@@ -172,7 +179,7 @@ counts, region protection).
 
 ## F2: ST-Slicing (Semantic Context Thinning)
 
-**Version:** 0.3.0 (feat: → minor). **Effort:** M.
+**Version:** TBD (originally planned for 0.3.0, which shipped without it; feat: → minor). **Effort:** M.
 
 ### Objective
 
@@ -285,7 +292,7 @@ one not; verify the model sees the sliced view.
 
 ## F3: State Snapshotting & Memory Flushing
 
-**Version:** 0.4.0 (feat: → minor). **Effort:** M.
+**Version:** TBD (originally planned for 0.4.0, which shipped without it; feat: → minor). **Effort:** M.
 
 ### Objective
 
@@ -367,7 +374,7 @@ Manual: real task with 20+ messages → snapshot → flush → follow-up prompt 
 
 ## F4: Local Keyword/Vector Index with Snippet Summaries
 
-**Version:** 0.5.0 (feat: → minor). **Effort:** L.
+**Version:** TBD (originally planned for 0.5.0, which shipped without it; feat: → minor). **Effort:** L.
 
 ### Objective
 
@@ -474,7 +481,7 @@ via agent; verify snippet budget in a large repo.
 - Deploy: `.\scripts\deploy.ps1 -Category extensions -Name broke` from a
   clean, tagged state (verify S3: config.json **and** new artifact folders
   survive).
-- Version bumps: F1 → 0.2.0, F2 → 0.3.0, F3 → 0.4.0, F4 → 0.5.0.
+- Version bumps: F1 → 0.2.0/0.2.1 (shipped). F2–F4 are unimplemented; their originally planned bumps (F2 → 0.3.0, F3 → 0.4.0, F4 → 0.5.0) are obsolete because 0.3.0/0.4.0 shipped without them. New bumps are assigned when each feature is scheduled (see roadmap).
 
 ## Risk register
 
