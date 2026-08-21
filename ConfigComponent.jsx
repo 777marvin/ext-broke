@@ -202,7 +202,7 @@
         <p className="text-xs text-text-secondary -mt-2">
           Per-run records (sizes + per-pass removals, no content, no paths) are what <span className="font-mono">/broke
           measure</span> and <span className="font-mono">npm run measure</span> analyze - the provable real-session
-          numbers. The file rotates at 5 MB.
+          numbers. At 5 MB the file is rotated aside (kept as .1/.2/.3) instead of being rewritten.
         </p>
       </div>
     </div>

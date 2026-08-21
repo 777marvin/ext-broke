@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { CompressReport } from './compress';
@@ -91,20 +91,48 @@ export function totalSavedChars(stats: TaskStats): number {
 
 const MAX_STATS_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_MEASURE_FILE_BYTES = 5 * 1024 * 1024;
+/** Rotation chain length: <file>.1 (newest) .. <file>.3 (oldest) are kept. */
+const MAX_ROTATED_FILES = 3;
 
 /**
- * Append one JSON line to a jsonl ledger, rotating it once the file exceeds
- * `maxBytes`: only the most recent half of the lines is kept. Shared by the
- * stats ledger (throttled) and the measurement ledger (per run). Best effort
- * - ledger writes must never break the extension. `maxBytes` is
- * parameterizable so rotation is testable with tiny caps.
+ * All ledger files for `filePath`, OLDEST first: <file>.3, .2, .1, <file>.
+ * Loaders iterate this order so records are seen chronologically; lookups
+ * iterate in reverse (newest file wins).
+ */
+export function ledgerFiles(filePath: string): string[] {
+  const out: string[] = [];
+  for (let i = MAX_ROTATED_FILES; i >= 1; i--) out.push(`${filePath}.${i}`);
+  out.push(filePath);
+  return out;
+}
+
+/**
+ * Rotate by RENAME (XF15): the oversized main file becomes the newest
+ * rotation untouched - no read + rewrite of the whole ledger. The oldest
+ * rotation is dropped, so the chain stays bounded (~4 x maxBytes on disk).
+ */
+function rotateLedger(filePath: string): void {
+  rmSync(`${filePath}.${MAX_ROTATED_FILES}`, { force: true });
+  for (let i = MAX_ROTATED_FILES - 1; i >= 1; i--) {
+    if (existsSync(`${filePath}.${i}`)) {
+      renameSync(`${filePath}.${i}`, `${filePath}.${i + 1}`);
+    }
+  }
+  renameSync(filePath, `${filePath}.1`);
+}
+
+/**
+ * Append one JSON line to a jsonl ledger. Once the file exceeds `maxBytes`
+ * it is rotated (renamed aside) and a fresh file is started - O(1) instead
+ * of a full-file rewrite. Shared by the stats ledger (throttled) and the
+ * measurement ledger (per run). Best effort - ledger writes must never
+ * break the extension. `maxBytes` is parameterizable so rotation is
+ * testable with tiny caps.
  */
 export function appendJsonLine(filePath: string, line: string, maxBytes: number): void {
   try {
-    if (existsSync(filePath) && readFileSync(filePath).length > maxBytes) {
-      const lines = readFileSync(filePath, 'utf-8').split('\n').filter((l) => l.trim());
-      const kept = lines.slice(-Math.ceil(lines.length / 2));
-      writeFileSync(filePath, kept.length ? `${kept.join('\n')}\n` : '', 'utf-8');
+    if (existsSync(filePath) && statSync(filePath).size > maxBytes) {
+      rotateLedger(filePath);
     }
     appendFileSync(filePath, `${line}\n`, 'utf-8');
   } catch {
@@ -127,50 +155,59 @@ export function persistStats(stats: TaskStats, filePath: string = STATS_PATH): v
  */
 export function clearTaskStats(taskId: string, filePath: string = STATS_PATH): void {
   try {
-    if (!existsSync(filePath)) return;
-    const lines = readFileSync(filePath, 'utf-8').split('\n');
-    const kept: string[] = [];
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const parsed = JSON.parse(line) as TaskStats;
-        if (parsed.taskId === taskId) continue;
-      } catch {
-        // malformed line: drop it while rewriting
-        continue;
+    // A real reset must reach rotated files too (XF15): the task's newest
+    // line may live in a rotation when the main file was rotated since.
+    for (const f of ledgerFiles(filePath)) {
+      if (!existsSync(f)) continue;
+      const lines = readFileSync(f, 'utf-8').split('\n');
+      const kept: string[] = [];
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as TaskStats;
+          if (parsed.taskId === taskId) continue;
+        } catch {
+          // malformed line: drop it while rewriting
+          continue;
+        }
+        kept.push(line);
       }
-      kept.push(line);
+      writeFileSync(f, kept.length ? `${kept.join('\n')}\n` : '', 'utf-8');
     }
-    writeFileSync(filePath, kept.length ? `${kept.join('\n')}\n` : '', 'utf-8');
   } catch {
     // best effort
   }
 }
 
-/** Load persisted stats for a task (last matching line wins). */
+/** Load persisted stats for a task (newest file, last matching line wins). */
 export function loadTaskStats(taskId: string, filePath: string = STATS_PATH): TaskStats | null {
   try {
-    if (!existsSync(filePath)) return null;
-    const lines = readFileSync(filePath, 'utf-8').split('\n');
-    let found: TaskStats | null = null;
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const parsed = JSON.parse(line) as TaskStats;
-        if (parsed.taskId === taskId) {
-          found = {
-            ...parsed,
-            savedChars: normalizeSavedTokens(parsed.savedChars),
-            // Legacy lines predate the measured-size fields (XF14).
-            totalCharsBefore: typeof parsed.totalCharsBefore === 'number' ? parsed.totalCharsBefore : 0,
-            totalCharsAfter: typeof parsed.totalCharsAfter === 'number' ? parsed.totalCharsAfter : 0,
-          };
+    // Newest file first (XF15): a task's latest line may live in a rotated
+    // file when no newer line was written after the rotation.
+    for (const f of ledgerFiles(filePath).reverse()) {
+      if (!existsSync(f)) continue;
+      const lines = readFileSync(f, 'utf-8').split('\n');
+      let found: TaskStats | null = null;
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as TaskStats;
+          if (parsed.taskId === taskId) {
+            found = {
+              ...parsed,
+              savedChars: normalizeSavedTokens(parsed.savedChars),
+              // Legacy lines predate the measured-size fields (XF14).
+              totalCharsBefore: typeof parsed.totalCharsBefore === 'number' ? parsed.totalCharsBefore : 0,
+              totalCharsAfter: typeof parsed.totalCharsAfter === 'number' ? parsed.totalCharsAfter : 0,
+            };
+          }
+        } catch {
+          // skip malformed lines
         }
-      } catch {
-        // skip malformed lines
       }
+      if (found) return found;
     }
-    return found;
+    return null;
   } catch {
     return null;
   }
@@ -262,20 +299,23 @@ export function persistRunRecord(record: RunRecord, filePath: string = MEASURE_P
   appendJsonLine(filePath, JSON.stringify(record), maxBytes);
 }
 
-/** Load all run records (oldest first). Malformed lines are skipped. */
+/** Load all run records (oldest first, incl. rotated files). Malformed lines are skipped. */
 export function loadRunRecords(filePath: string = MEASURE_PATH): RunRecord[] {
   try {
-    if (!existsSync(filePath)) return [];
     const records: RunRecord[] = [];
-    for (const line of readFileSync(filePath, 'utf-8').split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const parsed = JSON.parse(line) as RunRecord;
-        if (parsed.kind === 'run' && typeof parsed.taskId === 'string' && typeof parsed.charsBefore === 'number') {
-          records.push(parsed);
+    // ledgerFiles() is oldest-first, so the merged stream stays chronological.
+    for (const f of ledgerFiles(filePath)) {
+      if (!existsSync(f)) continue;
+      for (const line of readFileSync(f, 'utf-8').split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as RunRecord;
+          if (parsed.kind === 'run' && typeof parsed.taskId === 'string' && typeof parsed.charsBefore === 'number') {
+            records.push(parsed);
+          }
+        } catch {
+          // skip malformed lines
         }
-      } catch {
-        // skip malformed lines
       }
     }
     return records;

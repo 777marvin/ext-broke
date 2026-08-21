@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from '../pricing';
-import { clearTaskStats, createStatsLoader, emptyStats, loadTaskStats, persistStats } from '../tokens';
+import { appendJsonLine, clearTaskStats, createStatsLoader, emptyStats, loadTaskStats, persistStats } from '../tokens';
 
 const price = (inputPerMToken: number | null): TaskModelPrice => ({
   modelId: 'gpt-4o',
@@ -80,6 +80,43 @@ describe('stats persistence privacy', () => {
       assert.equal(loaded?.totalCharsBefore, 0, 'legacy lines default to 0 (unmeasured)');
       assert.equal(loaded?.totalCharsAfter, 0);
       assert.equal(loaded?.savedChars.truncate, 0, 'missing pass counters normalize to 0');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('stats rotation chain (XF15)', () => {
+  it('loadTaskStats finds the newest line across rotated files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-stats-rot-'));
+    const file = join(dir, 'stats.jsonl');
+    try {
+      const lineBytes = Buffer.byteLength(`${JSON.stringify({ ...emptyStats('task-1'), passes: 1 })}\n`);
+      // Every append past one line rotates (cap below one line).
+      appendJsonLine(file, JSON.stringify({ ...emptyStats('task-1'), passes: 1 }), lineBytes - 1);
+      appendJsonLine(file, JSON.stringify({ ...emptyStats('other'), passes: 9 }), lineBytes - 1);
+      appendJsonLine(file, JSON.stringify({ ...emptyStats('task-1'), passes: 2 }), lineBytes - 1);
+      // Now: .2 = task-1(1), .1 = other(9), main = task-1(2).
+      assert.equal(loadTaskStats('task-1', file)?.passes, 2, 'newest line in the main file wins');
+      assert.equal(loadTaskStats('other', file)?.passes, 9, 'lines that live only in a rotation are still found');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('clearTaskStats removes the task from the main file AND rotations', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-stats-rot-clear-'));
+    const file = join(dir, 'stats.jsonl');
+    try {
+      const lineBytes = Buffer.byteLength(`${JSON.stringify({ ...emptyStats('task-1'), passes: 1 })}\n`);
+      const cap = lineBytes * 2 - 1; // rotation fires on the 3rd line
+      appendJsonLine(file, JSON.stringify({ ...emptyStats('task-1'), passes: 1 }), cap);
+      appendJsonLine(file, JSON.stringify({ ...emptyStats('task-2'), passes: 2 }), cap);
+      appendJsonLine(file, JSON.stringify({ ...emptyStats('task-1'), passes: 3 }), cap);
+      // Now: .1 = task-1(1), task-2(2); main = task-1(3).
+      clearTaskStats('task-1', file);
+      assert.equal(loadTaskStats('task-1', file), null, 'all task-1 lines are gone, incl. the rotation');
+      assert.equal(loadTaskStats('task-2', file)?.passes, 2, 'other tasks survive in rotated files');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -90,7 +90,7 @@ describe('persistRunRecord + loadRunRecords', () => {
     });
   });
 
-  it('rotates: keeps only the most recent half once the cap is exceeded', () => {
+  it('rotates by rename once the cap is exceeded: nothing is rewritten, nothing is lost (XF15)', () => {
     withTemp((file) => {
       // All single-digit task ids make every line byte-identical: the cap is
       // 9 lines minus 1 byte, so rotation fires exactly when line 10 arrives.
@@ -99,10 +99,36 @@ describe('persistRunRecord + loadRunRecords', () => {
       for (let i = 0; i < 10; i++) {
         persistRunRecord(record(`t${i}`, 1000, 900), file, cap);
       }
+      // The oversized main file was renamed aside untouched; the fresh main
+      // holds only the new line. loadRunRecords merges the chain oldest-first.
+      const mainLines = readFileSync(file, 'utf-8').split('\n').filter((l) => l.trim());
+      assert.equal(mainLines.length, 1, 'main file starts fresh after rotation');
+      assert.equal(JSON.parse(mainLines[0]).taskId, 't9');
+      assert.ok(existsSync(`${file}.1`), 'the previous generation is kept as .1');
       const records = loadRunRecords(file);
-      assert.equal(records.length, 6); // half of the 9 kept + the new line
-      assert.equal(records[0].taskId, 't4'); // oldest half dropped
+      assert.equal(records.length, 10, 'rename rotation loses nothing (unlike the old half-cut)');
+      assert.equal(records[0].taskId, 't0');
       assert.equal(records[records.length - 1].taskId, 't9');
+    });
+  });
+
+  it('keeps the rotation chain bounded: the oldest rotation is dropped (XF15)', () => {
+    withTemp((file) => {
+      // Cap below one line: EVERY append rotates. With 3 rotations kept,
+      // only the last 4 generations survive (3 rotations + main).
+      const lineBytes = Buffer.byteLength(`${JSON.stringify(record('x', 1000, 900))}\n`);
+      const cap = lineBytes - 1;
+      for (let i = 0; i < 6; i++) {
+        persistRunRecord(record(`t${i}`, 1000, 900), file, cap);
+      }
+      const records = loadRunRecords(file);
+      assert.deepEqual(
+        records.map((r) => r.taskId),
+        ['t2', 't3', 't4', 't5'],
+        'oldest rotations (.4+) are deleted - the chain stays bounded',
+      );
+      assert.ok(existsSync(`${file}.3`), 'newest rotation kept');
+      assert.equal(existsSync(`${file}.4`), false, 'rotation .4 must not exist');
     });
   });
 
