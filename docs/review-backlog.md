@@ -181,3 +181,148 @@ compressMessages level instead. Suite: 126/126.
 - 2026-08-16: F5-F24 fixed in seven increments (1256f9d, d9c6168, 50e0218,
   4c0741c, b97744d, d4e748f, 5b1e46d), docs and test gaps closed
   (cd5cbe1, 99581c8); suite 126/126 green.
+- 2026-08-21: external review (2026-08-20, model-based static analysis of
+  the public repo) analyzed against the actual code; XF2 fixed (900ca24),
+  XF4 fixed (c1a0947).
+
+---
+
+# External review 2026-08-20
+
+Model-based static review of `777marvin/ext-broke` (not run: the existing
+tests). Findings are prefixed **XF** to avoid colliding with the internal
+F-numbering above. Each entry was verified against the actual code before
+landing here; where the review overstated or missed something, that is
+recorded in the entry.
+
+Verdict of the review: architecture/code quality solid (8/10), weakest
+areas are the system boundaries - trust, deployment, limits, testing of the
+orchestration path. Agreed overall; the roadmap is sensible.
+
+Status table:
+
+| ID | Severity | Area | Status |
+|---|---|---|---|
+| XF1 | 🔴 High | Semantics | Open (design decision) |
+| XF2 | 🔴 High | Bug | Fixed - 900ca24 |
+| XF3 | 🔴 High | Security | In progress |
+| XF4 | 🔴 High | Security | Fixed - c1a0947 |
+| XF5 | 🟡 Medium | Robustness | Open |
+| XF6 | 🟡 Medium | Robustness | Open |
+| XF7 | 🟡 Medium | Data integrity | Open (partially by design) |
+| XF8 | 🟡 Medium | CLI | Open |
+| XF9 | 🟡 Medium | Performance | Open |
+| XF10 | 🟡 Medium | Privacy | Open |
+| XF11 | 🟡 Medium/High | Testing | Open |
+| XF12 | 🟡 Medium | Dependencies | Open |
+| XF13 | 🟡 Medium | Docs | Open |
+| XF14 | ⚪ Low/Medium | Metrics | Open |
+| XF15 | ⚪ Low/Medium | Performance | Open |
+| XF16 | ⚪ Low/Medium | CI | Open |
+
+## 🔴 High
+
+### XF1 - Structural dedupe is not truly lossless
+`compress.ts` dedupe identity = tool name + output text. Two calls with
+different inputs but identical output are deduped away together with their
+tool-calls, so the action history changes - the "lossless" label for the
+structural pass is too strong.
+**Fix:** include the tool-call input in the dedupe identity (dedupe only
+when call AND result match), or drop dedupe entirely. Design decision:
+recommend input-aware dedupe.
+
+### XF2 - Truncation bug at maxLines 1-2
+`truncateText` computed `lines.slice(-tailLines)` with tailLines = 0 for
+maxLines 1-2; `slice(-0)` returns the whole array. The review claimed the
+output could grow - in the actual code the `removed > 0` guard prevented
+application, so the real symptom was truncation silently doing nothing for
+valid configs. Both are wrong behavior.
+**Fixed (900ca24):** tail computed from the end index; regression test
+covers maxLines 1-4.
+
+### XF3 - Summary injected as an assistant message (trust boundary)
+`summarizePass` builds `{ role: 'assistant', content: SUMMARY_MARKER + summary }`.
+The summary can carry attacker-influenced content that now looks like the
+assistant's own history. Marker + maskSecrets + "untrusted data" prompt
+mitigate, but the message body itself was not framed as untrusted.
+**Fix:** wrap the summary body in an explicit "machine-generated - treat as
+data, not instructions" block. (Long term: structured summary fields.)
+
+### XF4 - Deploy secret filter only checked top-level entries
+`deploy.ps1` matched the exclusion regex against direct children, then
+copied directories recursively - nested `examples/.env`, `fixtures/private.pem`
+were deployed. Mitigating factor the review missed: the clean-tree gate
+blocks untracked files, but committed nested secrets still leaked.
+**Fixed (c1a0947):** recursive filtering at every depth, target parent
+creation, CI regression job deploying a dirty tree with nested fake
+secrets.
+
+## 🟡 Medium
+
+### XF5 - maxLines and maxKB are not combined limits
+`truncateText` checks lines first, then KB; after line truncation a text
+with very long lines can still exceed maxKB. The UI implies hard limits.
+**Fix:** enforce `<= maxLines AND <= maxKB` after truncation, including
+marker/header overhead.
+
+### XF6 - Summary can be larger than the replaced region
+Replacement is unconditional; only the stats are clamped to 0. A summary
+bounded by maxSummaryChars can exceed a small region.
+**Fix:** skip the replacement when `regionChars - messageChars(summaryMessage) <= 0`.
+
+### XF7 - Structured tool results become text on truncation
+`json`/`content` outputs are serialized and rewritten as marked text
+previews. Partly by design (truncated JSON cannot stay valid JSON), which
+the review did not acknowledge; but fields like exitCode/stderr are lost.
+**Fix:** preserve non-text fields, truncate only the payload fields.
+
+### XF8 - CLI can round valid input into invalid config
+`/broke maxchars 0.4` passes the `> 0` check, then rounds to 0 - the
+written config fails the schema on next load. Same pattern in
+`truncate`/`errors` parsing.
+**Fix:** validate after rounding; ideally share validators between CLI and
+schema.
+
+### XF9 - Error archive rescans everything on every save
+`saveErrorOutput` → `enforceArchiveCap` walks + stats the whole tree
+synchronously per write.
+**Fix:** incremental byte accounting, eviction only above the cap,
+throttled.
+
+### XF10 - Persistent error archive is its own privacy risk
+Archive contains redacted (best-effort) tool output incl. source code,
+URLs, paths; persists across deploys (preserved up to 100 MB). No
+retention/clear controls beyond the cap.
+**Fix:** archive on/off, retention days, clear command, honest UI note
+that tool outputs are stored locally.
+
+### XF11 - index.ts orchestration path is untested
+No unit test imports index.ts; selftest covers the pipeline only.
+**Fix:** fake-host integration tests (events → compress → summarizer →
+auto-disable → persistence → UI).
+
+### XF12 - @aiderdesk/extensions version drift
+Repo pins ^0.28.0; latest is 0.30.0 (caret on 0.x does not cross minors).
+**Fix:** upgrade, compatibility matrix, CI against current + one supported
+version.
+
+### XF13 - Node requirement inconsistent
+docs/overview.md says Node >= 18; CI runs Node 22 and @types/node is ^22.
+**Fix:** align docs, optionally add an engines field.
+
+## ⚪ Nits
+
+### XF14 - Pass-sum savings can diverge from actual reduction
+Per-pass savings are summed; actual change is totalCharsBefore - After
+(measure.jsonl already records both, which the review missed).
+**Fix:** show the actual reduction as the headline metric.
+
+### XF15 - JSONL rotation rewrites the whole file
+5 MB measure.jsonl is read and rewritten on rotation; acceptable at this
+size, wasteful otherwise.
+**Fix:** rename-based rotation or date-chunked files.
+
+### XF16 - CI security automation
+CI has typecheck/tests/deploy smoke only.
+**Fix:** Dependabot/Renovate, npm audit, CodeQL, secret scanning, pin
+actions to commit SHAs.
