@@ -91,12 +91,15 @@ function conversation(): ContextMessage[] {
   return msgs;
 }
 
-/** Conversation whose compressible region (protectedTurns=1) holds 2 user turns. */
+/** Conversation whose compressible region (protectedTurns=1) holds 2 user turns.
+ *  The file-read payload is padded so the region (~500 chars) stays larger
+ *  than the framed summary message (~250 chars): XF6 forbids swaps that grow
+ *  the context, and the synthetic fixture must still produce a reduction. */
 function summaryConversation(): ContextMessage[] {
   return [
     user('Brief: build the billing module.'),
     assistant('Step 1: reading the module.'),
-    tool('power---file-read', 'file content line a\nfile content line b'),
+    tool('power---file-read', `file content line a\nfile content line b\n${'x'.repeat(350)}`),
     user('Add a discount field.'),
     assistant('Step 2: editing.'),
     tool('power---file-edit', 'edit ok'),
@@ -469,17 +472,11 @@ describe('errorPass', () => {
 
 describe('summarizePass', () => {
   it('generates a summary and replaces the compressible region', async () => {
-    // Region padded beyond the synthetic fixture: the summary message now
-    // carries the untrusted-data framing, so the region must be large
-    // enough for the replacement to be a REAL reduction.
     const msgs = summaryConversation();
-    const padded = msgs.map((m, i) =>
-      i === 1 && m.role === 'assistant' ? { ...m, content: `${m.content}\n${'x'.repeat(300)}` } : m,
-    );
     const state = createCompressState();
     const calls = { n: 0, inputs: [] as string[] };
     const deps = countingDeps(calls);
-    const r = await summarizePass(padded, 1, summarizeConfig(), deps, state, 'task-sum-1');
+    const r = await summarizePass(msgs, 1, summarizeConfig(), deps, state, 'task-sum-1');
     assert.equal(calls.n, 1);
     assert.equal(r.summarizeCalls, 1);
     assert.ok(r.messages.some((m) => isSummaryMessage(m)));
@@ -597,6 +594,39 @@ describe('summarizePass', () => {
     assert.ok(calls.inputs[0].includes('[REDACTED]'));
   });
 
+  it('keeps the original when the summary would GROW the context (XF6)', async () => {
+    const msgs = [
+      user('Brief: build the billing module.'),
+      assistant('Step 1: reading the module.'),
+      tool('power---file-read', 'file content'),
+      user('Add a discount field.'),
+      assistant('Step 2: editing.'),
+      tool('power---file-edit', 'edit ok'),
+      user('Run the tests.'),
+      assistant('Step 3: running tests.'),
+      tool('power---bash', 'all tests pass'),
+      user('Protected tail.'),
+    ];
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    // Stub returns a summary LONGER than the tiny region: the swap would
+    // expand the context, so the pass must keep the original messages.
+    const deps = countingDeps(calls, `${'y'.repeat(400)} summary is bigger than the region`);
+    const cfg = summarizeConfig({ minChars: 60, maxSummaryChars: 1000 });
+    const r = await summarizePass(msgs, 1, cfg, deps, state, 'task-sum-xf6');
+    assert.equal(r.summarizeCalls, 1); // the LLM call happened (cost side)
+    assert.equal(r.failed, false);
+    assert.equal(r.summarizer, 'none');
+    assert.equal(r.summarizedRanges, 0);
+    assert.equal(r.removedChars, 0);
+    assert.equal(r.messages, msgs); // untouched - no growth
+    // Nothing was cached: the next call must generate again instead of
+    // reusing a non-beneficial summary.
+    const r2 = await summarizePass(msgs, 1, cfg, deps, state, 'task-sum-xf6');
+    assert.equal(calls.n, 2);
+    assert.equal(r2.messages, msgs);
+  });
+
   it('reports failure instead of throwing when the summarizer throws', async () => {
     const msgs = summaryConversation();
     const state = createCompressState();
@@ -646,7 +676,8 @@ describe('summarizePass', () => {
     const msgs: ContextMessage[] = [
       user('Brief: build the billing module.'),
       assistant('Step 1: reading the module.'),
-      tool('power---file-read', 'file content line a\nfile content line b'),
+      // Padded so the region beats the framed summary message (XF6 guard).
+      tool('power---file-read', `file content line a\nfile content line b\n${'x'.repeat(300)}`),
       user('Add a discount field.'),
       assistant('Step 2: editing.'),
       tool('power---file-edit', 'edit ok'),

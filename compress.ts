@@ -675,7 +675,10 @@ export async function summarizePass(
   // --- Reuse: region unchanged since the last summarization ------------------
   // No new LLM call; the cached summary replaces the region again.
   if (cached && cached.throughId === lastId) {
-    const removedChars = Math.max(regionChars - messageChars(cached.message), 0);
+    const removedChars = regionChars - messageChars(cached.message);
+    // XF6: a summary that is not smaller than the region it replaces would
+    // GROW the context - keep the original instead.
+    if (removedChars <= 0) return noop;
     const result = [...messages.slice(0, start), cached.message, ...messages.slice(end)];
     return { messages: result, removedChars, summarizedRanges: 1, summarizeCalls: 0, failed: false, summarizer: cached.summarizer };
   }
@@ -690,10 +693,13 @@ export async function summarizePass(
       const newUserTurns = sinceThrough.filter((m) => m.role === 'user').length;
       const newChars = messagesChars(sinceThrough);
       if (newUserTurns === 0 && newChars < config.summarize.minChars) {
+        const removedChars = regionChars - messageChars(cached.message) - newChars;
+        // XF6: only swap when the cached summary + the new tool messages are
+        // smaller than the original region - never grow the context.
+        if (removedChars <= 0) return noop;
         const updated: CachedSummary = { ...cached, throughId: lastId };
         boundedMapSet(state.cachedSummaryByTask, taskId, updated);
         const result = [...messages.slice(0, start), cached.message, ...sinceThrough, ...messages.slice(end)];
-        const removedChars = Math.max(regionChars - messageChars(cached.message) - newChars, 0);
         return { messages: result, removedChars, summarizedRanges: 1, summarizeCalls: 0, failed: false, summarizer: cached.summarizer };
       }
     }
@@ -755,9 +761,17 @@ export async function summarizePass(
     content: `${SUMMARY_MARKER} Compressed ${region.length} messages (≈ ${estimateTokens(regionChars)} → ${estimateTokens(summary.length)} tokens).\n\n${UNTRUSTED_SUMMARY_NOTE}\n\n${summary}`,
   };
 
+  const removedChars = regionChars - messageChars(summaryMessage);
+  if (removedChars <= 0) {
+    // XF6: a summary that is not smaller than the region it replaces would
+    // GROW the context. Keep the original messages and do not cache the
+    // summary. The LLM call still counts (honest cost side), nothing is
+    // injected.
+    return { messages, removedChars: 0, summarizedRanges: 0, summarizeCalls: 1, failed: false, summarizer: 'none' };
+  }
+
   boundedMapSet(state.cachedSummaryByTask, taskId, { throughId: lastId, message: summaryMessage, summarizer, fingerprint });
 
-  const removedChars = Math.max(regionChars - messageChars(summaryMessage), 0);
   const result = [...messages.slice(0, start), summaryMessage, ...messages.slice(end)];
 
   return { messages: result, removedChars, summarizedRanges: 1, summarizeCalls: 1, failed: false, summarizer };
