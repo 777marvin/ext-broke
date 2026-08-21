@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Error archive privacy controls** (`/broke errors archive <on|off>`,
+  `retention <days>`, `clear`; also in the settings dialog). The archive
+  now respects a retention age (default 30 days) and can be switched off
+  entirely, in which case no full tool output is written at all. Saves use
+  incremental byte accounting instead of scanning the tree, with age
+  sweeps throttled to once per hour; the scan re-syncs the ledger.
+- **CI security automation**: npm audit gate, CodeQL, dependency review,
+  Dependabot (npm + GitHub Actions), least-privilege job permissions, and
+  all actions pinned to commit SHAs.
+
+### Changed
+
+- **Structured tool outputs keep their shape on truncation.** Command
+  outputs like `power---bash` (`json` with `stdout`/`stderr`/`exitCode`)
+  are no longer flattened into a text preview; only the text payload is
+  truncated, stderr is emptied, exitCode and other metadata survive.
+- **Ledgers rotate by rename instead of rewrite.** `measure.jsonl` and
+  `stats.jsonl` are renamed aside at 5 MB (previous generations kept as
+  `.1`/`.2`/`.3`) instead of being read and rewritten - O(1) rotation,
+  and no more half-cut data loss on rotation.
+
 ## [0.4.0] - 2026-08-17
 
 ### Added

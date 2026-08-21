@@ -50,7 +50,8 @@ produce: the 💸 badge and `/broke stats` measure every run with the
 Want provable real-session numbers instead of assertions? Turn on the
 measurement ledger (`/broke measure on`, default) and broke appends one
 record per real compression run to `measure.jsonl` (sizes and per-pass
-removals only, no content, no paths, rotation-capped at 5 MB). Then
+removals only, no content, no paths; at 5 MB the file is rotated aside
+and the previous generations are kept as `.1`/`.2`/`.3`). Then
 `/broke measure` in a task - or `npm run measure` in the extension
 directory - summarizes them: runs, tasks, per-run mean/median/max and
 per-task breakdowns, explicitly labeled as a sum over individual runs,

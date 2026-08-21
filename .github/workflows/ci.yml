@@ -5,13 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: jobs opt in to the permissions they actually need.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Typecheck & tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -19,12 +23,24 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  audit:
+    name: Dependency audit (high & critical)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
   deps-current:
     name: Typecheck & tests against latest @aiderdesk/extensions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -33,11 +49,37 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          languages: javascript-typescript
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+
   deploy-script:
     name: deploy.ps1 standalone smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Smoke-test deploy.ps1 in standalone mode
         shell: pwsh
         run: |
@@ -54,7 +96,7 @@ jobs:
     name: deploy.ps1 standalone smoke test (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Smoke-test deploy.ps1 in standalone mode
         shell: pwsh
         run: |
@@ -67,7 +109,7 @@ jobs:
     name: deploy.ps1 excludes nested secrets (regression)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Real deploy against a temp profile; nested secrets must not reach the target
         shell: pwsh
         run: |
@@ -77,7 +119,7 @@ jobs:
           # Attack fixtures: secrets nested inside subdirectories of a dirty
           # working tree (-Force allows the deploy despite the untracked files).
           New-Item -ItemType Directory -Force -Path 'examples', 'fixtures' | Out-Null
-          Set-Content -Path 'examples/.env' -Value 'SECRET=topsecret'
+          Set-Content -Path 'examples/.env' -Value 'SECRET=<redacted-secret>'
           Set-Content -Path 'examples/client.key' -Value '-----BEGIN PRIVATE KEY-----'
           Set-Content -Path 'fixtures/private.pem' -Value '-----BEGIN CERTIFICATE-----'
           Set-Content -Path 'examples/debug.log' -Value 'debug data'
