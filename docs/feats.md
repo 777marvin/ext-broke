@@ -19,12 +19,14 @@ be resolved during the corresponding feature's development.
 | F3 | State Snapshotting & Memory Flushing | TBD | M | planned |
 | F4 | Local Keyword/Vector Index with snippet summaries | TBD | L | planned |
 
-**Version reality check (2026-08-18):** v0.3.0 and v0.4.0 are released
-(current: v0.4.0, 2026-08-17) and shipped F1 improvements, the reference
-benchmark and the measurement ledger. F2-F4 are **not** implemented in any
-released version. The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
-F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without F2/F3)
-and stay TBD until the features are actually scheduled.
+**Version reality check (2026-08-22):** v0.3.0 to v0.5.0 are released
+(current: v0.5.0, 2026-08-22) and shipped F1 improvements, the reference
+benchmark, the measurement ledger, the error-archive privacy controls and
+the CI security automation. F2-F4 are **not** implemented in any released
+version. The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
+F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without
+F2/F3, and 0.5.0 shipped the XF-hardening round instead) and stay TBD
+until the features are actually scheduled.
 
 Rationale for the order: F1 is a small pure-function pass that slots into the
 existing pipeline (quick win, validates the config/command/stats extension

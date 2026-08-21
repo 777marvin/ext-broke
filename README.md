@@ -6,7 +6,7 @@ costs less, and its strongest compression level can run on a **free local
 model** instead of your paid one.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v0.4.0-blue)](CHANGELOG.md)
+[![Release](https://img.shields.io/badge/release-v0.5.0-blue)](CHANGELOG.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/777marvin/ext-broke/ci.yml)](https://github.com/777marvin/ext-broke/actions)
 
 **Author:** [@777marvin](https://github.com/777marvin), this is my first
@@ -45,7 +45,8 @@ exactly as it is.
 
 Yes, but the numbers broke itself guarantees are the ones your own tasks
 produce: the 💸 badge and `/broke stats` measure every run with the
-`chars / 4` heuristic and show them per pass, per task.
+`chars / 4` heuristic and show them per pass, per task (the stats
+headline is the measured before/after reduction).
 
 Want provable real-session numbers instead of assertions? Turn on the
 measurement ledger (`/broke measure on`, default) and broke appends one
@@ -105,7 +106,7 @@ Extensions are hot-reloaded by AiderDesk: no restart needed.
 
 ## Requirements
 
-- AiderDesk ≥ 0.77, Node.js ≥ 18
+- AiderDesk ≥ 0.77, Node.js ≥ 22
 - Optional: [Ollama](https://ollama.com) running (`ollama pull
   qwen2.5-coder:3b`) for the free local summarizer. broke degrades
   gracefully when Ollama is offline: requests fail fast (at most 60 s per
@@ -143,6 +144,9 @@ commands) or from the gear icon on the extension card:
 /broke errors minchars <n>        compress matching outputs ≥ n chars (default 8000)
 /broke errors lines <n>           context lines kept around the failure (default 8)
 /broke errors toollevel <on|off>  rewrite stored history at tool level (default: off)
+/broke errors archive <on|off>   save full outputs to errors/ (default: on)
+/broke errors retention <days>   delete archived outputs older than n days (default 30)
+/broke errors clear              delete the whole error archive now
 /broke summarize via <local|cloud> summarizer backend
 /broke summarize model <name>      Ollama model tag
 /broke summarize cloud <provider/model>
@@ -161,7 +165,8 @@ commands) or from the gear icon on the extension card:
 passes over everything older than the protected turns:
 
 1. **structural**: removes zero-content messages, collapses identical
-   adjacent tool results, merges consecutive assistant texts.
+   adjacent tool results (only when the producing tool-call, name and
+   input, matches too), merges consecutive assistant texts.
 2. **errors**: old tool results that are compiler/test error output (tsc,
    Python/pytest, Jest/Vitest, Node stack traces) are replaced by their
    diagnostic essence with an explicit
@@ -169,16 +174,17 @@ passes over everything older than the protected turns:
    command/compiler/test tools are compressed: file reads, search results
    and docs that merely *look* like errors (an `Error:` heading, `●`
    bullets) are never rewritten.
-3. **truncate**: old tool outputs over 200 lines / 20 KB are cut to
-   head+tail; oversized tool-call inputs are replaced by a `__broke`
-   preview.
+3. **truncate**: old tool outputs are cut to head+tail under combined
+   hard limits (200 lines and 20 KB); oversized tool-call inputs are
+   replaced by a `__broke` preview.
 4. **summarize**: when the input exceeds the threshold and the old region
    is big enough, it is replaced by one `[broke-compacted]` summary. The
    summary is cached per task: unchanged regions are reused without extra
    calls; a regeneration happens only when new turns enter the region.
    Images, file attachments and reasoning parts are never silently
    dropped: regions containing them are skipped (the truncate pass still
-   shrinks their text parts).
+   shrinks their text parts). A summary is never applied when it would
+   grow the context.
 
 After 3 consecutive summarize failures, broke disables summarization for
 that task and tells you why. The badge tooltip shows the disabled state;
@@ -214,6 +220,8 @@ it only changes which model sees the untrusted text first.
 | errors.minChars | 8000 | compress matching tool results ≥ N chars |
 | errors.contextLines | 8 | context lines kept around the failure |
 | errors.toolLevel | off | rewrite stored history at tool level |
+| errors.archive | on | save full tool outputs to errors/ (off: nothing is written) |
+| errors.retentionDays | 30 | delete archived outputs older than N days |
 | summarize.via | `local` | local (Ollama) / cloud |
 | summarize.localModel | `qwen2.5-coder:3b` | Ollama model tag |
 | summarize.ollamaUrl | `http://127.0.0.1:11434` | Ollama base URL |

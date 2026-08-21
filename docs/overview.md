@@ -1,6 +1,7 @@
 # Project Overview
 
-*Snapshot: v0.3.0 + review fixes F1-F24 closed + measurement ledger (2026-08-16)*
+*Snapshot: v0.5.0 (2026-08-22), review rounds F1-F24 and XF1-XF16 closed,
+suite 174/174 green*
 
 ## What broke is
 
@@ -12,7 +13,7 @@ applies to the input of each model call only.
 
 | Level | What happens | Loss |
 |---|---|---|
-| `structural` | drop empty messages, dedupe identical adjacent tool results, merge consecutive assistant texts | none (lossless) |
+| `structural` | drop empty messages, dedupe identical adjacent tool results (producing tool-call must match, XF1), merge consecutive assistant texts | none (lossless) |
 | `truncate` (default) | + error compression of compiler/test output (tsc, Python/pytest, Jest/Vitest, Node stack traces) + head/tail truncation of old tool outputs, trimming of oversized tool-call inputs | middle of old outputs, error-dump detail |
 | `summarize` | + replace old conversation turns with a dense summary, via local Ollama (default, 0 cloud tokens) or a cloud model | detail of old turns |
 
@@ -20,27 +21,28 @@ applies to the input of each model call only.
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `index.ts` | 492 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate, reentry guard), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …` incl. measure), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`), per-run measurement persistence in `recordReport` |
-| `compress.ts` | 744 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
-| `output.ts` | 149 | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
-| `errors.ts` | 300 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir); `isCommandTool` classification |
-| `config.ts` | 211 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` toggle |
-| `commands.ts` | 298 | `/broke` parser + all subcommands (status, stats, measure, reset, selftest, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
-| `tokens.ts` | 304 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
-| `local.ts` | 127 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
-| `pricing.ts` | 80 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
-| `selftest.ts` | 181 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
-| `scripts/measure.ts` | 22 | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
-| `ConfigComponent.jsx` | 184 | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
-| `StatusBadge.jsx` | 61 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state |
-| `tests/commands.test.ts` | 248 | Unit tests: `/broke` parse/apply/format, generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
-| `tests/measure.test.ts` | 187 | Unit tests: run-record mapping, ledger append/rotation/malformed-skip, summary math (mean/median/max/byTask) |
-| `tests/compress.test.ts` | 783 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
-| `tests/config.test.ts` | 120 | Unit tests: config merge, corrupted-file fallback, pure updates, one-write multi-path persistence |
-| `tests/errors.test.ts` | 404 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap |
-| `tests/local.test.ts` | 125 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts |
-| `tests/pricing.test.ts` | 135 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats persistence privacy, stats loader TTL, task-stats reset |
-| `tests/selftest.test.ts` | 51 | Unit tests: synthetic-call-id linking, dedupe really applied, honest per-pass labels |
+| `index.ts` | 547 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate, reentry guard), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …` incl. measure), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`), per-run measurement persistence in `recordReport` |
+| `compress.ts` | 961 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
+| `output.ts` | 155 | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
+| `errors.ts` | 475 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir, retention sweep, archive on/off, XF9/XF10); `isCommandTool` classification |
+| `config.ts` | 243 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` toggle |
+| `commands.ts` | 356 | `/broke` parser + all subcommands (status, stats with measured-reduction headline, measure, reset, selftest, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
+| `tokens.ts` | 385 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
+| `local.ts` | 135 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
+| `pricing.ts` | 90 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
+| `selftest.ts` | 194 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
+| `scripts/measure.ts` | 25 | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
+| `ConfigComponent.jsx` | 210 | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
+| `StatusBadge.jsx` | 64 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state |
+| `tests/index.test.ts` | 265 | Fake-host integration tests (XF11): real extension against a fake ExtensionContext/task, compression + stats/measure persistence, reentry guard, summarize auto-disable, tool-level archiving on/off, silence when disabled |
+| `tests/commands.test.ts` | 323 | Unit tests: `/broke` parse/apply/format, generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
+| `tests/measure.test.ts` | 230 | Unit tests: run-record mapping, ledger append/rotation/malformed-skip, summary math (mean/median/max/byTask) |
+| `tests/compress.test.ts` | 1005 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
+| `tests/config.test.ts` | 131 | Unit tests: config merge, corrupted-file fallback, pure updates, one-write multi-path persistence |
+| `tests/errors.test.ts` | 568 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap/retention/clear |
+| `tests/local.test.ts` | 137 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts |
+| `tests/pricing.test.ts` | 212 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats persistence privacy, stats loader TTL, task-stats reset |
+| `tests/selftest.test.ts` | 56 | Unit tests: synthetic-call-id linking, dedupe really applied, honest per-pass labels |
 
 ## How the pipeline works
 
@@ -48,7 +50,8 @@ applies to the input of each model call only.
 everything older than the protected region:
 
 1. **structural**: drop empty messages, dedupe identical adjacent tool
-   results, merge consecutive assistant texts (lossless).
+   results (only when the producing tool-call, name and input, matches
+   too, XF1), merge consecutive assistant texts (lossless).
 2. **errors** (F1): compiler/test output becomes its diagnostic essence
    with an explicit `… [broke: error summary - N lines → M lines]` marker.
    Engages per-message above `errors.minChars` (default 8000), before
@@ -56,9 +59,12 @@ everything older than the protected region:
    `isCommandTool` guard as the tool-level path): file reads, search
    results and docs that merely look like errors are never rewritten.
    Optionally rewrites stored history at tool level
-   (`errors.toolLevel`, archives originals under `<extension>/errors/`).
-3. **truncate**: old tool outputs over 200 lines / 20 KB → head+tail with
-   marker; tool-call inputs over 2000 chars → `__broke` preview.
+   (`errors.toolLevel`, archives originals under `<extension>/errors/`;
+   the archive can be switched off entirely and is retention-swept,
+   default 30 days, XF10).
+3. **truncate**: old tool outputs → head+tail with marker under combined
+   hard limits (≤ 200 lines AND ≤ 20 KB after the cut, XF5); tool-call
+   inputs over 2000 chars → `__broke` preview.
 4. **summarize**: region ≥ `afterTurns` (8) user turns and input above
    `maxContextChars` (60000 ≈ 15k tokens) → one `[broke-compacted]`
    summary message, cached per task + summarizer-config fingerprint
@@ -66,7 +72,9 @@ everything older than the protected region:
    it; regeneration only on new user turns or ≥ `minChars` of new
    content). Regions carrying images, file attachments or reasoning parts
    are skipped entirely (never silently dropped); truncate still shrinks
-   their text parts.
+   their text parts. The swap is skipped when the summary would grow the
+   context (XF6), and the summary body is framed as untrusted
+   machine-generated data, not assistant history (XF3).
 
 Protected: the task brief (first user message) and the last `protectedTurns`
 (2) user turns; sessions with fewer user turns protect only the current step

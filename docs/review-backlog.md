@@ -169,9 +169,10 @@ fallback, applyConfigUpdates purity, updateConfigPaths) by
 tests/config.test.ts; `selftest.ts` (call-id linking, real dedupe, honest
 labels) by tests/selftest.test.ts; `clearTaskStats` (99581c8) by
 tests/pricing.test.ts. The `index.ts` orchestration (onToolFinished,
-recordReport, failure counter) is not covered by unit tests: it needs the
-AiderDesk runtime, and the gate/counter logic it drives is tested at the
-compressMessages level instead. Suite: 126/126.
+recordReport, failure counter) was not covered by unit tests; closed
+2026-08-22 by the fake-host integration tests (tests/index.test.ts, XF11)
+that drive the real extension against a fake ExtensionContext/task.
+Suite: 174/174.
 
 ## Work log
 
@@ -184,6 +185,8 @@ compressMessages level instead. Suite: 126/126.
 - 2026-08-21: external review (2026-08-20, model-based static analysis of
   the public repo) analyzed against the actual code; XF2 fixed (900ca24),
   XF4 fixed (c1a0947).
+- 2026-08-22: XF1-XF16 all fixed (900ca24..6426192, see the status table
+  below), suite 174/174 green; v0.5.0 cut.
 
 ---
 
