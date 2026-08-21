@@ -207,10 +207,10 @@ Status table:
 | XF2 | 🔴 High | Bug | Fixed - 900ca24 |
 | XF3 | 🔴 High | Security | Fixed - 4744148 |
 | XF4 | 🔴 High | Security | Fixed - c1a0947 |
-| XF5 | 🟡 Medium | Robustness | Open |
-| XF6 | 🟡 Medium | Robustness | Open |
+| XF5 | 🟡 Medium | Robustness | Fixed - cb61321 |
+| XF6 | 🟡 Medium | Robustness | Fixed - af5949c |
 | XF7 | 🟡 Medium | Data integrity | Open (partially by design) |
-| XF8 | 🟡 Medium | CLI | Open |
+| XF8 | 🟡 Medium | CLI | Fixed - 7f0c478 |
 | XF9 | 🟡 Medium | Performance | Open |
 | XF10 | 🟡 Medium | Privacy | Open |
 | XF11 | 🟡 Medium/High | Testing | Open |
