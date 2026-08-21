@@ -12,6 +12,7 @@ import {
   summarizePass,
   truncatePass,
   SUMMARY_MARKER,
+  UNTRUSTED_SUMMARY_NOTE,
   type SummarizeDeps,
 } from '../compress';
 import { DEFAULT_CONFIG, type Config } from '../config';
@@ -468,15 +469,41 @@ describe('errorPass', () => {
 
 describe('summarizePass', () => {
   it('generates a summary and replaces the compressible region', async () => {
+    // Region padded beyond the synthetic fixture: the summary message now
+    // carries the untrusted-data framing, so the region must be large
+    // enough for the replacement to be a REAL reduction.
     const msgs = summaryConversation();
+    const padded = msgs.map((m, i) =>
+      i === 1 && m.role === 'assistant' ? { ...m, content: `${m.content}\n${'x'.repeat(300)}` } : m,
+    );
     const state = createCompressState();
     const calls = { n: 0, inputs: [] as string[] };
     const deps = countingDeps(calls);
-    const r = await summarizePass(msgs, 1, summarizeConfig(), deps, state, 'task-sum-1');
+    const r = await summarizePass(padded, 1, summarizeConfig(), deps, state, 'task-sum-1');
     assert.equal(calls.n, 1);
     assert.equal(r.summarizeCalls, 1);
     assert.ok(r.messages.some((m) => isSummaryMessage(m)));
     assert.ok(r.removedChars > 0);
+  });
+
+  it('frames the summary as untrusted machine-generated data (XF3)', async () => {
+    const msgs = summaryConversation();
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const r = await summarizePass(msgs, 1, summarizeConfig(), deps, state, 'task-sum-xf3');
+    const summaryMsg = r.messages.find((m) => isSummaryMessage(m));
+    assert.ok(summaryMsg, 'summary message expected');
+    const content = summaryMsg.content as string;
+    assert.ok(content.includes(UNTRUSTED_SUMMARY_NOTE), 'summary body must carry the untrusted-data framing');
+    assert.ok(
+      content.indexOf(UNTRUSTED_SUMMARY_NOTE) < content.indexOf('Summary: billing module'),
+      'the framing must come before the generated body',
+    );
+    // Cache reuse serves the same framed message - no unframed path.
+    const r2 = await summarizePass(msgs, 1, summarizeConfig(), deps, state, 'task-sum-xf3');
+    const cachedMsg = r2.messages.find((m) => isSummaryMessage(m));
+    assert.ok(cachedMsg && (cachedMsg.content as string).includes(UNTRUSTED_SUMMARY_NOTE));
   });
 
   it('reuses the cached summary when the region is unchanged', async () => {
