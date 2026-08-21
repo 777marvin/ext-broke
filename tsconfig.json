@@ -1,9 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "ES2020",
+    "module": "Preserve",
     "lib": ["ES2020"],
-    "moduleResolution": "node",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
     "esModuleInterop": true,
     "skipLibCheck": true,
     "strict": true,
