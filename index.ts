@@ -63,8 +63,16 @@ const LOG_MIN_SAVED_CHARS = 4000;
 const MAX_SUMMARIZE_FAILURES = 3;
 /** How long the badge may reuse the last Ollama status check (short: UI must stay honest). */
 const OLLAMA_STATUS_TTL_MS = 30_000;
-/** Persist stats at most this often per task - stats.jsonl is debug data, not a ledger. */
-const STATS_PERSIST_MIN_MS = 60_000;
+/**
+ * Persist stats at most this often per task - stats.jsonl is debug data,
+ * not a ledger. BROKE_STATS_PERSIST_MIN_MS overrides for tests (read at
+ * module load, like the other BROKE_* isolation variables).
+ */
+const STATS_PERSIST_MIN_MS = (() => {
+  const raw = process.env.BROKE_STATS_PERSIST_MIN_MS;
+  const parsed = raw === undefined ? 60_000 : Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 60_000;
+})();
 
 /**
  * The metadata version comes from package.json (single source of truth):

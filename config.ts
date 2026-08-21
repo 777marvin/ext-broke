@@ -2,7 +2,12 @@ import { closeSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync
 import { join } from 'node:path';
 import { z } from 'zod';
 
-export const CONFIG_PATH = join(__dirname, 'config.json');
+/**
+ * Config file location. BROKE_CONFIG_PATH overrides the default (read at
+ * module load): tests and parallel extension instances need isolation
+ * from the real config.json.
+ */
+export const CONFIG_PATH = process.env.BROKE_CONFIG_PATH ?? join(__dirname, 'config.json');
 
 /**
  * Broke configuration. All values have defaults, so a missing or partial
