@@ -203,7 +203,7 @@ Status table:
 
 | ID | Severity | Area | Status |
 |---|---|---|---|
-| XF1 | 🔴 High | Semantics | Open (design decision) |
+| XF1 | 🔴 High | Semantics | Fixed - 8e76962 (decision: dedupe only with identical tool input) |
 | XF2 | 🔴 High | Bug | Fixed - 900ca24 |
 | XF3 | 🔴 High | Security | Fixed - 4744148 |
 | XF4 | 🔴 High | Security | Fixed - c1a0947 |
