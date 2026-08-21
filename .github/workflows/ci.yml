@@ -48,3 +48,37 @@ jobs:
           ./scripts/deploy.ps1 -Category extensions -Name smoke-nonexistent -DryRun
           if ($LASTEXITCODE -ne 0) { throw 'deploy.ps1 standalone dry run failed' }
           Write-Output 'deploy.ps1 standalone smoke test passed.'
+
+  deploy-secret-filter:
+    name: deploy.ps1 excludes nested secrets (regression)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Real deploy against a temp profile; nested secrets must not reach the target
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:USERPROFILE = Join-Path $env:HOME 'broke-ci-profile'
+          if (Test-Path $env:USERPROFILE) { Remove-Item $env:USERPROFILE -Recurse -Force }
+          # Attack fixtures: secrets nested inside subdirectories of a dirty
+          # working tree (-Force allows the deploy despite the untracked files).
+          New-Item -ItemType Directory -Force -Path 'examples', 'fixtures' | Out-Null
+          Set-Content -Path 'examples/.env' -Value 'SECRET=topsecret'
+          Set-Content -Path 'examples/client.key' -Value '-----BEGIN PRIVATE KEY-----'
+          Set-Content -Path 'fixtures/private.pem' -Value '-----BEGIN CERTIFICATE-----'
+          Set-Content -Path 'examples/debug.log' -Value 'debug data'
+          try {
+            ./scripts/deploy.ps1 -Category extensions -Name secret-smoke -Force
+            if ($LASTEXITCODE -ne 0) { throw 'deploy.ps1 failed' }
+            $target = Join-Path $env:USERPROFILE '.aider-desk/extensions/secret-smoke'
+            foreach ($forbidden in @('examples/.env', 'examples/client.key', 'fixtures/private.pem', 'examples/debug.log')) {
+              if (Test-Path (Join-Path $target $forbidden)) { throw "nested secret was deployed: $forbidden" }
+            }
+            if (-not (Test-Path (Join-Path $target 'package.json'))) { throw 'deploy lost the repo content' }
+            if (-not (Test-Path (Join-Path $target 'docs/overview.md'))) { throw 'deploy over-filtered legit nested content' }
+            Write-Output 'nested secret filter verified.'
+          }
+          finally {
+            Remove-Item -Path 'examples/.env', 'examples/client.key', 'fixtures/private.pem', 'examples/debug.log' -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $env:USERPROFILE -Recurse -Force -ErrorAction SilentlyContinue
+          }

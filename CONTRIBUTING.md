@@ -53,7 +53,8 @@ The extension deploys into `~/.aider-desk/extensions/broke/` via
 
 The script refuses a dirty working tree, is atomic (previous installation
 is restored on failure), and never copies `.git`, `node_modules`, `.env*`,
-`.aider*` or `stats.jsonl`. Roll back with `-FromTag <previous-tag>`.
+`*.pem`/`*.key`/`*.p12`/`*.pfx`/`*.log`, `.aider*` or `stats.jsonl` - at any
+depth (nested files are filtered too). Roll back with `-FromTag <previous-tag>`.
 
 ## Code of conduct
 

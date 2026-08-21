@@ -20,7 +20,8 @@
   The deployed version is written to .deployed-version in the target.
   .git, node_modules and sensitive files (.env*, *.pem, *.key, *.p12,
   *.pfx, *.log, .aider*, stats.jsonl) are never copied from the working
-  tree. Existing runtime files in the target (config.json, stats.jsonl,
+  tree, at ANY depth (nested examples/.env is excluded too). Existing
+  runtime files in the target (config.json, stats.jsonl,
   node_modules, and errors/ up to 100 MB) are preserved across the
   deploy.
 
@@ -61,6 +62,26 @@ $ErrorActionPreference = 'Stop'
 function Write-Utf8NoBom {
   param([string]$Path, [string]$Content)
   [System.IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Copy-FilteredRecursive {
+  param(
+    [string]$From,
+    [string]$To,
+    [string]$ExcludeRegex
+  )
+  # The exclusion list applies at EVERY depth: a nested examples/.env must
+  # never leave the machine. Top-level filtering + recursive copy leaks it.
+  New-Item -ItemType Directory -Path $To -Force | Out-Null
+  foreach ($child in Get-ChildItem -Path $From -Force) {
+    if ($child.Name -match $ExcludeRegex) { continue }
+    if ($child.PSIsContainer) {
+      Copy-FilteredRecursive -From $child.FullName -To (Join-Path $To $child.Name) -ExcludeRegex $ExcludeRegex
+    }
+    else {
+      Copy-Item -Path $child.FullName -Destination $To -Force
+    }
+  }
 }
 
 if ($Name -notmatch '^[a-z0-9][a-z0-9-]*$') {
@@ -167,10 +188,7 @@ try {
       Remove-Item $archive -Force -ErrorAction SilentlyContinue
     }
     else {
-      $items = Get-ChildItem -Force | Where-Object { $_.Name -notmatch $excludeRegex }
-      foreach ($item in $items) {
-        Copy-Item -Path $item.FullName -Destination $tmp -Recurse -Force
-      }
+      Copy-FilteredRecursive -From $Source -To $tmp -ExcludeRegex $excludeRegex
     }
   } finally {
     Pop-Location
@@ -227,6 +245,9 @@ try {
   }
 
   # --- Atomic swap --------------------------------------------------------
+  # The target's parent chain must exist before the copy (fresh machines,
+  # CI profiles): Copy-Item does not create missing parent directories.
+  New-Item -ItemType Directory -Force -Path (Split-Path $Target -Parent) | Out-Null
   # Recover from an earlier interrupted deploy first: a leftover backup with
   # no target means the previous run crashed between rename and copy.
   if (Test-Path $backup) {
