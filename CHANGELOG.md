@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI security automation**: npm audit gate, CodeQL, dependency review,
   Dependabot (npm + GitHub Actions), least-privilege job permissions, and
   all actions pinned to commit SHAs.
+- **Fake-host integration tests for the extension orchestration**
+  (tests/index.test.ts). The real extension is driven with a fake
+  ExtensionContext/task: compression + stats/measure persistence, the
+  onOptimizeMessages reentry guard, auto-disable after repeated
+  summarizer failures, honest badge data, tool-level archiving on/off,
+  and silence when disabled. The `BROKE_*` env overrides isolate the
+  test run from real config/ledger files; production behavior is
+  unchanged.
 
 ### Changed
 

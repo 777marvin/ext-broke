@@ -213,7 +213,7 @@ Status table:
 | XF8 | 🟡 Medium | CLI | Fixed - 7f0c478 |
 | XF9 | 🟡 Medium | Performance | Fixed - 7221ba2 |
 | XF10 | 🟡 Medium | Privacy | Fixed - 7221ba2 |
-| XF11 | 🟡 Medium/High | Testing | Open |
+| XF11 | 🟡 Medium/High | Testing | Fixed - 6426192 |
 | XF12 | 🟡 Medium | Dependencies | Fixed - b229453 |
 | XF13 | 🟡 Medium | Docs | Fixed - b229453 |
 | XF14 | ⚪ Low/Medium | Metrics | Fixed - a24b514 |
@@ -307,8 +307,16 @@ clear`, honest privacy note in the settings dialog and status line.
 
 ### XF11 - index.ts orchestration path is untested
 No unit test imports index.ts; selftest covers the pipeline only.
-**Fix:** fake-host integration tests (events → compress → summarizer →
-auto-disable → persistence → UI).
+**Fixed (6426192):** fake-host integration tests (events → compress →
+summarizer → auto-disable → persistence → UI) drive the real extension
+against a fake ExtensionContext/task: compression + stats/measure
+persistence, the onOptimizeMessages reentry guard, auto-disable after
+repeated summarizer failures with the honest warning, badge data without
+an Ollama probe for the cloud summarizer, tool-level archiving on/off, and
+silence when disabled. The path constants (CONFIG_PATH, STATS_PATH,
+MEASURE_PATH, ERRORS_DIR) now honor BROKE_* env overrides read at module
+load; the stats-persist throttle honors BROKE_STATS_PERSIST_MIN_MS.
+Production behavior is unchanged (env vars unset there).
 
 ### XF12 - @aiderdesk/extensions version drift
 Repo pins ^0.28.0; latest is 0.30.0 (caret on 0.x does not cross minors).
