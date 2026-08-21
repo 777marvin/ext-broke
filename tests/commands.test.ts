@@ -224,7 +224,8 @@ describe('formatStats', () => {
     };
     const out = formatStats(DEFAULT_CONFIG, stats, { modelId: 'm', providerId: 'p', inputPerMToken: 3 });
     assert.ok(out.includes('saved actual'), 'measured headline expected');
-    assert.ok(out.includes('4.000 chars'), 'before-after must be the headline number (10000-6000), not the pass sum');
+    // Numbers format as en-US everywhere (deterministic across locales/CI).
+    assert.ok(out.includes('4,000 chars'), 'before-after must be the headline number (10000-6000), not the pass sum');
     assert.ok(!out.includes('predate'), 'no legacy label when size data exists');
     // The per-pass breakdown stays as supporting detail.
     assert.ok(out.includes('structural'));

@@ -186,7 +186,7 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
     case 'level':
       return { config: updateConfigPath('level', cmd.level, filePath), message: `level → ${cmd.level}` };
     case 'maxchars':
-      return { config: updateConfigPath('maxContextChars', cmd.value, filePath), message: `maxContextChars → ${cmd.value.toLocaleString()} chars (≈ ${estimateTokens(cmd.value).toLocaleString()} tokens)` };
+      return { config: updateConfigPath('maxContextChars', cmd.value, filePath), message: `maxContextChars → ${cmd.value.toLocaleString('en-US')} chars (≈ ${estimateTokens(cmd.value).toLocaleString('en-US')} tokens)` };
     case 'protect':
       return { config: updateConfigPath('protectedTurns', cmd.value, filePath), message: `protectedTurns → ${cmd.value}` };
     case 'truncate':
@@ -205,7 +205,7 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
     case 'errors-toggle':
       return { config: updateConfigPath('errors.enabled', cmd.enabled, filePath), message: `error compression ${cmd.enabled ? 'enabled' : 'disabled'}` };
     case 'errors-minchars':
-      return { config: updateConfigPath('errors.minChars', cmd.value, filePath), message: `errors minChars → ${cmd.value.toLocaleString()} chars` };
+      return { config: updateConfigPath('errors.minChars', cmd.value, filePath), message: `errors minChars → ${cmd.value.toLocaleString('en-US')} chars` };
     case 'errors-lines':
       return { config: updateConfigPath('errors.contextLines', cmd.value, filePath), message: `errors contextLines → ${cmd.value}` };
     case 'errors-toollevel':
@@ -241,7 +241,7 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
 }
 
 function fmtChars(chars: number): string {
-  return `${chars.toLocaleString()} chars (≈ ${estimateTokens(chars).toLocaleString()} tokens)`;
+  return `${chars.toLocaleString('en-US')} chars (≈ ${estimateTokens(chars).toLocaleString('en-US')} tokens)`;
 }
 
 /**
@@ -284,7 +284,7 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
     `  summarize:     ${fmtChars(stats.savedChars.summarize)} (${stats.summarizedRanges} range(s), ${stats.summarizeFailures} failure(s))`,
     `  summarizer LLM calls: ${stats.summarizeCalls} (cache reuse not counted - true cost side)`,
     `  last summarizer: ${stats.lastSummarizer}`,
-    `  level: ${config.level} | maxContextChars: ${config.maxContextChars.toLocaleString()} | protectedTurns: ${config.protectedTurns}`,
+    `  level: ${config.level} | maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} | protectedTurns: ${config.protectedTurns}`,
   ];
   return lines.join('\n');
 }
@@ -331,10 +331,10 @@ export async function formatStatus(config: Config, stats: TaskStats | null, pric
   const ollama = config.summarize.via === 'local' ? await ollamaStatus(config.summarize.ollamaUrl) : null;
   const lines = [
     `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level})`,
-    `  maxContextChars: ${config.maxContextChars.toLocaleString()} chars | protectedTurns: ${config.protectedTurns}`,
+    `  maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} chars | protectedTurns: ${config.protectedTurns}`,
     `  truncate limits: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB | maxInputChars: ${config.truncate.maxInputChars}`,
-    `  errors: ${config.errors.enabled ? 'on' : 'off'} | min ${config.errors.minChars.toLocaleString()} chars | ${config.errors.contextLines} context lines | tool-level: ${config.errors.toolLevel ? 'on' : 'off'} | archive: ${config.errors.archive ? 'on' : 'off'} (${config.errors.retentionDays} d retention)`,
-    `  summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (model: ${config.summarize.localModel})` : ` (model: ${config.summarize.cloudModelId || 'task model'})`} | after ${config.summarize.afterTurns} turns | min ${config.summarize.minChars.toLocaleString()} chars`,
+    `  errors: ${config.errors.enabled ? 'on' : 'off'} | min ${config.errors.minChars.toLocaleString('en-US')} chars | ${config.errors.contextLines} context lines | tool-level: ${config.errors.toolLevel ? 'on' : 'off'} | archive: ${config.errors.archive ? 'on' : 'off'} (${config.errors.retentionDays} d retention)`,
+    `  summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (model: ${config.summarize.localModel})` : ` (model: ${config.summarize.cloudModelId || 'task model'})`} | after ${config.summarize.afterTurns} turns | min ${config.summarize.minChars.toLocaleString('en-US')} chars`,
   ];
   if (ollama) {
     if (ollama.reachable) {

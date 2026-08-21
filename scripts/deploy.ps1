@@ -166,7 +166,9 @@ if (-not $Force) {
 # (git archive for -FromTag only contains tracked files anyway.)
 $excludeRegex = '^(\.git|node_modules|\.env(\..*)?|.+\.(pem|key|p12|pfx|log)$|\.aider.*|stats\.jsonl)$'
 
-$tmp = Join-Path $env:TEMP "aiderdesk-deploy-$Name"
+# GetTempPath() instead of $env:TEMP: pwsh on Linux does not set TEMP/TMP,
+# and a real deploy (not just the dry run) failed there with a null path.
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) "aiderdesk-deploy-$Name"
 if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
@@ -180,7 +182,7 @@ try {
     if ($FromTag) {
       # Note: never pipe git archive into tar - PowerShell corrupts binary
       # data in pipelines. Write the archive to a file first.
-      $archive = Join-Path $env:TEMP "aiderdesk-deploy-$Name.tar"
+      $archive = Join-Path ([System.IO.Path]::GetTempPath()) "aiderdesk-deploy-$Name.tar"
       git archive --format=tar -o $archive $FromTag
       if ($LASTEXITCODE -ne 0) { throw 'git archive failed' }
       tar -xf $archive -C $tmp
