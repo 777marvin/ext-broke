@@ -64,6 +64,16 @@ export type BrokeCommand =
   | { kind: 'help' }
   | { kind: 'unknown'; raw: string };
 
+/**
+ * CLI numbers are rounded to integers BEFORE validation: validating first
+ * and rounding second lets 0.4 pass the check and become 0 afterwards - a
+ * value the config schema rejects (XF8). Garbage maps to NaN, which every
+ * bounds check below rejects.
+ */
+function roundArg(v: string | undefined): number {
+  return Math.round(Number(v));
+}
+
 export function parseBrokeCommand(args: string[]): BrokeCommand {
   const [sub, ...rest] = args;
   switch (sub) {
@@ -82,20 +92,20 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
       return { kind: 'unknown', raw: args.join(' ') };
     }
     case 'maxchars': {
-      const n = Number(rest[0]);
-      if (Number.isFinite(n) && n > 0) return { kind: 'maxchars', value: Math.round(n) };
+      const n = roundArg(rest[0]);
+      if (Number.isFinite(n) && n > 0) return { kind: 'maxchars', value: n };
       return { kind: 'unknown', raw: args.join(' ') };
     }
     case 'protect': {
-      const n = Number(rest[0]);
-      if (Number.isFinite(n) && n >= 1 && n <= 50) return { kind: 'protect', value: Math.round(n) };
+      const n = roundArg(rest[0]);
+      if (Number.isFinite(n) && n >= 1 && n <= 50) return { kind: 'protect', value: n };
       return { kind: 'unknown', raw: args.join(' ') };
     }
     case 'truncate': {
-      const lines = Number(rest[0]);
-      const kb = Number(rest[1]);
+      const lines = roundArg(rest[0]);
+      const kb = roundArg(rest[1]);
       if (Number.isFinite(lines) && Number.isFinite(kb) && lines > 0 && kb > 0) {
-        return { kind: 'truncate', lines: Math.round(lines), kb: Math.round(kb) };
+        return { kind: 'truncate', lines, kb };
       }
       return { kind: 'unknown', raw: args.join(' ') };
     }
@@ -104,12 +114,12 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
       if (opt === 'on') return { kind: 'errors-toggle', enabled: true };
       if (opt === 'off') return { kind: 'errors-toggle', enabled: false };
       if (opt === 'minchars') {
-        const n = Number(rest[1]);
-        if (Number.isFinite(n) && n > 0) return { kind: 'errors-minchars', value: Math.round(n) };
+        const n = roundArg(rest[1]);
+        if (Number.isFinite(n) && n > 0) return { kind: 'errors-minchars', value: n };
       }
       if (opt === 'lines') {
-        const n = Number(rest[1]);
-        if (Number.isFinite(n) && n >= 1 && n <= 30) return { kind: 'errors-lines', value: Math.round(n) };
+        const n = roundArg(rest[1]);
+        if (Number.isFinite(n) && n >= 1 && n <= 30) return { kind: 'errors-lines', value: n };
       }
       if (opt === 'toollevel') {
         const v = rest[1];
@@ -124,8 +134,8 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
       if (opt === 'model' && value) return { kind: 'summarize-model', model: value };
       if (opt === 'cloud' && value) return { kind: 'summarize-cloud', modelId: value };
       if (opt === 'after') {
-        const n = Number(value);
-        if (Number.isFinite(n) && n >= 2) return { kind: 'summarize-after', turns: Math.round(n) };
+        const n = roundArg(value);
+        if (Number.isFinite(n) && n >= 2) return { kind: 'summarize-after', turns: n };
       }
       return { kind: 'unknown', raw: args.join(' ') };
     }

@@ -38,9 +38,11 @@ describe('parseBrokeCommand', () => {
   it('parses maxchars with bounds', () => {
     assert.deepEqual(parseBrokeCommand(['maxchars', '60000']), { kind: 'maxchars', value: 60000 });
     assert.deepEqual(parseBrokeCommand(['maxchars', '12.7']), { kind: 'maxchars', value: 13 }); // rounds
+    assert.deepEqual(parseBrokeCommand(['maxchars', '1.4']), { kind: 'maxchars', value: 1 }); // rounds
     expectUnknown(['maxchars', '0']);
     expectUnknown(['maxchars', 'abc']);
     expectUnknown(['maxchars']);
+    expectUnknown(['maxchars', '0.4']); // XF8: must not pass validation then round to 0
   });
 
   it('parses protect with schema bounds 1-50', () => {
@@ -49,6 +51,7 @@ describe('parseBrokeCommand', () => {
     expectUnknown(['protect', '0']);
     expectUnknown(['protect', '51']);
     expectUnknown(['protect', 'x']);
+    expectUnknown(['protect', '0.4']); // XF8: rounds to 0, schema min 1
   });
 
   it('parses truncate', () => {
@@ -56,6 +59,8 @@ describe('parseBrokeCommand', () => {
     expectUnknown(['truncate', '200']);
     expectUnknown(['truncate', '0', '20']);
     expectUnknown(['truncate', '200', '0']);
+    expectUnknown(['truncate', '0.4', '20']); // XF8: rounds to 0
+    expectUnknown(['truncate', '200', '0.4']); // XF8: rounds to 0
   });
 
   it('parses errors subcommands', () => {
@@ -65,6 +70,8 @@ describe('parseBrokeCommand', () => {
     assert.deepEqual(parseBrokeCommand(['errors', 'lines', '8']), { kind: 'errors-lines', value: 8 });
     expectUnknown(['errors', 'lines', '0']);
     expectUnknown(['errors', 'lines', '31']);
+    expectUnknown(['errors', 'minchars', '0.4']); // XF8: rounds to 0
+    expectUnknown(['errors', 'lines', '0.4']); // XF8: rounds to 0
     assert.deepEqual(parseBrokeCommand(['errors', 'toollevel', 'on']), { kind: 'errors-toollevel', enabled: true });
     assert.deepEqual(parseBrokeCommand(['errors', 'toollevel', 'off']), { kind: 'errors-toollevel', enabled: false });
     expectUnknown(['errors', 'toollevel', 'maybe']);
@@ -81,7 +88,9 @@ describe('parseBrokeCommand', () => {
       modelId: 'openai/gpt-4o-mini',
     });
     assert.deepEqual(parseBrokeCommand(['summarize', 'after', '2']), { kind: 'summarize-after', turns: 2 });
+    assert.deepEqual(parseBrokeCommand(['summarize', 'after', '1.6']), { kind: 'summarize-after', turns: 2 }); // rounds
     expectUnknown(['summarize', 'after', '1']); // schema min 2
+    expectUnknown(['summarize', 'after', '1.4']); // XF8: rounds to 1, schema min 2
     expectUnknown(['summarize', 'via', 'remote']);
   });
 
