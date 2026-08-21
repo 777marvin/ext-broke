@@ -27,7 +27,8 @@ venv/
 # AiderDesk deployment marker
 .deployed-version
 
-# Broke runtime data (per-task stats log)
+# Broke runtime data (per-task stats log, measurement ledger)
 stats.jsonl
+measure.jsonl
 
 .aider*
