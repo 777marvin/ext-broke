@@ -218,7 +218,7 @@ Status table:
 | XF13 | 🟡 Medium | Docs | Fixed - b229453 |
 | XF14 | ⚪ Low/Medium | Metrics | Fixed - a24b514 |
 | XF15 | ⚪ Low/Medium | Performance | Fixed - c9a4fbd |
-| XF16 | ⚪ Low/Medium | CI | Open |
+| XF16 | ⚪ Low/Medium | CI | Fixed - b8f92fd |
 
 ## 🔴 High
 
@@ -341,5 +341,9 @@ loss on rotation, and size checks use statSync instead of a full read.
 
 ### XF16 - CI security automation
 CI has typecheck/tests/deploy smoke only.
-**Fix:** Dependabot/Renovate, npm audit, CodeQL, secret scanning, pin
-actions to commit SHAs.
+**Fixed (b8f92fd):** all actions pinned to commit SHAs, npm audit gate
+(--audit-level=high), CodeQL (javascript-typescript), dependency review
+on PRs, Dependabot for npm + GitHub Actions, least-privilege job
+permissions. Secret scanning runs automatically on public repos (GitHub
+feature); push protection is a repo-settings toggle, not configurable
+from the workflow file.
