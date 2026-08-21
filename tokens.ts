@@ -55,6 +55,13 @@ export interface TaskStats {
   /** NOTE: never persist project paths - stats.jsonl must stay portable (privacy). */
   passes: number;
   savedChars: SavedTokens;
+  /**
+   * Cumulative MEASURED sizes over recorded runs (chars): the honest
+   * headline is totalCharsBefore - totalCharsAfter, not the per-pass sum.
+   * 0 = no measured records (legacy stats.jsonl lines predate XF14).
+   */
+  totalCharsBefore: number;
+  totalCharsAfter: number;
   summarizedRanges: number;
   /** Real summarizer LLM calls (excludes cache reuse) - lets the user see the true cost side. */
   summarizeCalls: number;
@@ -68,6 +75,8 @@ export function emptyStats(taskId: string): TaskStats {
     taskId,
     passes: 0,
     savedChars: { structural: 0, error: 0, truncate: 0, summarize: 0 },
+    totalCharsBefore: 0,
+    totalCharsAfter: 0,
     summarizedRanges: 0,
     summarizeCalls: 0,
     summarizeFailures: 0,
@@ -149,7 +158,13 @@ export function loadTaskStats(taskId: string, filePath: string = STATS_PATH): Ta
       try {
         const parsed = JSON.parse(line) as TaskStats;
         if (parsed.taskId === taskId) {
-          found = { ...parsed, savedChars: normalizeSavedTokens(parsed.savedChars) };
+          found = {
+            ...parsed,
+            savedChars: normalizeSavedTokens(parsed.savedChars),
+            // Legacy lines predate the measured-size fields (XF14).
+            totalCharsBefore: typeof parsed.totalCharsBefore === 'number' ? parsed.totalCharsBefore : 0,
+            totalCharsAfter: typeof parsed.totalCharsAfter === 'number' ? parsed.totalCharsAfter : 0,
+          };
         }
       } catch {
         // skip malformed lines

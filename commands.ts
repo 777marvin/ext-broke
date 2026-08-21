@@ -236,12 +236,20 @@ export function hasOllamaModel(models: string[], configured: string): boolean {
  */
 export function formatStats(config: Config, stats: TaskStats | null, price: TaskModelPrice | null | undefined = null): string {
   if (!stats) return 'No stats recorded for this task yet - send a message first.';
-  const total = totalSavedChars(stats);
+  // XF14: the headline is the MEASURED reduction (per-run input before
+  // minus after, summed). The per-pass sum can diverge from it (passes
+  // overlap, marker overhead) and is shown only as the breakdown. Legacy
+  // records without size data fall back to the pass sum, labeled as such.
+  const measured = stats.totalCharsBefore > 0 ? Math.max(stats.totalCharsBefore - stats.totalCharsAfter, 0) : null;
+  const passSum = totalSavedChars(stats);
+  const total = measured ?? passSum;
   const totalTokens = estimateTokens(total);
   const money = price ? formatUsd(savedCostUsd(totalTokens, price.inputPerMToken)) : null;
   const lines = [
     `broke stats - ${stats.passes} compression run(s)`,
-    `  saved total:   ${fmtChars(total)}`,
+    measured !== null
+      ? `  saved actual:   ${fmtChars(measured)} (measured: per-run input before - after, summed)`
+      : `  saved total:    ${fmtChars(passSum)} (pass-sum - records predate size measurement)`,
     ...(money ? [`  estimated cost saved: ${money} (${priceLabel(price)})`] : []),
     `  structural:    ${fmtChars(stats.savedChars.structural)} (lossless)`,
     `  error:         ${fmtChars(stats.savedChars.error)} (stack-trace/log compression)`,

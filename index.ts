@@ -249,6 +249,11 @@ export default class Broke implements Extension {
     stats.savedChars.error += report.errorChars;
     stats.savedChars.truncate += report.truncateChars;
     stats.savedChars.summarize += report.summarizeChars;
+    // Measured sizes (XF14): the honest headline is before-after, not the
+    // per-pass sum - multiple passes can overlap or the marker overhead can
+    // eat into the pass savings.
+    stats.totalCharsBefore += report.totalCharsBefore;
+    stats.totalCharsAfter += report.totalCharsAfter;
     stats.summarizedRanges += report.summarizedRanges;
     stats.summarizeCalls += report.summarizeCalls;
     if (report.summarizeFailed) {

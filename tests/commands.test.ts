@@ -200,6 +200,30 @@ describe('formatStats', () => {
     const out = formatStats(DEFAULT_CONFIG, stats, null);
     assert.ok(!out.includes('estimated cost saved'));
   });
+
+  it('shows the MEASURED reduction as the headline (XF14)', () => {
+    const stats = {
+      ...emptyStats('t'),
+      passes: 2,
+      totalCharsBefore: 10000,
+      totalCharsAfter: 6000,
+      savedChars: { structural: 100, error: 200, truncate: 300, summarize: 400 },
+    };
+    const out = formatStats(DEFAULT_CONFIG, stats, { modelId: 'm', providerId: 'p', inputPerMToken: 3 });
+    assert.ok(out.includes('saved actual'), 'measured headline expected');
+    assert.ok(out.includes('4.000 chars'), 'before-after must be the headline number (10000-6000), not the pass sum');
+    assert.ok(!out.includes('predate'), 'no legacy label when size data exists');
+    // The per-pass breakdown stays as supporting detail.
+    assert.ok(out.includes('structural'));
+    assert.ok(out.includes('summarize'));
+  });
+
+  it('labels the pass-sum fallback for legacy records without size data', () => {
+    const stats = { ...emptyStats('t'), passes: 3, savedChars: { structural: 100, error: 0, truncate: 0, summarize: 0 } };
+    const out = formatStats(DEFAULT_CONFIG, stats, null);
+    assert.ok(out.includes('saved total'), 'legacy headline expected');
+    assert.ok(out.includes('predate'), 'legacy records must be labeled');
+  });
 });
 
 describe('HELP_TEXT', () => {

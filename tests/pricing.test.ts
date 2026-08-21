@@ -58,6 +58,28 @@ describe('stats persistence privacy', () => {
       const loaded = loadTaskStats('task-1', file);
       assert.equal(loaded?.passes, 3);
       assert.equal(loaded?.savedChars.structural, 0);
+      assert.equal(loaded?.totalCharsBefore, 0);
+      assert.equal(loaded?.totalCharsAfter, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes legacy stats lines without the measured-size fields (XF14)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-stats-legacy-'));
+    const file = join(dir, 'stats.jsonl');
+    try {
+      // A legacy line: no totalCharsBefore/After.
+      writeFileSync(
+        file,
+        JSON.stringify({ taskId: 'legacy-1', passes: 2, savedChars: { structural: 10 } }) + '\n',
+        'utf-8',
+      );
+      const loaded = loadTaskStats('legacy-1', file);
+      assert.equal(loaded?.passes, 2);
+      assert.equal(loaded?.totalCharsBefore, 0, 'legacy lines default to 0 (unmeasured)');
+      assert.equal(loaded?.totalCharsAfter, 0);
+      assert.equal(loaded?.savedChars.truncate, 0, 'missing pass counters normalize to 0');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
