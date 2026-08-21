@@ -371,6 +371,21 @@ describe('truncatePass', () => {
     assert.ok(text.includes('line 299'));
   });
 
+  it('actually truncates at the smallest valid maxLines (1-4, slice(-0) trap)', () => {
+    // maxLines 1-2 produce tailLines=0; slice(-0) returns the whole array in
+    // JS. Without the guard the pass would either expand or silently skip
+    // truncation - a valid config must always reduce oversized output.
+    const big = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n');
+    for (const maxLines of [1, 2, 3, 4]) {
+      const msgs = [user('brief'), assistant('a1'), tool('power---bash', big), user('q2')];
+      const { messages: out, removedChars } = truncatePass(msgs, 1, maxLines, 20, 2000);
+      assert.ok(removedChars > 0, `maxLines=${maxLines}: truncation must actually reduce the output`);
+      const text = JSON.stringify(out[2].content);
+      assert.ok(text.includes('broke: truncated'), `maxLines=${maxLines}: marker expected`);
+      assert.ok(!text.includes('line 25'), `maxLines=${maxLines}: middle must be cut`);
+    }
+  });
+
   it('leaves small outputs untouched', () => {
     const msgs = [user('brief'), assistant('a1'), tool('power---bash', 'tiny output'), user('q2')];
     const { messages: out, removedChars } = truncatePass(msgs, 1, 100, 20, 2000);

@@ -388,7 +388,10 @@ function truncateText(text: string, maxLines: number, maxKB: number): { kept: st
     const headLines = Math.ceil(maxLines * 0.6);
     const tailLines = maxLines - headLines;
     const head = lines.slice(0, headLines);
-    const tail = lines.slice(-tailLines);
+    // tailLines can be 0 for maxLines 1-2; lines.slice(-0) returns the WHOLE
+    // array in JS, which would silently keep everything (or worse). Compute
+    // the tail from the end index instead - slice(length) is always empty.
+    const tail = tailLines > 0 ? lines.slice(lines.length - tailLines) : [];
     const kept = `${head.join('\n')}\n… [broke: truncated ${lines.length} lines → ${maxLines}] - full output removed\n${tail.join('\n')}`;
     return { kept, removedChars: text.length - kept.length };
   }
