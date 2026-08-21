@@ -209,14 +209,14 @@ Status table:
 | XF4 | 🔴 High | Security | Fixed - c1a0947 |
 | XF5 | 🟡 Medium | Robustness | Fixed - cb61321 |
 | XF6 | 🟡 Medium | Robustness | Fixed - af5949c |
-| XF7 | 🟡 Medium | Data integrity | Open (partially by design) |
+| XF7 | 🟡 Medium | Data integrity | Fixed - eed7e49 |
 | XF8 | 🟡 Medium | CLI | Fixed - 7f0c478 |
 | XF9 | 🟡 Medium | Performance | Open |
 | XF10 | 🟡 Medium | Privacy | Open |
 | XF11 | 🟡 Medium/High | Testing | Open |
-| XF12 | 🟡 Medium | Dependencies | Open |
-| XF13 | 🟡 Medium | Docs | Open |
-| XF14 | ⚪ Low/Medium | Metrics | Open |
+| XF12 | 🟡 Medium | Dependencies | Fixed - b229453 |
+| XF13 | 🟡 Medium | Docs | Fixed - b229453 |
+| XF14 | ⚪ Low/Medium | Metrics | Fixed - a24b514 |
 | XF15 | ⚪ Low/Medium | Performance | Open |
 | XF16 | ⚪ Low/Medium | CI | Open |
 
@@ -277,7 +277,10 @@ bounded by maxSummaryChars can exceed a small region.
 `json`/`content` outputs are serialized and rewritten as marked text
 previews. Partly by design (truncated JSON cannot stay valid JSON), which
 the review did not acknowledge; but fields like exitCode/stderr are lost.
-**Fix:** preserve non-text fields, truncate only the payload fields.
+**Fixed (eed7e49):** structured command outputs keep their shape: only the
+text payload is truncated via the canonical extractor, stderr is emptied,
+exitCode and other metadata survive. Pure JSON data still becomes a marked
+text preview (a truncated JSON document must not keep the json type).
 
 ### XF8 - CLI can round valid input into invalid config
 `/broke maxchars 0.4` passes the `> 0` check, then rounds to 0 - the
@@ -306,19 +309,23 @@ auto-disable → persistence → UI).
 
 ### XF12 - @aiderdesk/extensions version drift
 Repo pins ^0.28.0; latest is 0.30.0 (caret on 0.x does not cross minors).
-**Fix:** upgrade, compatibility matrix, CI against current + one supported
-version.
+**Fixed (b229453):** upgraded to ^0.30.0 (typecheck + full suite green);
+CI gained a `deps-current` job that installs the latest release and runs
+typecheck + tests.
 
 ### XF13 - Node requirement inconsistent
 docs/overview.md says Node >= 18; CI runs Node 22 and @types/node is ^22.
-**Fix:** align docs, optionally add an engines field.
+**Fixed (b229453):** docs aligned to Node >= 22 and an `engines.node >= 22`
+field added to package.json.
 
 ## ⚪ Nits
 
 ### XF14 - Pass-sum savings can diverge from actual reduction
 Per-pass savings are summed; actual change is totalCharsBefore - After
 (measure.jsonl already records both, which the review missed).
-**Fix:** show the actual reduction as the headline metric.
+**Fixed (a24b514):** `/broke stats` headline now shows the measured
+per-run reduction (before - after); the pass-sum fallback is labeled as
+such for legacy records.
 
 ### XF15 - JSONL rotation rewrites the whole file
 5 MB measure.jsonl is read and rewritten on rotation; acceptable at this
