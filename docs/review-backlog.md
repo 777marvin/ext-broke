@@ -217,7 +217,7 @@ Status table:
 | XF12 | 🟡 Medium | Dependencies | Fixed - b229453 |
 | XF13 | 🟡 Medium | Docs | Fixed - b229453 |
 | XF14 | ⚪ Low/Medium | Metrics | Fixed - a24b514 |
-| XF15 | ⚪ Low/Medium | Performance | Open |
+| XF15 | ⚪ Low/Medium | Performance | Fixed - c9a4fbd |
 | XF16 | ⚪ Low/Medium | CI | Open |
 
 ## 🔴 High
@@ -333,7 +333,11 @@ such for legacy records.
 ### XF15 - JSONL rotation rewrites the whole file
 5 MB measure.jsonl is read and rewritten on rotation; acceptable at this
 size, wasteful otherwise.
-**Fix:** rename-based rotation or date-chunked files.
+**Fixed (c9a4fbd):** rename-based rotation - the oversized file moves to
+.1/.2/.3 (oldest dropped, chain bounded) and a fresh main file starts.
+Loaders merge the chain; stats lookups search newest-file-first and the
+reset command reaches into rotations. Side benefit: no more half-cut data
+loss on rotation, and size checks use statSync instead of a full read.
 
 ### XF16 - CI security automation
 CI has typecheck/tests/deploy smoke only.
