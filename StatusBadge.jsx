@@ -30,9 +30,9 @@
       : '';
   const title = [
     `broke - level: ${level}`,
-    `saved ≈ ${total.toLocaleString()} input tokens${money} (chars/4 estimate)`,
+    `saved ≈ ${total.toLocaleString('en-US')} input tokens${money} (chars/4 estimate)`,
     cost.modelLabel ? `  at current task model: ${cost.modelLabel}` : '',
-    `  structural: ${(s.structural ?? 0).toLocaleString()} | truncate: ${(s.truncate ?? 0).toLocaleString()} | summarize: ${(s.summarize ?? 0).toLocaleString()}`,
+    `  structural: ${(s.structural ?? 0).toLocaleString('en-US')} | truncate: ${(s.truncate ?? 0).toLocaleString('en-US')} | summarize: ${(s.summarize ?? 0).toLocaleString('en-US')}`,
     `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` - ${failed} failure(s)` : ''}${disabled ? ' - auto-disabled after repeated failures (/broke reset re-enables)' : ''}`,
     ollamaNote ? `  ${ollamaNote}` : '',
     'click the task input for /broke stats',
@@ -55,7 +55,7 @@
       }}
     >
       <span>💸</span>
-      <span>{total.toLocaleString()}</span>
+      <span>{total.toLocaleString('en-US')}</span>
       {level === 'summarize' && configured !== 'none' ? (
         <span title="summarizer backend">{configured === 'local' ? '🖥' : '☁'}{ollamaDown ? '⚠' : null}</span>
       ) : null}

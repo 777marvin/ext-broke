@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Locale-independent number formatting.** User-facing numbers
+  (`/broke` output, selftest, chat notice, badge) used
+  `toLocaleString()` without a locale, so a German system printed
+  "4.000" while CI (en-US) printed "4,000" - one test failed on
+  GitHub Actions and the CLI contradicted the comma-formatted figures
+  in the README. All output now formats as en-US explicitly, matching
+  the benchmark and docs.
+- **deploy.ps1 works on Linux.** The script staged its copy under
+  `$env:TEMP`, which pwsh on Linux does not set - every real (non-dry)
+  deploy failed on CI, only the dry-run smoke had been exercised. The
+  staging and archive paths now come from `GetTempPath()` (TMPDIR on
+  Linux, %TEMP% on Windows).
+
 ## [0.5.0] - 2026-08-22
 
 ### Added
