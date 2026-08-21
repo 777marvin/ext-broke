@@ -121,7 +121,7 @@ export default class Broke implements Extension {
     this.context = context;
     const config = getConfig();
     context.log(
-      `Broke loaded - level: ${config.level}, maxContextChars: ${config.maxContextChars.toLocaleString()}, summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (${config.summarize.localModel})` : ''}`,
+      `Broke loaded - level: ${config.level}, maxContextChars: ${config.maxContextChars.toLocaleString('en-US')}, summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (${config.summarize.localModel})` : ''}`,
       'info',
     );
     const warning = getConfigWarning();
@@ -328,7 +328,7 @@ export default class Broke implements Extension {
       const money = price?.inputPerMToken ? ` ≈ ${formatUsd(savedCostUsd(tokens, price.inputPerMToken))} at current task model price` : '';
       void this.context
         ?.getTaskContext()
-        ?.addLogMessage('info', `💸 broke: compressed input - saved ≈ ${tokens.toLocaleString()} tokens${money} (${parts.join(', ')})`);
+        ?.addLogMessage('info', `💸 broke: compressed input - saved ≈ ${tokens.toLocaleString('en-US')} tokens${money} (${parts.join(', ')})`);
     }
   }
 
@@ -361,7 +361,7 @@ export default class Broke implements Extension {
       .getTaskContext()
       ?.addLogMessage(
         'info',
-        `broke active - level: ${config.level}, threshold: ${config.maxContextChars.toLocaleString()} chars, protectedTurns: ${config.protectedTurns}, ${ollamaNote}${remotePlaintext ? ' - WARNING: remote Ollama via plaintext http, data is sent unencrypted' : ''} - /broke help lists all commands`,
+        `broke active - level: ${config.level}, threshold: ${config.maxContextChars.toLocaleString('en-US')} chars, protectedTurns: ${config.protectedTurns}, ${ollamaNote}${remotePlaintext ? ' - WARNING: remote Ollama via plaintext http, data is sent unencrypted' : ''} - /broke help lists all commands`,
       );
     this.refreshUI(event.task.id);
   }
@@ -428,7 +428,7 @@ export default class Broke implements Extension {
               const result = clearArchive();
               return log(
                 result.removedFiles > 0
-                  ? `broke: error archive cleared - ${result.removedFiles} file(s), ${result.removedBytes.toLocaleString()} bytes removed`
+                  ? `broke: error archive cleared - ${result.removedFiles} file(s), ${result.removedBytes.toLocaleString('en-US')} bytes removed`
                   : 'broke: error archive was already empty',
               );
             }

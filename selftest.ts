@@ -131,8 +131,8 @@ export async function runSelfTest(config: Config): Promise<SelfTestResult> {
   const lines: string[] = [];
   const level = config.enabled ? config.level : 'off';
   lines.push(
-    `broke selftest - synthetic conversation: ${messages.length} messages, ${before.toLocaleString()} chars (≈ ${estimateTokens(before).toLocaleString()} tokens)` +
-      ` - thresholds forced low so every applicable pass is exercised (your config: level=${level}, maxContextChars=${config.maxContextChars.toLocaleString()})`,
+    `broke selftest - synthetic conversation: ${messages.length} messages, ${before.toLocaleString('en-US')} chars (≈ ${estimateTokens(before).toLocaleString('en-US')} tokens)` +
+      ` - thresholds forced low so every applicable pass is exercised (your config: level=${level}, maxContextChars=${config.maxContextChars.toLocaleString('en-US')})`,
   );
 
   const deps: SummarizeDeps = {
@@ -152,18 +152,18 @@ export async function runSelfTest(config: Config): Promise<SelfTestResult> {
   // itself when the extension is disabled (enabled=false used to force the
   // label to 'structural' while the pipeline still ran at the real level).
   const levelApplied = exerciseConfig.level;
-  lines.push(`  result: ${result.length} messages, ${after.toLocaleString()} chars (≈ ${estimateTokens(after).toLocaleString()} tokens)`);
-  lines.push(`  structural:  ${report.structuralChars.toLocaleString()} chars removed (always exercised)`);
+  lines.push(`  result: ${result.length} messages, ${after.toLocaleString('en-US')} chars (≈ ${estimateTokens(after).toLocaleString('en-US')} tokens)`);
+  lines.push(`  structural:  ${report.structuralChars.toLocaleString('en-US')} chars removed (always exercised)`);
   lines.push(
-    `  error:       ${report.errorChars.toLocaleString()} chars removed (stack-trace/log compression)${config.errors.enabled && (levelApplied === 'truncate' || levelApplied === 'summarize') ? '' : ' - NOT exercised (needs errors.enabled + level truncate or summarize)'}`,
+    `  error:       ${report.errorChars.toLocaleString('en-US')} chars removed (stack-trace/log compression)${config.errors.enabled && (levelApplied === 'truncate' || levelApplied === 'summarize') ? '' : ' - NOT exercised (needs errors.enabled + level truncate or summarize)'}`,
   );
   lines.push(
-    `  truncate:    ${report.truncateChars.toLocaleString()} chars removed${levelApplied === 'truncate' || levelApplied === 'summarize' ? '' : ' - NOT exercised (needs level truncate or summarize)'}`,
+    `  truncate:    ${report.truncateChars.toLocaleString('en-US')} chars removed${levelApplied === 'truncate' || levelApplied === 'summarize' ? '' : ' - NOT exercised (needs level truncate or summarize)'}`,
   );
   lines.push(
-    `  summarize:   ${report.summarizeChars.toLocaleString()} chars removed (${report.summarizedRanges} range(s), ${report.summarizeCalls} LLM call(s), summarizer: ${report.summarizer})${levelApplied === 'summarize' ? '' : ' - NOT exercised (needs level summarize)'}`,
+    `  summarize:   ${report.summarizeChars.toLocaleString('en-US')} chars removed (${report.summarizedRanges} range(s), ${report.summarizeCalls} LLM call(s), summarizer: ${report.summarizer})${levelApplied === 'summarize' ? '' : ' - NOT exercised (needs level summarize)'}`,
   );
-  lines.push(`  total saved: ${(before - after).toLocaleString()} chars (≈ ${estimateTokens(before - after).toLocaleString()} tokens) - ${report.touched ? 'pipeline active' : 'nothing to do'}`);
+  lines.push(`  total saved: ${(before - after).toLocaleString('en-US')} chars (≈ ${estimateTokens(before - after).toLocaleString('en-US')} tokens) - ${report.touched ? 'pipeline active' : 'nothing to do'}`);
 
   const hasMarker = result.some((m) => typeof m.content === 'string' && m.content.startsWith('[broke-compacted]'));
   // F11: assert the dedupe REALLY happened. Each check looks at the output
