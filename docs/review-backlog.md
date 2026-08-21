@@ -211,8 +211,8 @@ Status table:
 | XF6 | 🟡 Medium | Robustness | Fixed - af5949c |
 | XF7 | 🟡 Medium | Data integrity | Fixed - eed7e49 |
 | XF8 | 🟡 Medium | CLI | Fixed - 7f0c478 |
-| XF9 | 🟡 Medium | Performance | Open |
-| XF10 | 🟡 Medium | Privacy | Open |
+| XF9 | 🟡 Medium | Performance | Fixed - 7221ba2 |
+| XF10 | 🟡 Medium | Privacy | Fixed - 7221ba2 |
 | XF11 | 🟡 Medium/High | Testing | Open |
 | XF12 | 🟡 Medium | Dependencies | Fixed - b229453 |
 | XF13 | 🟡 Medium | Docs | Fixed - b229453 |
@@ -292,15 +292,18 @@ schema.
 ### XF9 - Error archive rescans everything on every save
 `saveErrorOutput` → `enforceArchiveCap` walks + stats the whole tree
 synchronously per write.
-**Fix:** incremental byte accounting, eviction only above the cap,
-throttled.
+**Fixed (7221ba2):** saves update an in-memory byte ledger; the full scan
+runs only when the ledger exceeds the cap or a retention sweep is due
+(hourly per directory). The scan re-syncs the ledger, so external
+deletions self-correct; overwriting the same call id is counted once.
 
 ### XF10 - Persistent error archive is its own privacy risk
 Archive contains redacted (best-effort) tool output incl. source code,
 URLs, paths; persists across deploys (preserved up to 100 MB). No
 retention/clear controls beyond the cap.
-**Fix:** archive on/off, retention days, clear command, honest UI note
-that tool outputs are stored locally.
+**Fixed (7221ba2):** `errors.archive` on/off (off = nothing is written),
+`errors.retentionDays` (default 30, age-based eviction), `/broke errors
+clear`, honest privacy note in the settings dialog and status line.
 
 ### XF11 - index.ts orchestration path is untested
 No unit test imports index.ts; selftest covers the pipeline only.
