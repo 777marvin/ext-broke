@@ -19,6 +19,20 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  deps-current:
+    name: Typecheck & tests against latest @aiderdesk/extensions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm install @aiderdesk/extensions@latest
+      - run: npm run typecheck
+      - run: npm test
+
   deploy-script:
     name: deploy.ps1 standalone smoke test
     runs-on: ubuntu-latest

@@ -19,11 +19,14 @@
   ],
   "author": "777marvin",
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@aiderdesk/extensions": "^0.28.0",
+    "@aiderdesk/extensions": "^0.30.0",
     "@types/node": "^22.10.0",
     "tsx": "^4.23.11",
     "typescript": "^5.6.0"

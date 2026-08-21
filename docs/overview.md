@@ -107,10 +107,13 @@ real-session numbers.
   `npm run bench` (reference benchmark, see above), `npm run measure`
   (analyze measure.jsonl, `--file=<path>` for another file)
 - Conventions: Conventional Commits, Keep a Changelog, SemVer + annotated tags
+- Compatibility: the declared API line is `@aiderdesk/extensions` ^0.30.0
+  (see package.json); CI runs typecheck + tests against both the lockfile
+  and `@latest` so API drift is caught on every push
 - Deploy: `.\scripts\deploy.ps1 -Category extensions -Name broke` (from
   this repo) → `~/.aider-desk/extensions/broke/`
-- Runtime deps: AiderDesk >= 0.77, Node >= 18, `zod`; Ollama for
-  `summarize via local`
+- Runtime deps: AiderDesk >= 0.77, Node >= 22 (see `engines` in
+  package.json), `zod`; Ollama for `summarize via local`
 
 ## Docs
 
