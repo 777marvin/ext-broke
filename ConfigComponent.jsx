@@ -103,6 +103,23 @@
           checked={errors.toolLevel ?? false}
           onChange={(checked) => updateConfig({ ...config, errors: { ...errors, toolLevel: checked } })}
         />
+        <Checkbox
+          label="Save full outputs to the errors archive"
+          checked={errors.archive ?? true}
+          onChange={(checked) => updateConfig({ ...config, errors: { ...errors, archive: checked } })}
+        />
+        {errors.archive !== false ? (
+          <div className="flex gap-4">
+            {numberField('Archive retention (days)', errors.retentionDays ?? 30, (n) =>
+              updateConfig({ ...config, errors: { ...errors, retentionDays: n } }),
+            1, 365)}
+          </div>
+        ) : null}
+        <p className="text-xs text-text-secondary -mt-2">
+          Privacy note: the archive stores raw tool output (source code, URLs, paths) locally on disk, redacted on a
+          best-effort basis. It is capped at 100 MB and files older than the retention age are deleted;{' '}
+          <span className="font-mono">/broke errors clear</span> removes everything now.
+        </p>
       </div>
 
       {/* 4 - Truncation limits */}

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ContextMessage } from '@aiderdesk/extensions';
 import { errorPass, compressMessages, createCompressState, maskSecrets, type SummarizeDeps } from '../compress';
 import { DEFAULT_CONFIG, type Config } from '../config';
-import { enforceArchiveCap, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from '../errors';
+import { clearArchive, enforceArchiveCap, resetArchiveLedger, saveErrorOutput, extractErrorSummary, formatErrorSummary, isCommandTool } from '../errors';
 import { messagesChars } from '../tokens';
 
 let seq = 0;
@@ -404,7 +404,6 @@ describe('saveErrorOutput', () => {
       assert.ok(dirA && dirB, 'both task dirs must exist');
       // Make a-specific files older than b-specific files, so eviction is observable.
       const past = new Date(Date.now() - 3600_000);
-      const { utimesSync } = require('node:fs');
       for (const f of readdirSync(join(dir, dirA))) {
         utimesSync(join(dir, dirA, f), past, past);
       }
@@ -413,6 +412,130 @@ describe('saveErrorOutput', () => {
       assert.equal(count(dirA), 0, 'oldest task files are evicted first');
       assert.equal(count(dirB), 4, 'newer files survive');
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('evicts files older than retentionDays regardless of the cap (XF10)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-errors-'));
+    try {
+      saveErrorOutput('task-1', 'old', 'x'.repeat(50), dir);
+      saveErrorOutput('task-1', 'fresh', 'x'.repeat(50), dir);
+      const taskDir = join(dir, readdirSync(dir)[0]);
+      const names = readdirSync(taskDir);
+      const oldName = names.find((n) => n.startsWith('old-'));
+      assert.ok(oldName, 'old file must exist before the sweep');
+      const past = new Date(Date.now() - 2 * 86_400_000);
+      utimesSync(join(taskDir, oldName), past, past);
+
+      const result = enforceArchiveCap(dir, 100 * 1024 * 1024, 80 * 1024 * 1024, { retentionDays: 1 });
+      assert.equal(result.removedFiles, 1, 'only the expired file is removed');
+      const remaining = readdirSync(taskDir);
+      assert.equal(remaining.length, 1);
+      assert.ok(remaining[0].startsWith('fresh-'), remaining[0]);
+    } finally {
+      resetArchiveLedger(dir);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sweeps via the ledger when the cap is exceeded, without an explicit call (XF9)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-errors-'));
+    try {
+      resetArchiveLedger(dir);
+      // 8 files x 50B = 400B, cap 300B / watermark 200B: the save that
+      // pushes the ledger over the cap must trigger eviction on its own.
+      for (let i = 0; i < 8; i++) {
+        saveErrorOutput('t', `c${i}`, 'x'.repeat(50), dir, { maxBytes: 300, watermarkBytes: 200 });
+      }
+      // After save 7 (400B) the sweep evicts c0-c2 (350->200). Save 8 (c7)
+      // adds 50B -> 250B, below the cap: 5 files survive.
+      const taskDir = join(dir, readdirSync(dir)[0]);
+      const files = readdirSync(taskDir).filter((f) => f.endsWith('.log'));
+      assert.equal(files.length, 5, 'ledger-triggered eviction trims to the watermark');
+    } finally {
+      resetArchiveLedger(dir);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('age sweeps are throttled to once per interval (XF9)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-errors-'));
+    try {
+      resetArchiveLedger(dir);
+      // First save: the ledger is fresh (lastSweepAt 0), so the retention
+      // sweep runs now.
+      saveErrorOutput('task-1', 'a', 'x'.repeat(50), dir, { retentionDays: 1 });
+      const taskDir = join(dir, readdirSync(dir)[0]);
+      const names = readdirSync(taskDir);
+      const aName = names.find((n) => n.startsWith('a-'));
+      assert.ok(aName);
+      const past = new Date(Date.now() - 2 * 86_400_000);
+      utimesSync(join(taskDir, aName), past, past);
+
+      // A save shortly after the sweep must NOT sweep again (throttle).
+      saveErrorOutput('task-1', 'b', 'x'.repeat(50), dir, { retentionDays: 1 });
+      const after = readdirSync(taskDir);
+      assert.ok(after.some((n) => n.startsWith('a-')), 'throttled sweep must leave the expired file in place');
+
+      // An explicit sweep removes it.
+      enforceArchiveCap(dir, 100 * 1024 * 1024, 80 * 1024 * 1024, { retentionDays: 1 });
+      const final = readdirSync(taskDir);
+      assert.ok(!final.some((n) => n.startsWith('a-')), 'explicit sweep removes the expired file');
+    } finally {
+      resetArchiveLedger(dir);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('overwriting the same call id is accounted once, not double-counted (XF9)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-errors-'));
+    try {
+      resetArchiveLedger(dir);
+      // The ledger decides WHEN a sweep runs (the scan itself is
+      // authoritative). To observe the ledger we need a sweep with a
+      // visible side effect: an expired file that only a triggered sweep
+      // would remove.
+      const opts = { maxBytes: 100, watermarkBytes: 50, retentionDays: 1 };
+      saveErrorOutput('task-1', 'same-call', 'x'.repeat(50), dir, opts); // triggers the first retention sweep
+      saveErrorOutput('task-1', 'same-call', 'x'.repeat(50), dir, opts); // overwrite: ledger stays at 50
+      const taskDir = join(dir, readdirSync(dir)[0]);
+      const names = readdirSync(taskDir);
+      const sameName = names.find((n) => n.startsWith('same-call-'));
+      assert.ok(sameName);
+      const past = new Date(Date.now() - 2 * 86_400_000);
+      utimesSync(join(taskDir, sameName), past, past);
+
+      // Correct ledger: 50 + 50 = 100 <= cap -> no sweep, the expired file
+      // stays. Double-counting would reach 150 > cap and the sweep would
+      // evict the expired file (and trim to the watermark).
+      saveErrorOutput('task-1', 'other', 'x'.repeat(50), dir, opts);
+      const after = readdirSync(taskDir);
+      assert.equal(after.length, 2, 'overwrite must not double the ledger');
+      assert.ok(after.some((n) => n.startsWith('same-call-')), 'no sweep may have run');
+    } finally {
+      resetArchiveLedger(dir);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('clearArchive removes everything, reports counts and resets the ledger (XF10)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-errors-'));
+    try {
+      saveErrorOutput('task-1', 'c1', 'x'.repeat(50), dir);
+      saveErrorOutput('task-1', 'c2', 'x'.repeat(100), dir);
+      const result = clearArchive(dir);
+      assert.equal(result.removedFiles, 2);
+      assert.equal(result.removedBytes, 150);
+      assert.equal(existsSync(dir), false, 'the archive directory is gone');
+
+      // The ledger is reset: a fresh save works and is accounted from zero.
+      const rel = saveErrorOutput('task-1', 'c3', 'y', dir);
+      assert.ok(rel.includes('c3-'), rel);
+      const taskDir = join(dir, readdirSync(dir)[0]);
+      assert.equal(readdirSync(taskDir).length, 1);
+    } finally {
+      resetArchiveLedger(dir);
       rmSync(dir, { recursive: true, force: true });
     }
   });

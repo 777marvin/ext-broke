@@ -75,6 +75,15 @@ describe('parseBrokeCommand', () => {
     assert.deepEqual(parseBrokeCommand(['errors', 'toollevel', 'on']), { kind: 'errors-toollevel', enabled: true });
     assert.deepEqual(parseBrokeCommand(['errors', 'toollevel', 'off']), { kind: 'errors-toollevel', enabled: false });
     expectUnknown(['errors', 'toollevel', 'maybe']);
+    assert.deepEqual(parseBrokeCommand(['errors', 'archive', 'on']), { kind: 'errors-archive', enabled: true });
+    assert.deepEqual(parseBrokeCommand(['errors', 'archive', 'off']), { kind: 'errors-archive', enabled: false });
+    expectUnknown(['errors', 'archive', 'maybe']);
+    assert.deepEqual(parseBrokeCommand(['errors', 'retention', '14']), { kind: 'errors-retention', days: 14 });
+    assert.deepEqual(parseBrokeCommand(['errors', 'retention', '0.6']), { kind: 'errors-retention', days: 1 }); // rounds
+    expectUnknown(['errors', 'retention', '0']); // schema min 1
+    expectUnknown(['errors', 'retention', '366']); // schema max 365
+    expectUnknown(['errors', 'retention', '0.4']); // XF8: rounds to 0
+    assert.deepEqual(parseBrokeCommand(['errors', 'clear']), { kind: 'errors-clear' });
   });
 
   it('parses summarize subcommands', () => {
@@ -155,6 +164,10 @@ describe('applyBrokeCommand', () => {
       assert.equal(onDisk(file).errors.minChars, 999);
       applyBrokeCommand(parseBrokeCommand(['errors', 'toollevel', 'on']), DEFAULT_CONFIG, file);
       assert.equal(onDisk(file).errors.toolLevel, true);
+      applyBrokeCommand(parseBrokeCommand(['errors', 'archive', 'off']), DEFAULT_CONFIG, file);
+      assert.equal(onDisk(file).errors.archive, false);
+      applyBrokeCommand(parseBrokeCommand(['errors', 'retention', '14']), DEFAULT_CONFIG, file);
+      assert.equal(onDisk(file).errors.retentionDays, 14);
       applyBrokeCommand(parseBrokeCommand(['summarize', 'via', 'cloud']), DEFAULT_CONFIG, file);
       assert.equal(onDisk(file).summarize.via, 'cloud');
       applyBrokeCommand(parseBrokeCommand(['summarize', 'model', 'llama3.2:1b']), DEFAULT_CONFIG, file);
@@ -166,7 +179,7 @@ describe('applyBrokeCommand', () => {
 
   it('returns a confirmation message for every applying command', () => {
     withTemp((file) => {
-      for (const args of [['off'], ['level', 'summarize'], ['maxchars', '90000'], ['truncate', '150', '30'], ['summarize', 'via', 'cloud'], ['measure', 'off']]) {
+      for (const args of [['off'], ['level', 'summarize'], ['maxchars', '90000'], ['truncate', '150', '30'], ['summarize', 'via', 'cloud'], ['measure', 'off'], ['errors', 'archive', 'on'], ['errors', 'retention', '7']]) {
         const { message } = applyBrokeCommand(parseBrokeCommand(args), DEFAULT_CONFIG, file);
         assert.ok(message.length > 0, `missing confirmation for: ${args.join(' ')}`);
       }
@@ -232,6 +245,7 @@ describe('HELP_TEXT', () => {
     assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.protectedTurns)));
     assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.truncate.maxLines)));
     assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.errors.minChars)));
+    assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.errors.retentionDays)));
     assert.ok(HELP_TEXT.includes(String(DEFAULT_CONFIG.summarize.afterTurns)));
     assert.ok(HELP_TEXT.includes(DEFAULT_CONFIG.summarize.localModel));
   });

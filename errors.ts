@@ -7,7 +7,7 @@
  * Everything here is deterministic text processing: no LLM, no dependencies.
  */
 
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -18,6 +18,44 @@ export const ERRORS_DIR = join(__dirname, 'errors');
 export const MAX_ERRORS_DIR_BYTES = 100 * 1024 * 1024;
 /** After eviction the archive is trimmed to this watermark (hysteresis). */
 const EVICT_DOWN_TO_BYTES = 80 * 1024 * 1024;
+/** Age-based sweeps run at most this often per directory (XF9: no scan per save). */
+export const ARCHIVE_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * In-memory byte accounting per archive directory (XF9). Saves add their
+ * size to the ledger instead of walking the tree; the full scan + eviction
+ * runs only when the ledger exceeds the cap or a retention sweep is due.
+ * A scan re-syncs the ledger, so files deleted outside the extension
+ * self-correct on the next sweep.
+ */
+interface ArchiveLedger {
+  total: number;
+  files: Map<string, { size: number; mtimeMs: number }>;
+  lastSweepAt: number;
+}
+
+const archiveLedgers = new Map<string, ArchiveLedger>();
+
+function ledgerFor(dir: string): ArchiveLedger {
+  let ledger = archiveLedgers.get(dir);
+  if (!ledger) {
+    ledger = { total: 0, files: new Map(), lastSweepAt: 0 };
+    archiveLedgers.set(dir, ledger);
+  }
+  return ledger;
+}
+
+/**
+ * Forget all tracked sizes/timestamps for a directory (or all directories).
+ * Used by clearArchive and by tests to get deterministic sweep timing.
+ */
+export function resetArchiveLedger(dir?: string): void {
+  if (dir === undefined) {
+    archiveLedgers.clear();
+  } else {
+    archiveLedgers.delete(dir);
+  }
+}
 
 /**
  * File-system-safe name: invalid chars replaced, truncated to 80 chars, plus
@@ -31,18 +69,32 @@ function safeName(s: string): string {
   return `${base}-${hash}`;
 }
 
+export interface ArchiveEvictionResult {
+  removedFiles: number;
+  removedBytes: number;
+}
+
 /**
- * Keep the archive bounded: once the total size exceeds the cap, oldest
- * files (by mtime) are deleted until the watermark is reached. Best effort.
- * Cap and watermark are parameters so tests can exercise eviction cheaply.
+ * Keep the archive bounded: files older than `retentionDays` are deleted
+ * first (privacy control, XF10), then - once the total size exceeds the
+ * cap - the oldest remaining files until the watermark is reached.
+ * Best effort. Cap/watermark/retention are parameters so tests can
+ * exercise eviction cheaply. One scan re-syncs the byte ledger (XF9).
  */
 export function enforceArchiveCap(
   dir: string = ERRORS_DIR,
   maxBytes: number = MAX_ERRORS_DIR_BYTES,
   watermarkBytes: number = EVICT_DOWN_TO_BYTES,
-): void {
+  opts: { retentionDays?: number; now?: number } = {},
+): ArchiveEvictionResult {
+  const result: ArchiveEvictionResult = { removedFiles: 0, removedBytes: 0 };
   try {
-    if (!existsSync(dir)) return;
+    if (!existsSync(dir)) {
+      resetArchiveLedger(dir);
+      return result;
+    }
+    const now = opts.now ?? Date.now();
+    const maxAgeMs = opts.retentionDays ? opts.retentionDays * 86_400_000 : 0;
     const files: { path: string; mtime: number; size: number }[] = [];
     let total = 0;
     const walk = (current: string): void => {
@@ -58,20 +110,56 @@ export function enforceArchiveCap(
       }
     };
     walk(dir);
-    if (total <= maxBytes) return;
     files.sort((a, b) => a.mtime - b.mtime);
-    for (const f of files) {
-      if (total <= watermarkBytes) break;
+    const tryUnlink = (f: { path: string; size: number }): void => {
       try {
         unlinkSync(f.path);
         total -= f.size;
+        result.removedFiles += 1;
+        result.removedBytes += f.size;
       } catch {
         // best effort - a locked file is skipped, the cap is soft
       }
+    };
+    // 1. Age-based eviction (XF10): expired files go regardless of the cap.
+    const survivors: { path: string; mtime: number; size: number }[] = [];
+    for (const f of files) {
+      if (maxAgeMs > 0 && now - f.mtime > maxAgeMs) {
+        tryUnlink(f);
+        continue;
+      }
+      survivors.push(f);
     }
+    // 2. Byte cap: only when the survivors still exceed the cap, evict the
+    //    oldest ones until the watermark (hysteresis) is reached.
+    if (total > maxBytes) {
+      for (const f of survivors) {
+        if (total <= watermarkBytes) break;
+        tryUnlink(f);
+      }
+    }
+    // Re-sync the ledger from the scan (self-corrects external deletions).
+    const ledger = ledgerFor(dir);
+    ledger.files.clear();
+    let remaining = 0;
+    for (const f of files) {
+      if (!existsSync(f.path)) continue;
+      ledger.files.set(f.path, { size: f.size, mtimeMs: f.mtime });
+      remaining += f.size;
+    }
+    ledger.total = remaining;
+    ledger.lastSweepAt = now;
   } catch {
     // best effort - archiving must never break tool execution
   }
+  return result;
+}
+
+export interface SaveErrorOutputOptions {
+  /** Age-based eviction: files older than N days are deleted on the next sweep. */
+  retentionDays?: number;
+  maxBytes?: number;
+  watermarkBytes?: number;
 }
 
 /**
@@ -79,18 +167,70 @@ export function enforceArchiveCap(
  * summary marker can point at it. Best effort - never throws. Returns the
  * path relative to the extension directory ('' when saving failed).
  * Callers MUST redact secrets before calling this (see maskSecrets).
+ *
+ * XF9: the save updates the byte ledger instead of scanning the tree; the
+ * full scan + eviction runs only when the ledger exceeds the cap or a
+ * retention sweep is due (at most once per ARCHIVE_SWEEP_INTERVAL_MS).
  */
-export function saveErrorOutput(taskId: string, callId: string, text: string, dir: string = ERRORS_DIR): string {
+export function saveErrorOutput(taskId: string, callId: string, text: string, dir: string = ERRORS_DIR, opts: SaveErrorOutputOptions = {}): string {
   try {
     const taskDir = join(dir, safeName(taskId));
     mkdirSync(taskDir, { recursive: true });
     const file = join(taskDir, `${safeName(callId)}.log`);
+    const size = Buffer.byteLength(text, 'utf-8');
     writeFileSync(file, text, 'utf-8');
-    enforceArchiveCap(dir);
+
+    // Incremental accounting: overwriting the same call id must not
+    // double-count the previous content.
+    const ledger = ledgerFor(dir);
+    const prev = ledger.files.get(file);
+    if (prev) ledger.total -= prev.size;
+    ledger.files.set(file, { size, mtimeMs: Date.now() });
+    ledger.total += size;
+
+    const maxBytes = opts.maxBytes ?? MAX_ERRORS_DIR_BYTES;
+    const retentionDays = opts.retentionDays ?? 0;
+    const now = Date.now();
+    const needsSweep =
+      ledger.total > maxBytes || (retentionDays > 0 && now - ledger.lastSweepAt >= ARCHIVE_SWEEP_INTERVAL_MS);
+    if (needsSweep) {
+      enforceArchiveCap(dir, maxBytes, opts.watermarkBytes ?? EVICT_DOWN_TO_BYTES, { retentionDays, now });
+    }
     return join('errors', safeName(taskId), `${safeName(callId)}.log`);
   } catch {
     return '';
   }
+}
+
+/**
+ * Delete the whole error archive (privacy control, XF10). User-invoked only
+ * - never runs during tool execution. Returns what was removed so the
+ * command can report it honestly. Resets the ledger.
+ */
+export function clearArchive(dir: string = ERRORS_DIR): ArchiveEvictionResult {
+  const result: ArchiveEvictionResult = { removedFiles: 0, removedBytes: 0 };
+  try {
+    if (existsSync(dir)) {
+      const walk = (current: string): void => {
+        for (const entry of readdirSync(current, { withFileTypes: true })) {
+          const p = join(current, entry.name);
+          if (entry.isDirectory()) {
+            walk(p);
+          } else if (entry.isFile()) {
+            const st = statSync(p);
+            result.removedFiles += 1;
+            result.removedBytes += st.size;
+          }
+        }
+      };
+      walk(dir);
+      rmSync(dir, { recursive: true, force: true });
+    }
+    resetArchiveLedger(dir);
+  } catch {
+    // best effort - the command reports what it could count
+  }
+  return result;
 }
 
 export interface ErrorSummaryOptions {

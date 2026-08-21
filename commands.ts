@@ -24,6 +24,9 @@ Usage: /broke <subcommand>
   errors minchars <n>           compress matching outputs ≥ n chars (default ${d.errors.minChars})
   errors lines <n>              context lines kept around the failure (default ${d.errors.contextLines})
   errors toollevel <on|off>     rewrite stored history at tool level (default: ${d.errors.toolLevel ? 'on' : 'off'})
+  errors archive <on|off>       save full outputs to errors/ (privacy: raw tool output stays on disk, default: ${d.errors.archive ? 'on' : 'off'})
+  errors retention <days>       delete archived outputs older than n days (default ${d.errors.retentionDays})
+  errors clear                  delete the whole error archive now
   summarize via <local|cloud>   summarizer backend (default: ${d.summarize.via}${d.summarize.via === 'local' ? ' = Ollama' : ''})
   summarize model <name>        Ollama model tag (default: ${d.summarize.localModel})
   summarize cloud <provider/model>
@@ -52,6 +55,9 @@ export type BrokeCommand =
   | { kind: 'errors-minchars'; value: number }
   | { kind: 'errors-lines'; value: number }
   | { kind: 'errors-toollevel'; enabled: boolean }
+  | { kind: 'errors-archive'; enabled: boolean }
+  | { kind: 'errors-retention'; days: number }
+  | { kind: 'errors-clear' }
   | { kind: 'summarize-via'; via: 'local' | 'cloud' }
   | { kind: 'summarize-model'; model: string }
   | { kind: 'summarize-cloud'; modelId: string }
@@ -125,6 +131,15 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
         const v = rest[1];
         if (v === 'on' || v === 'off') return { kind: 'errors-toollevel', enabled: v === 'on' };
       }
+      if (opt === 'archive') {
+        const v = rest[1];
+        if (v === 'on' || v === 'off') return { kind: 'errors-archive', enabled: v === 'on' };
+      }
+      if (opt === 'retention') {
+        const n = roundArg(rest[1]);
+        if (Number.isFinite(n) && n >= 1 && n <= 365) return { kind: 'errors-retention', days: n };
+      }
+      if (opt === 'clear') return { kind: 'errors-clear' };
       return { kind: 'unknown', raw: args.join(' ') };
     }
     case 'summarize': {
@@ -195,6 +210,18 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
       return { config: updateConfigPath('errors.contextLines', cmd.value, filePath), message: `errors contextLines → ${cmd.value}` };
     case 'errors-toollevel':
       return { config: updateConfigPath('errors.toolLevel', cmd.enabled, filePath), message: `error tool-level rewriting ${cmd.enabled ? 'enabled' : 'disabled'} - rewrites stored history` };
+    case 'errors-archive':
+      return {
+        config: updateConfigPath('errors.archive', cmd.enabled, filePath),
+        message: cmd.enabled
+          ? `error archive enabled - full tool outputs are stored locally under errors/ (redacted best effort)`
+          : `error archive disabled - full outputs are no longer saved, summaries say "full output removed"`,
+      };
+    case 'errors-retention':
+      return { config: updateConfigPath('errors.retentionDays', cmd.days, filePath), message: `error archive retention → ${cmd.days} day(s)` };
+    case 'errors-clear':
+      // Side effect handled in index.ts (deletes the archive directory).
+      return { config, message: '' };
     case 'summarize-via':
       return { config: updateConfigPath('summarize.via', cmd.via, filePath), message: `summarizer → ${cmd.via}` };
     case 'summarize-model':
@@ -306,7 +333,7 @@ export async function formatStatus(config: Config, stats: TaskStats | null, pric
     `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level})`,
     `  maxContextChars: ${config.maxContextChars.toLocaleString()} chars | protectedTurns: ${config.protectedTurns}`,
     `  truncate limits: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB | maxInputChars: ${config.truncate.maxInputChars}`,
-    `  errors: ${config.errors.enabled ? 'on' : 'off'} | min ${config.errors.minChars.toLocaleString()} chars | ${config.errors.contextLines} context lines | tool-level: ${config.errors.toolLevel ? 'on' : 'off'}`,
+    `  errors: ${config.errors.enabled ? 'on' : 'off'} | min ${config.errors.minChars.toLocaleString()} chars | ${config.errors.contextLines} context lines | tool-level: ${config.errors.toolLevel ? 'on' : 'off'} | archive: ${config.errors.archive ? 'on' : 'off'} (${config.errors.retentionDays} d retention)`,
     `  summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (model: ${config.summarize.localModel})` : ` (model: ${config.summarize.cloudModelId || 'task model'})`} | after ${config.summarize.afterTurns} turns | min ${config.summarize.minChars.toLocaleString()} chars`,
   ];
   if (ollama) {

@@ -19,7 +19,7 @@ import {
   type SummarizeDeps,
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, saveConfig, type Config } from './config';
-import { extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
+import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
 import { isPlaintextRemoteUrl, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
 import { extractOutputText } from './output';
 import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from './pricing';
@@ -229,7 +229,11 @@ export default class Broke implements Extension {
       const extracted = extractErrorSummary(redacted, { contextLines: config.errors.contextLines });
       if (!extracted.matched) return;
 
-      const savedPath = saveErrorOutput(taskId, event.toolCallId || event.toolName, redacted);
+      // Privacy control (XF10): archive on/off + retention. When the user
+      // turned the archive off, no full output is written to disk at all.
+      const savedPath = config.errors.archive
+        ? saveErrorOutput(taskId, event.toolCallId || event.toolName, redacted, undefined, { retentionDays: config.errors.retentionDays })
+        : '';
       const suffix = savedPath ? ` - full output saved to ${savedPath}` : ' - full output removed';
       return { output: wrap(formatErrorSummary(extracted, suffix)) };
     } catch (err) {
@@ -411,6 +415,14 @@ export default class Broke implements Extension {
             case 'selftest': {
               const result = await runSelfTest(config);
               return log(result.lines.join('\n'));
+            }
+            case 'errors-clear': {
+              const result = clearArchive();
+              return log(
+                result.removedFiles > 0
+                  ? `broke: error archive cleared - ${result.removedFiles} file(s), ${result.removedBytes.toLocaleString()} bytes removed`
+                  : 'broke: error archive was already empty',
+              );
             }
             case 'measure': {
               const summary = summarizeRunRecords(loadRunRecords());

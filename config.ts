@@ -36,6 +36,14 @@ const ErrorsSchema = z.object({
    * full outputs are archived under <extension>/errors/.
    */
   toolLevel: z.boolean().default(false),
+  /**
+   * Persist full tool outputs under <extension>/errors/ (privacy: raw tool
+   * output - source code, URLs, paths - stays on disk, redacted best effort).
+   * When off, tool-level summaries say "full output removed" instead.
+   */
+  archive: z.boolean().default(true),
+  /** Age-based eviction: archived outputs older than N days are deleted. */
+  retentionDays: z.number().int().min(1).max(365).default(30),
 });
 const errorsDefault = ErrorsSchema.parse({});
 
