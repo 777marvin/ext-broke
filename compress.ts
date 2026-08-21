@@ -533,8 +533,22 @@ export function truncatePass(
           return p;
         }
         if (output.type === 'json' || output.type === 'content') {
-          // Large structured outputs (codegraph, search results, listings)
-          // are truncated too; the payload becomes a marked text preview.
+          // Structured command outputs ({ stdout, stderr, exitCode, ... })
+          // keep their shape and metadata (XF7): only the text payload is
+          // truncated via the canonical extractor, stderr is emptied, and
+          // exitCode/other fields survive.
+          const extracted = extractOutputText(output);
+          if (extracted && extracted.text.length > 0) {
+            const { kept, removedChars: removed } = truncateText(extracted.text, maxLines, maxKB);
+            if (removed > 0) {
+              changed = true;
+              removedChars += removed;
+              return { ...part, output: extracted.wrap(kept) };
+            }
+          }
+          // No text payload worth truncating (pure JSON data): the payload
+          // becomes a marked text preview. A truncated JSON document is not
+          // valid JSON, so it must not keep the json type.
           let serialized: string;
           try {
             serialized = JSON.stringify(output.value);

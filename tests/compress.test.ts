@@ -477,6 +477,39 @@ describe('truncatePass', () => {
     assert.ok(JSON.stringify(toolMsg.content).includes('broke: truncated'));
   });
 
+  it('keeps structured command outputs structured, preserving exitCode and metadata (XF7)', () => {
+    const big = Array.from({ length: 300 }, (_, i) => `line ${i}`).join('\n');
+    const msgs: ContextMessage[] = [
+      user('brief'),
+      assistant('a1'),
+      {
+        id: id(),
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: id(),
+            toolName: 'power---bash',
+            output: { type: 'json', value: { stdout: big, stderr: 'warnings', exitCode: 1, durationMs: 42 } },
+          },
+        ],
+      },
+      user('q2'),
+    ];
+    const { messages: out, removedChars } = truncatePass(msgs, 1, 100, 20, 2000);
+    assert.ok(removedChars > 0);
+    const toolMsg = out.find((m) => m.role === 'tool');
+    const part = (
+      toolMsg?.content as { output?: { type?: string; value?: { exitCode?: number; stdout?: string; stderr?: string; durationMs?: number } } }[]
+    )[0];
+    assert.equal(part.output?.type, 'json', 'structured output must keep its type');
+    assert.equal(part.output?.value?.exitCode, 1, 'exitCode must survive truncation');
+    assert.equal(part.output?.value?.durationMs, 42, 'other metadata must survive truncation');
+    assert.equal(part.output?.value?.stderr, '', 'stderr is emptied by the wrap');
+    assert.ok((part.output?.value?.stdout ?? '').includes('broke: truncated'));
+    assert.ok((part.output?.value?.stdout ?? '').includes('line 299'), 'tail survives');
+  });
+
   it('trims oversized tool-call inputs in old assistant messages', () => {
     const hugeInput = { data: 'x'.repeat(5000) };
     const msgs: ContextMessage[] = [
