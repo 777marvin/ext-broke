@@ -393,25 +393,53 @@ function findCallHolder(result: ContextMessage[], callIds: string[]): ContextMes
 // ---------------------------------------------------------------------------
 
 function truncateText(text: string, maxLines: number, maxKB: number): { kept: string; removedChars: number } {
+  const maxChars = maxKB * 1024;
   const lines = text.split('\n');
-  if (lines.length > maxLines) {
+  const overLines = lines.length > maxLines;
+  const overChars = text.length > maxChars;
+  if (!overLines && !overChars) return { kept: text, removedChars: 0 };
+
+  // Pass 1 (content only): cut to head+tail lines. The marker is added
+  // afterwards so BOTH passes can report in a single marker line.
+  let headText: string;
+  let tailText: string;
+  if (overLines) {
     const headLines = Math.ceil(maxLines * 0.6);
     const tailLines = maxLines - headLines;
-    const head = lines.slice(0, headLines);
+    headText = lines.slice(0, headLines).join('\n');
     // tailLines can be 0 for maxLines 1-2; lines.slice(-0) returns the WHOLE
     // array in JS, which would silently keep everything (or worse). Compute
     // the tail from the end index instead - slice(length) is always empty.
-    const tail = tailLines > 0 ? lines.slice(lines.length - tailLines) : [];
-    const kept = `${head.join('\n')}\n… [broke: truncated ${lines.length} lines → ${maxLines}] - full output removed\n${tail.join('\n')}`;
+    tailText = tailLines > 0 ? lines.slice(lines.length - tailLines).join('\n') : '';
+  } else {
+    headText = text;
+    tailText = '';
+  }
+
+  // XF5: the line pass alone does not guarantee the KB cap - a few very long
+  // lines can exceed it. Enforce the char cap as a HARD limit after the line
+  // pass, with the marker budgeted in, so the result never exceeds maxKB
+  // (marker included). The cut only runs when the line-passed body is STILL
+  // over the cap (the line pass may already have brought it under).
+  const body = overLines ? `${headText}\n${tailText}` : headText;
+  if (body.length > maxChars) {
+    const cutParts = [
+      overLines ? `${lines.length} lines → ${maxLines} lines` : null,
+      `${Math.round(text.length / 1024)} KB → ${maxKB} KB`,
+    ].filter((p): p is string => p !== null);
+    const marker = `… [broke: truncated ${cutParts.join(', ')}] - full output removed`;
+    const budget = Math.max(maxChars - marker.length - 2, 1);
+    const headChars = Math.min(Math.ceil(budget * 0.6), budget);
+    const tailChars = budget - headChars;
+    const headPart = body.slice(0, headChars);
+    const tailPart = tailChars > 0 ? body.slice(body.length - tailChars) : '';
+    const kept = `${headPart}\n${marker}\n${tailPart}`;
     return { kept, removedChars: text.length - kept.length };
   }
-  if (text.length > maxKB * 1024) {
-    const maxChars = maxKB * 1024;
-    const headChars = Math.ceil(maxChars * 0.6);
-    const kept = `${text.slice(0, headChars)}\n… [broke: truncated ${Math.round(text.length / 1024)} KB → ${maxKB} KB] - full output removed\n${text.slice(-Math.floor(maxChars * 0.4))}`;
-    return { kept, removedChars: text.length - kept.length };
-  }
-  return { kept: text, removedChars: 0 };
+
+  const marker = `… [broke: truncated ${lines.length} lines → ${maxLines}] - full output removed`;
+  const kept = `${headText}\n${marker}\n${tailText}`;
+  return { kept, removedChars: text.length - kept.length };
 }
 
 export function truncatePass(

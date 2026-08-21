@@ -390,6 +390,32 @@ describe('truncatePass', () => {
     }
   });
 
+  it('enforces the KB cap even after line truncation (XF5)', () => {
+    // 60 lines x 500 chars = 30 KB. The line pass keeps 50 lines (~25 KB),
+    // still over the 20 KB cap - the combined pass must end at <= 20 KB.
+    const big = Array.from({ length: 60 }, () => 'L'.repeat(500)).join('\n');
+    const msgs = [user('brief'), assistant('a1'), tool('power---bash', big), user('q2')];
+    const { messages: out, removedChars } = truncatePass(msgs, 1, 50, 20, 2000);
+    assert.ok(removedChars > 0);
+    const toolMsg = out.find((m) => m.role === 'tool');
+    const value = (toolMsg?.content as { output?: { value?: string } }[])[0]?.output?.value ?? '';
+    assert.ok(value.length > 0 && value.length <= 20 * 1024, `kept ${value.length} chars, cap 20480`);
+    assert.ok(value.includes('lines →'), 'the line marker must still be present');
+    assert.ok(value.includes('KB →'), 'the KB marker must be present (both limits applied)');
+  });
+
+  it('applies only the KB pass when the line count is within limits', () => {
+    // One 30 KB line: the line pass is skipped, only the KB cap applies.
+    const big = 'L'.repeat(30 * 1024);
+    const msgs = [user('brief'), assistant('a1'), tool('power---bash', big), user('q2')];
+    const { messages: out, removedChars } = truncatePass(msgs, 1, 50, 20, 2000);
+    assert.ok(removedChars > 0);
+    const toolMsg = out.find((m) => m.role === 'tool');
+    const value = (toolMsg?.content as { output?: { value?: string } }[])[0]?.output?.value ?? '';
+    assert.ok(value.length > 0 && value.length <= 20 * 1024, `kept ${value.length} chars, cap 20480`);
+    assert.ok(!value.includes('lines →'), 'no line marker when the line pass did not run');
+  });
+
   it('leaves small outputs untouched', () => {
     const msgs = [user('brief'), assistant('a1'), tool('power---bash', 'tiny output'), user('q2')];
     const { messages: out, removedChars } = truncatePass(msgs, 1, 100, 20, 2000);
