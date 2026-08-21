@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Toolchain upgrades**: TypeScript 7.0.2 (tsconfig no longer uses the
+  removed `moduleResolution: node10`; it now uses `module: Preserve` +
+  `moduleResolution: Bundler` with an explicit `types: ["node"]`,
+  verified against both TS 5.9 and TS 7), @types/node 26.2.0, and the
+  CI actions checkout v7.0.1 / setup-node v7.0.0 /
+  dependency-review-action v5.0.0, all still pinned to commit SHAs.
+
 ### Fixed
 
 - **Locale-independent number formatting.** User-facing numbers
