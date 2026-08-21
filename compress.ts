@@ -11,7 +11,8 @@ import { estimateTokens, messageChars, messagesChars } from './tokens';
  * the built-in emergency compaction fires. Three levels:
  *
  *   structural (lossless) - drop empty messages, dedupe repeated tool
- *     results (together with their matching tool-call), merge consecutive
+ *     results ONLY when the producing tool-calls are identical too (name +
+ *     input, together with their matching tool-call), merge consecutive
  *     assistant texts.
  *   truncate   (lossy)    - head+tail truncation of old tool outputs,
  *     trimming of oversized tool-call inputs.
@@ -234,7 +235,9 @@ export function structuralPass(messages: ContextMessage[], protectedTurns: numbe
     // Drop empty tool results inside a tool message (keep the rest), and
     // dedupe repeated tool results. Both only ever happen TOGETHER with
     // their matching assistant tool-calls - a tool-call without a result
-    // makes the provider call fail (AI_MissingToolResultsError).
+    // makes the provider call fail (AI_MissingToolResultsError). Dedupe
+    // additionally requires the producing tool-calls to be identical
+    // (name + input): equal outputs alone are not enough (XF1).
     if (inRegion && msg.role === 'tool' && Array.isArray(msg.content)) {
       const parts = msg.content as unknown as PartLike[];
       const emptyParts = parts.filter(
@@ -308,17 +311,73 @@ function sameToolResult(a: ContextMessage, b: ContextMessage): boolean {
  * True when `current` repeats a tool result that is still in `result`:
  * either the immediately preceding tool message (parallel calls) or the
  * result two messages back behind an assistant message (repeated call
- * sequence).
+ * sequence). XF1: the result identity alone is not enough - the producing
+ * tool-calls (name + input) must be identical too.
  */
 function isDuplicateToolResult(result: ContextMessage[], current: ContextMessage): boolean {
   if (result.length < 1) return false;
   const prev = result[result.length - 1];
-  if (prev.role === 'tool') return sameToolResult(prev, current);
+  if (prev.role === 'tool') return sameToolResult(prev, current) && sameProducingCalls(result, prev, current);
   if (prev.role === 'assistant' && result.length >= 2) {
     const prevResult = result[result.length - 2];
-    if (prevResult.role === 'tool') return sameToolResult(prevResult, current);
+    if (prevResult.role === 'tool') {
+      return sameToolResult(prevResult, current) && sameProducingCalls(result, prevResult, current);
+    }
   }
   return false;
+}
+
+/** Call ids of a tool message's tool-result parts, in part order. */
+function resultCallIds(msg: ContextMessage): string[] {
+  if (!Array.isArray(msg.content)) return [];
+  return (msg.content as unknown as PartLike[])
+    .filter((p) => p.type === 'tool-result' && typeof p.toolCallId === 'string')
+    .map((p) => p.toolCallId as string);
+}
+
+/** Stable signature of a tool-call part: tool name + serialized input. */
+function toolCallSignature(p: PartLike): string {
+  let input: string;
+  try {
+    input = JSON.stringify(p.input ?? null);
+  } catch {
+    input = String(p.input);
+  }
+  return `${p.toolName ?? ''}::${input}`;
+}
+
+/** Signatures of the holder's tool-call parts for `ids`, in `ids` order (null when a call is missing). */
+function callSignaturesByHolder(holder: ContextMessage, ids: string[]): string[] | null {
+  if (!Array.isArray(holder.content)) return null;
+  const byId = new Map<string, string>();
+  for (const p of holder.content as unknown as PartLike[]) {
+    if (p.type === 'tool-call' && typeof p.toolCallId === 'string' && ids.includes(p.toolCallId)) {
+      byId.set(p.toolCallId, toolCallSignature(p));
+    }
+  }
+  if (byId.size !== ids.length) return null;
+  return ids.map((id) => byId.get(id) as string);
+}
+
+/**
+ * XF1: identical outputs are not enough for dedupe - the tool calls that
+ * PRODUCED them must be identical too (same tool name and input, pairwise
+ * per call id). Two different actions with coincidentally equal results
+ * (bash "echo 1" vs bash "printf '1'") are different history and must both
+ * stay in the context. Conservative on every uncertain path: missing
+ * holders, partial call sets or unserializable inputs all abort the dedupe.
+ */
+function sameProducingCalls(result: ContextMessage[], prev: ContextMessage, current: ContextMessage): boolean {
+  const prevIds = resultCallIds(prev);
+  const currIds = resultCallIds(current);
+  if (prevIds.length === 0 || prevIds.length !== currIds.length) return false;
+  const prevHolder = findCallHolder(result, prevIds);
+  const currHolder = findCallHolder(result, currIds);
+  if (!prevHolder || !currHolder) return false;
+  const prevSignatures = callSignaturesByHolder(prevHolder, prevIds);
+  const currSignatures = callSignaturesByHolder(currHolder, currIds);
+  if (!prevSignatures || !currSignatures) return false;
+  return prevSignatures.every((sig, i) => sig === currSignatures[i]);
 }
 
 /**

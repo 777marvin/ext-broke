@@ -259,6 +259,45 @@ describe('structuralPass', () => {
     assertPairingInvariant(out);
   });
 
+  it('keeps identical results produced by DIFFERENT tool inputs (XF1)', () => {
+    // bash("echo 1") and bash("printf '1'") yield the same output but are
+    // different actions - dedupe must not erase the second one.
+    const msgs: ContextMessage[] = [
+      user('brief'),
+      assistantWithCall('call-1', 'power---bash', { command: 'echo 1' }),
+      toolFor('call-1', 'power---bash', '1'),
+      assistantWithCall('call-2', 'power---bash', { command: "printf '1'" }),
+      toolFor('call-2', 'power---bash', '1'),
+      user('q2'),
+    ];
+    const { messages: out, removedChars } = structuralPass(msgs, 1);
+    assert.equal(removedChars, 0);
+    assert.equal(out.filter((m) => m.role === 'tool').length, 2);
+    assert.deepEqual(collectCallIds(out), ['call-1', 'call-2']);
+    assertPairingInvariant(out);
+  });
+
+  it('keeps adjacent identical results with different inputs (XF1, parallel)', () => {
+    const msgs: ContextMessage[] = [
+      user('brief'),
+      {
+        id: id(),
+        role: 'assistant',
+        content: [
+          { type: 'tool-call', toolCallId: 'call-1', toolName: 'power---bash', input: { command: 'echo 1' } },
+          { type: 'tool-call', toolCallId: 'call-2', toolName: 'power---bash', input: { command: 'printf 1' } },
+        ],
+      },
+      toolFor('call-1', 'power---bash', '1'),
+      toolFor('call-2', 'power---bash', '1'),
+      user('q2'),
+    ];
+    const { messages: out, removedChars } = structuralPass(msgs, 1);
+    assert.equal(removedChars, 0);
+    assert.equal(out.filter((m) => m.role === 'tool').length, 2);
+    assertPairingInvariant(out);
+  });
+
   it('keeps the duplicate tool result when its call holder is missing', () => {
     // No assistant message holds these calls (e.g. the holder was compacted
     // away). Dedupe must abort instead of removing the result and orphaning
