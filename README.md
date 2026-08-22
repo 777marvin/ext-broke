@@ -159,6 +159,8 @@ commands) or from the gear icon on the extension card:
 /broke help                        all commands
 ```
 
+![broke in a real AiderDesk session: /broke stats output, 💸 badge in the status bar](docs/assets/stats.png)
+
 ## How it works
 
 `onOptimizeMessages` fires before every model call. Broke runs up to four
