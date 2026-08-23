@@ -1,6 +1,6 @@
 ({ data }) => {
   if (!data || !data.inTask) return null;
-  const s = data.savedTokens ?? { structural: 0, truncate: 0, summarize: 0 };
+  const s = data.savedTokens ?? { structural: 0, error: 0, truncate: 0, summarize: 0 };
   const total = data.totalSavedTokens ?? 0;
   const level = data.level ?? 'off';
   const configured = data.summarizerConfigured ?? 'none';
@@ -32,7 +32,7 @@
     `broke - level: ${level}`,
     `saved ≈ ${total.toLocaleString('en-US')} input tokens${money} (chars/4 estimate)`,
     cost.modelLabel ? `  at current task model: ${cost.modelLabel}` : '',
-    `  structural: ${(s.structural ?? 0).toLocaleString('en-US')} | truncate: ${(s.truncate ?? 0).toLocaleString('en-US')} | summarize: ${(s.summarize ?? 0).toLocaleString('en-US')}`,
+    `  structural: ${(s.structural ?? 0).toLocaleString('en-US')} | error: ${(s.error ?? 0).toLocaleString('en-US')} | truncate: ${(s.truncate ?? 0).toLocaleString('en-US')} | summarize: ${(s.summarize ?? 0).toLocaleString('en-US')}`,
     `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` - ${failed} failure(s)` : ''}${disabled ? ' - auto-disabled after repeated failures (/broke reset re-enables)' : ''}`,
     ollamaNote ? `  ${ollamaNote}` : '',
     'click the task input for /broke stats',

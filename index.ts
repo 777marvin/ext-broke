@@ -506,6 +506,7 @@ export default class Broke implements Extension {
       passes: stats?.passes ?? 0,
       savedTokens: {
         structural: stats ? estimateTokens(stats.savedChars.structural) : 0,
+        error: stats ? estimateTokens(stats.savedChars.error) : 0,
         truncate: stats ? estimateTokens(stats.savedChars.truncate) : 0,
         summarize: stats ? estimateTokens(stats.savedChars.summarize) : 0,
       },
