@@ -123,6 +123,23 @@ export const ACTIVE_TURN_TAIL = 5;
  * so a single-prompt tool loop is still compressible instead of being
  * treated as one giant "working set".
  */
+/**
+ * Pairing safety: a region boundary must never split a tool-call /
+ * tool-result pair. If the message directly after `end` is a tool result
+ * whose producing call sits at the region's edge, replacing or summarizing
+ * [start, end) would remove the call and ORPHAN its result - which makes
+ * the next provider call fail. The same applies at `start`: a region that
+ * begins with a tool result would lose its holder into whatever sits
+ * before the region. Shrink the region past tool results on both edges;
+ * losing a little compression is always better than breaking the model
+ * call.
+ */
+function clampRegionToPairs(messages: ContextMessage[], start: number, end: number): { start: number; end: number } {
+  while (end > start && messages[end]?.role === 'tool') end--;
+  while (start < end && messages[start].role === 'tool') start++;
+  return { start, end };
+}
+
 export function compressibleRange(messages: ContextMessage[], protectedTurns: number): { start: number; end: number } {
   const firstUser = messages.findIndex((m) => m.role === 'user');
   if (firstUser === -1) return { start: 0, end: 0 };
@@ -143,7 +160,7 @@ export function compressibleRange(messages: ContextMessage[], protectedTurns: nu
     // current step (task brief + last messages) untouched.
     end = Math.max(firstUser + 1, messages.length - ACTIVE_TURN_TAIL);
   }
-  return { start: Math.max(firstUser + 1, 1), end: Math.max(end, firstUser + 1) };
+  return clampRegionToPairs(messages, Math.max(firstUser + 1, 1), Math.max(end, firstUser + 1));
 }
 
 interface PartLike {
@@ -791,9 +808,13 @@ export async function summarizePass(
     const throughIndex = region.findIndex((m) => m.id === cached.throughId);
     if (throughIndex !== -1) {
       const sinceThrough = region.slice(throughIndex + 1);
+      // Pairing safety: appending must not start with a tool RESULT whose
+      // producing call is covered by the cached summary (history edits can
+      // shift ids between runs). Regenerate instead of orphaning the result.
+      const appendsOrphanedResult = sinceThrough.length > 0 && sinceThrough[0].role === 'tool';
       const newUserTurns = sinceThrough.filter((m) => m.role === 'user').length;
       const newChars = messagesChars(sinceThrough);
-      if (newUserTurns === 0 && newChars < config.summarize.minChars) {
+      if (!appendsOrphanedResult && newUserTurns === 0 && newChars < config.summarize.minChars) {
         const removedChars = regionChars - messageChars(cached.message) - newChars;
         // XF6: only swap when the cached summary + the new tool messages are
         // smaller than the original region - never grow the context.

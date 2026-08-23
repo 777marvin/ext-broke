@@ -170,13 +170,52 @@ describe('compressibleRange', () => {
     }
     const { start, end } = compressibleRange(msgs, 6);
     assert.equal(start, 1);
-    // Only the current step (last 5 messages) stays protected.
-    assert.equal(end, msgs.length - 5);
+    // Only the current step stays protected - and the pairing clamp pulls
+    // the boundary one further back: the raw cut (length - 5) lands on a
+    // tool result whose call would stay inside the region (orphaned
+    // result), so the region must end before its holder instead.
+    assert.equal(end, msgs.length - 6);
+    assert.notEqual(msgs[end]?.role, 'tool');
     const region = msgs.slice(start, end);
     assert.ok(region.length >= 15);
     assert.ok(!region.some((m) => m.id === msgs[msgs.length - 1].id));
     assert.ok(!region.some((m) => m.id === msgs[msgs.length - 5].id));
     assert.ok(region.some((m) => m.id === msgs[5].id));
+  });
+
+  it('never ends the region between a tool-call and its result (pairing clamp)', () => {
+    const msgs: ContextMessage[] = [
+      user('brief'),
+      assistantWithCall('c1', 'power---bash', { command: 'echo 1' }),
+      toolFor('c1', 'power---bash', 'out 1'),
+      assistantWithCall('c2', 'power---bash', { command: 'echo 2' }),
+      toolFor('c2', 'power---bash', 'out 2'),
+      assistant('filler 1'),
+      assistant('filler 2'),
+      assistant('filler 3'),
+      assistant('filler 4'),
+    ];
+    // Length 9 → raw fallback cut at 9-5=4, which is exactly T(res-c2):
+    // without the clamp the call c2 would be summarized away while its
+    // result survives outside the region.
+    const range = compressibleRange(msgs, 10);
+    assert.deepEqual(range, { start: 1, end: 3 });
+    assert.notEqual(msgs[range.end]?.role, 'tool');
+  });
+
+  it('never starts the region on an orphaned tool result (pairing clamp)', () => {
+    const msgs: ContextMessage[] = [
+      user('brief'),
+      toolFor('c0', 'power---bash', 'result without holder'),
+      assistantWithCall('c1', 'power---bash', { command: 'echo 1' }),
+      toolFor('c1', 'power---bash', 'out 1'),
+      user('q2'),
+      user('q3'),
+      user('q4'),
+    ];
+    const range = compressibleRange(msgs, 1);
+    assert.deepEqual(range, { start: 2, end: 6 });
+    assert.notEqual(msgs[range.start]?.role, 'tool');
   });
 
   it('protects two user turns when enough turns exist (default)', () => {
@@ -631,6 +670,41 @@ describe('summarizePass', () => {
     assert.equal(r2.summarizeCalls, 0);
     assert.ok(r2.messages.some((m) => isSummaryMessage(m)));
     assert.ok(r2.messages.some((m) => m.role === 'tool' && JSON.stringify(m.content).includes('status ok')));
+  });
+
+  it('never orphans a tool result when the fallback boundary splits a pair (regression)', async () => {
+    // Few user turns force the ACTIVE_TURN_TAIL fallback; its fixed cut can
+    // land inside a call/result pair. The summary must shrink to a safe
+    // boundary instead of removing the call alone - an orphaned result
+    // makes the next provider call fail.
+    const big = 'x'.repeat(400);
+    const msgs: ContextMessage[] = [
+      user('Brief.'),
+      assistantWithCall('c1', 'power---bash', { command: 'one' }),
+      toolFor('c1', 'power---bash', big),
+      user('Second turn.'),
+      assistantWithCall('c2', 'power---bash', { command: 'two' }),
+      toolFor('c2', 'power---bash', big),
+      user('Third turn.'),
+      assistantWithCall('c3', 'power---bash', { command: 'three' }),
+      toolFor('c3', 'power---bash', big),
+      assistant('tail 1'),
+      assistant('tail 2'),
+      assistant('tail 3'),
+      assistant('tail 4'),
+    ];
+    // Length 13 → fallback cut at 8, which is T(res-c3): pre-fix this left
+    // result c3 behind while the summary swallowed call c3.
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const r = await summarizePass(msgs, 10, summarizeConfig(), countingDeps(calls), state, 'task-orphan');
+    assert.equal(calls.n, 1, 'summarizer ran');
+    assert.ok(r.messages.some((m) => isSummaryMessage(m)), 'summary applied');
+    // Both directions of the pairing invariant.
+    const outCalls = collectCallIds(r.messages);
+    const outResults = collectResultIds(r.messages);
+    for (const callId of outCalls) assert.ok(outResults.includes(callId), `tool-call ${callId} lost its result`);
+    for (const resultId of outResults) assert.ok(outCalls.includes(resultId), `orphaned tool-result ${resultId}`);
   });
 
   it('regenerates when a new user turn arrives', async () => {
