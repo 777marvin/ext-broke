@@ -1,5 +1,5 @@
 import { readFileSync, watch, type FSWatcher } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type {
   CommandDefinition,
   Extension,
@@ -139,7 +139,9 @@ export default class Broke implements Extension {
     // Reflect config changes made outside the settings dialog immediately.
     try {
       this.configWatcher = watch(dirname(CONFIG_PATH), (_event, filename) => {
-        if (filename === 'config.json') {
+        // Match the CONFIGURED file name, not a hardcoded 'config.json':
+        // BROKE_CONFIG_PATH overrides must invalidate the cache too.
+        if (filename === basename(CONFIG_PATH)) {
           invalidateConfigCache();
           this.refreshUI();
         }
@@ -178,7 +180,11 @@ export default class Broke implements Extension {
         return result.ok ? result.text : undefined;
       },
       generateCloud: async (systemPrompt, prompt) => {
-        const modelId = config.summarize.cloudModelId || `${task.data.provider}/${task.data.model ?? task.data.mainModel}`;
+        const fallbackModel = task.data.model ?? task.data.mainModel;
+        // No usable model id: fail this pass gracefully instead of calling
+        // generateText with a literal "provider/undefined".
+        if (!fallbackModel) return undefined;
+        const modelId = config.summarize.cloudModelId || `${task.data.provider}/${fallbackModel}`;
         // Cost guards: the summarizer input is capped in summarizePass
         // (MAX_SUMMARIZER_INPUT_CHARS) and the result is truncated to
         // maxSummaryChars afterwards. generateText offers no max-output

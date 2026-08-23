@@ -54,7 +54,7 @@ interface FakeHostState {
 }
 
 /** A task/context pair that satisfies the parts of the API broke actually uses. */
-function makeHost(taskId: string, summarizeImpl: () => string): { context: ExtensionContext; state: FakeHostState } {
+function makeHost(taskId: string, summarizeImpl: () => string | Promise<string>): { context: ExtensionContext; state: FakeHostState } {
   const state: FakeHostState = { summarizeCalls: 0, generateTextCalls: [], logLines: [] };
   const task = {
     data: { id: taskId, provider: 'openai', model: 'gpt-4o', mainModel: 'gpt-4o' },
