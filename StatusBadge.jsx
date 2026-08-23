@@ -1,14 +1,25 @@
-({ data }) => {
-  if (!data || !data.inTask) return null;
-  const s = data.savedTokens ?? { structural: 0, error: 0, truncate: 0, summarize: 0 };
-  const total = data.totalSavedTokens ?? 0;
-  const level = data.level ?? 'off';
-  const configured = data.summarizerConfigured ?? 'none';
-  const used = data.summarizerUsed ?? 'none';
-  const failed = data.summarizeFailures ?? 0;
-  const ollama = data.ollama ?? null;
-  const cost = data.cost ?? { savedUsd: null, modelLabel: null };
-  const disabled = data.summarizeDisabled ?? false;
+({ data, executeExtensionAction }) => {
+  // Polling fallback: re-fetches the data every 10s even if a push event
+  // (triggerUIDataRefresh after a compression run) was missed by the
+  // renderer - same pattern as the ext-savemytoken badge.
+  React.useEffect(() => {
+    const p = setInterval(() => {
+      executeExtensionAction?.('refresh').catch?.(() => {});
+    }, 10000);
+    return () => clearInterval(p);
+  }, []);
+
+  // Always render: until the first data fetch arrives the badge shows 0
+  // instead of disappearing entirely.
+  const s = data?.savedTokens ?? { structural: 0, error: 0, truncate: 0, summarize: 0 };
+  const total = data?.totalSavedTokens ?? 0;
+  const level = data?.level ?? 'off';
+  const configured = data?.summarizerConfigured ?? 'none';
+  const used = data?.summarizerUsed ?? 'none';
+  const failed = data?.summarizeFailures ?? 0;
+  const ollama = data?.ollama ?? null;
+  const cost = data?.cost ?? { savedUsd: null, modelLabel: null };
+  const disabled = data?.summarizeDisabled ?? false;
 
   const backendLabel = configured === 'local' ? 'local (Ollama)' : configured === 'cloud' ? 'cloud' : 'off';
   const usedLabel = used === 'local' ? 'local (Ollama)' : used === 'cloud' ? 'cloud' : 'never yet';

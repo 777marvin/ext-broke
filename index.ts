@@ -553,6 +553,16 @@ export default class Broke implements Extension {
     };
   }
 
+  /**
+   * UI component actions. 'refresh' is the polling fallback used by the
+   * badge interval: it forces the renderer to re-fetch the component data
+   * even when a push event (triggerUIDataRefresh) was missed.
+   */
+  async executeUIExtensionAction(_componentId: string, action: string, _args: unknown[], _context: ExtensionContext): Promise<unknown> {
+    if (action === 'refresh') this.refreshUI();
+    return null;
+  }
+
   getConfigComponent(): string {
     return configComponentJsx;
   }

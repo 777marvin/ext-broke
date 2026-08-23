@@ -51,11 +51,12 @@ interface FakeHostState {
   summarizeCalls: number;
   generateTextCalls: string[];
   logLines: { level: string; line: string }[];
+  uiRefreshCalls: number;
 }
 
 /** A task/context pair that satisfies the parts of the API broke actually uses. */
 function makeHost(taskId: string, summarizeImpl: () => string | Promise<string>): { context: ExtensionContext; state: FakeHostState } {
-  const state: FakeHostState = { summarizeCalls: 0, generateTextCalls: [], logLines: [] };
+  const state: FakeHostState = { summarizeCalls: 0, generateTextCalls: [], logLines: [], uiRefreshCalls: 0 };
   const task = {
     data: { id: taskId, provider: 'openai', model: 'gpt-4o', mainModel: 'gpt-4o' },
     getTaskAgentProfile: async () => ({ provider: 'openai', model: 'gpt-4o' }),
@@ -72,7 +73,9 @@ function makeHost(taskId: string, summarizeImpl: () => string | Promise<string>)
     log: () => undefined,
     getTaskContext: () => task,
     getModelConfigs: async () => [],
-    triggerUIDataRefresh: () => undefined,
+    triggerUIDataRefresh: () => {
+      state.uiRefreshCalls += 1;
+    },
     triggerUIComponentsReload: () => undefined,
   };
   return { context: context as unknown as ExtensionContext, state };
@@ -246,6 +249,28 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.equal(data.summarizerConfigured, 'cloud');
     assert.equal(data.ollama, null, 'no Ollama status check for the cloud summarizer');
     assert.equal(data.passes, 0, 'no compression run yet');
+  });
+
+  it('refreshes the status badge when the renderer polls via the UI action', async () => {
+    writeConfig();
+    const ext = new Broke();
+    const { context, state } = makeHost('task-ui-action', () => 'stub');
+    attachContext(ext, context);
+
+    await ext.executeUIExtensionAction('broke-status', 'refresh', [], context);
+    assert.equal(state.uiRefreshCalls, 1, "the refresh action must trigger triggerUIDataRefresh('broke-status')");
+
+    await ext.executeUIExtensionAction('broke-status', 'something-else', [], context);
+    assert.equal(state.uiRefreshCalls, 1, 'unknown actions must be ignored silently');
+  });
+
+  it('registers the status badge for fresh data on render', () => {
+    writeConfig();
+    const ext = new Broke();
+    const badge = ext.getUIComponents().find((c) => c.id === 'broke-status');
+    assert.ok(badge, 'the badge must be registered while showStatusBadge is on');
+    assert.equal(badge.loadData, true, 'the badge must load its data from the extension');
+    assert.equal(badge.noDataCache, true, 'the badge data must never be served from cache');
   });
 
   it('tool-level rewrite archives the full output when the archive is on (XF10 integration)', async () => {

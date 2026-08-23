@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Status badge stays visible and live.** The badge no longer disappears
+  when its data has not arrived yet or a push refresh event was missed by
+  the renderer: it now always renders (showing 0 until data arrives) and
+  re-fetches its numbers every 10 s via a UI polling action - the same
+  fallback pattern the savemytoken badge uses in the same host.
+
 ## [0.6.0] - 2026-08-23
 
 ### Added
