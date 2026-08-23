@@ -14,6 +14,28 @@ const id = (): string => `test-${++seq}`;
 
 const user = (text: string): ContextMessage => ({ id: id(), role: 'user', content: text });
 const assistant = (text: string): ContextMessage => ({ id: id(), role: 'assistant', content: text });
+/** Assistant message issuing one tool-call (holder), so results have a producer. */
+const assistantWithCall = (callId: string, toolName: string): ContextMessage => ({
+  id: id(),
+  role: 'assistant',
+  content: [{ type: 'tool-call', toolCallId: callId, toolName, input: {} }],
+});
+/** Tool result linked to a specific (real) tool-call id. */
+const toolWith = (callId: string, toolName: string, value: string): ContextMessage => ({
+  id: id(),
+  role: 'tool',
+  content: [{ type: 'tool-result', toolCallId: callId, toolName, output: { type: 'text', value } }],
+});
+/** Structured result linked to a specific (real) tool-call id. */
+const toolJsonWith = (
+  callId: string,
+  toolName: string,
+  value: { stdout?: string; stderr?: string; exitCode?: number },
+): ContextMessage => ({
+  id: id(),
+  role: 'tool',
+  content: [{ type: 'tool-result', toolCallId: callId, toolName, output: { type: 'json', value } }],
+});
 const tool = (toolName: string, value: string): ContextMessage => ({
   id: id(),
   role: 'tool',
@@ -27,25 +49,32 @@ const toolJson = (toolName: string, value: { stdout?: string; stderr?: string; e
   content: [{ type: 'tool-result', toolCallId: id(), toolName, output: { type: 'json', value } }],
 });
 
-/** Conversation with a single old oversized structured bash error output. */
-function errorJsonConversation(tscOutput: string): ContextMessage[] {
-  return [
-    user('Implement the billing module. Requirements: invoices, payments.'),
-    toolJson('power---bash', { stdout: tscOutput, stderr: '', exitCode: 2 }),
-    assistant('I see the errors - fixing them now.'),
-    user('Also add CSV export.'),
-  ];
-}
+  /** Conversation with a single old oversized structured bash error output. */
+  function errorJsonConversation(tscOutput: string): ContextMessage[] {
+    // Realistic history: every result is preceded by its producing
+    // tool-call - the pairing clamp refuses regions that start on a
+    // holderless result.
+    const callId = `call-${id()}`;
+    return [
+      user('Implement the billing module. Requirements: invoices, payments.'),
+      assistantWithCall(callId, 'power---bash'),
+      toolJsonWith(callId, 'power---bash', { stdout: tscOutput, stderr: '', exitCode: 2 }),
+      assistant('I see the errors - fixing them now.'),
+      user('Also add CSV export.'),
+    ];
+  }
 
-/** Conversation with a single old oversized error output in the compressible region. */
-function errorConversation(tscOutput: string): ContextMessage[] {
-  return [
-    user('Implement the billing module. Requirements: invoices, payments.'),
-    tool('power---bash', tscOutput),
-    assistant('I see the errors - fixing them now.'),
-    user('Also add CSV export.'),
-  ];
-}
+  /** Conversation with a single old oversized error output in the compressible region. */
+  function errorConversation(tscOutput: string): ContextMessage[] {
+    const callId = `call-${id()}`;
+    return [
+      user('Implement the billing module. Requirements: invoices, payments.'),
+      assistantWithCall(callId, 'power---bash'),
+      toolWith(callId, 'power---bash', tscOutput),
+      assistant('I see the errors - fixing them now.'),
+      user('Also add CSV export.'),
+    ];
+  }
 
 const TSC_SAMPLE = [
   'src/billing.ts:12:5 - error TS2554: Expected 2 arguments, but got 1.',
