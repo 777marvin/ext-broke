@@ -129,7 +129,8 @@ export function buildBenchWorkload(): ContextMessage[] {
 
 const fmt = (n: number): string => n.toLocaleString('en-US');
 
-async function runScenario(label: string, config: Config, workload: ContextMessage[]): Promise<string[]> {
+/** Run one labeled scenario and return its report lines (exported for the docs drift-guard test). */
+export async function runScenario(label: string, config: Config, workload: ContextMessage[]): Promise<string[]> {
   const before = messagesChars(workload);
   const deps: SummarizeDeps = {
     generateLocal: async () => STUB_SUMMARY,

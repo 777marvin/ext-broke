@@ -92,8 +92,8 @@ no randomness, byte-reproducible:
 
 - shipped default level (`truncate`): 113,070 chars removed
   (~28,268 tokens, 32.2% of the input);
-- maximum level (`summarize`): 315,389 chars removed
-  (~78,847 tokens, 89.8% of the input).
+- maximum level (`summarize`): 315,263 chars removed
+  (~78,816 tokens, 89.7% of the input).
 
 These replace the earlier published single-session figures (268k / 55 Mio /
 0.29 $), which could not be reproduced from raw data and were removed.

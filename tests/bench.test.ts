@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { compressMessages, createCompressState, type SummarizeDeps } from '../compress';
 import { DEFAULT_CONFIG } from '../config';
 import { messagesChars } from '../tokens';
-import { buildBenchWorkload, STUB_SUMMARY } from '../scripts/bench';
+import { buildBenchWorkload, runScenario, STUB_SUMMARY } from '../scripts/bench';
 
 const deps: SummarizeDeps = {
   generateLocal: async () => STUB_SUMMARY,
@@ -41,5 +43,31 @@ describe('benchmark workload', () => {
     const { report } = await compressMessages(workload, config, deps, createCompressState(), 'bench');
     assert.ok(report.summarizeChars > 0, 'summarize pass must replace the old region');
     assert.equal(report.summarizeFailed, false);
+  });
+
+  it('README and docs/overview quote exactly these benchmark numbers (drift guard)', async () => {
+    // The published reference numbers must be byte-reproducible from the
+    // benchmark itself. When a pipeline change moves a number, this test
+    // fails until README.md and docs/overview.md are re-synced - the same
+    // principle as HELP_TEXT deriving its defaults from DEFAULT_CONFIG.
+    const workload = buildBenchWorkload();
+    const totals: string[] = [];
+    for (const [label, config] of [
+      ['level=truncate (shipped default)', { ...DEFAULT_CONFIG }],
+      ['level=summarize (maximum)', { ...DEFAULT_CONFIG, level: 'summarize' as const }],
+    ] as const) {
+      const lines = await runScenario(label, config, workload);
+      const totalLine = lines.find((l) => l.trimStart().startsWith('total'));
+      assert.ok(totalLine, `scenario "${label}" must report a total line`);
+      const m = totalLine.match(/([\d,]+) chars removed \(~ ([\d,]+) tokens, ([\d.]+)% of input\)/);
+      assert.ok(m, `cannot parse total line: ${totalLine}`);
+      totals.push(`${m[1]} chars removed`, `(~${m[2]} tokens, ${m[3]}% of the input`);
+    }
+    for (const doc of ['README.md', join('docs', 'overview.md')]) {
+      const text = readFileSync(join(process.cwd(), doc), 'utf-8');
+      for (const snippet of totals) {
+        assert.ok(text.includes(snippet), `${doc} must contain the current bench number "${snippet}" - re-run npm run bench and sync the docs`);
+      }
+    }
   });
 });
