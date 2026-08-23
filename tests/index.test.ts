@@ -184,6 +184,32 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.equal(state.summarizeCalls, 1, 'exactly one real summarizer call per outer run');
   });
 
+  it('compresses a second task in parallel instead of skipping it (per-task guard)', async () => {
+    writeConfig();
+    const ext = new Broke();
+    const messages = buildSyntheticMessages();
+    // Task A's summarizer blocks until released; task B must still compress
+    // while A's run is in flight - the guard is scoped to the task id.
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const hostA = makeHost('task-a', () => gateA.then(() => 'stub'));
+    const hostB = makeHost('task-b', () => 'stub');
+    attachContext(ext, hostA.context);
+
+    const runA = ext.onOptimizeMessages({ originalMessages: messages, optimizedMessages: messages }, hostA.context);
+    await new Promise((resolve) => setTimeout(resolve, 10)); // let A reach its blocked summarizer
+    const resultB = (await ext.onOptimizeMessages(
+      { originalMessages: messages, optimizedMessages: messages },
+      hostB.context,
+    )) as { optimizedMessages: ContextMessage[] } | undefined;
+    assert.ok(resultB, 'task B must compress while task A is in flight');
+    releaseA();
+    const resultA = (await runA) as { optimizedMessages: ContextMessage[] } | undefined;
+    assert.ok(resultA, 'task A compresses once its own summarizer resolves');
+  });
+
   it('auto-disables summarization for a task after repeated failures', async () => {
     writeConfig();
     const ext = new Broke();

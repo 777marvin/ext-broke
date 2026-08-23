@@ -109,12 +109,14 @@ export default class Broke implements Extension {
   /** Tasks whose summarize pass is auto-disabled after repeated failures. */
   private readonly summarizeDisabled = new Map<string, true>();
   /**
-   * Reentry guard: the cloud summarizer calls task.generateText, and that
-   * call can fire onOptimizeMessages again on the same extension instance.
-   * Without the guard the summarizer's own input would be compressed again
-   * (double compression or unbounded recursion).
+   * Reentry guard (per task): the cloud summarizer calls task.generateText,
+   * and that call can fire onOptimizeMessages again on the same extension
+   * instance. Without the guard the summarizer's own input would be
+   * compressed again (double compression or unbounded recursion). Scoped to
+   * the task id, so two tasks with model calls in flight compress
+   * independently instead of silently skipping each other.
    */
-  private optimizing = false;
+  private readonly optimizingTasks = new Set<string>();
   private ollamaStatusCache: { at: number; status: OllamaStatus } | null = null;
 
   onLoad(context: ExtensionContext): void {
@@ -163,13 +165,12 @@ export default class Broke implements Extension {
   // input the model sees is already compressed.
   // -------------------------------------------------------------------------
   async onOptimizeMessages(event: OptimizeMessagesEvent, context: ExtensionContext): Promise<Partial<OptimizeMessagesEvent> | void> {
-    if (this.optimizing) return;
-    const config = getConfig();
-    if (!config.enabled) return;
-
     const task = context.getTaskContext();
     if (!task) return;
     const taskId = task.data.id;
+    if (this.optimizingTasks.has(taskId)) return;
+    const config = getConfig();
+    if (!config.enabled) return;
 
     const deps: SummarizeDeps = {
       generateLocal: async (model, prompt) => {
@@ -186,7 +187,7 @@ export default class Broke implements Extension {
       },
     };
 
-    this.optimizing = true;
+    this.optimizingTasks.add(taskId);
     try {
       const { messages, report } = await compressMessages(event.optimizedMessages, config, deps, this.state, taskId, {
         summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
@@ -205,7 +206,7 @@ export default class Broke implements Extension {
       // Never break the model call - compression is best effort.
       context.log(`Broke: compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
     } finally {
-      this.optimizing = false;
+      this.optimizingTasks.delete(taskId);
     }
   }
 
