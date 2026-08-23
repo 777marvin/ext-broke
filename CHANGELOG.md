@@ -7,17 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Toolchain upgrades**: TypeScript 7.0.2 (tsconfig no longer uses the
-  removed `moduleResolution: node10`; it now uses `module: Preserve` +
-  `moduleResolution: Bundler` with an explicit `types: ["node"]`,
-  verified against both TS 5.9 and TS 7), @types/node 26.2.0, and the
-  CI actions checkout v7.0.1 / setup-node v7.0.0 /
-  dependency-review-action v5.0.0, all still pinned to commit SHAs.
+## [0.5.1] - 2026-08-23
 
 ### Fixed
 
+- **Summarize boundary can no longer orphan a tool result.** With
+  `protectedTurns` set above the number of user turns actually present
+  (e.g. `/broke protect 10` in a session with fewer turns), the
+  compressible region's fallback cut could land between a tool call and
+  its result. Summarizing that region removed the call while its result
+  survived - an orphaned result makes the next provider call fail.
+  Region boundaries are now clamped past tool results on both edges
+  (shared by every pass), and the incremental summary append
+  regenerates instead of starting on a result. Regression tests cover
+  both clamp directions and the split scenario.
+- **README and docs quote the real benchmark numbers again.** The
+  summarize scenario was still published as 315,389 chars / 78,847
+  tokens / 89.8% after a v0.5.0 pipeline change had moved it to
+  315,263 / 78,816 / 89.7%. A drift-guard test now recomputes both
+  benchmark scenarios and asserts the docs contain exactly those
+  numbers, so future drift fails CI instead of shipping.
+- **`/broke stats` no longer prints "$0.00" for models without a known
+  price.** A local/unregistered model showed a zero cost figure, which
+  reads as "free" - the compression log line and the badge already hid
+  it. The money line now appears only when an input price is known.
+- **The status badge includes error-pass savings.** The badge payload
+  dropped `savedChars.error`, so the tooltip understated the total and
+  never showed what stack-trace/log compression contributed; the error
+  figure now appears in the breakdown line.
+- **Parallel tasks compress independently.** The reentry guard (which
+  stops the cloud summarizer's own generateText call from triggering
+  compression recursively) was a single flag: while one task's
+  summarizer ran, any other task's model call silently skipped
+  compression. The guard is now scoped per task id.
+- **Config watcher honors custom config file names** - a
+  `BROKE_CONFIG_PATH` override never invalidated the cache because the
+  watcher compared against a hardcoded 'config.json'; it now matches
+  `basename(CONFIG_PATH)`. The cloud summarizer also skips its pass
+  gracefully instead of calling generateText with a literal
+  "provider/undefined" when the task exposes no model id.
 - **Locale-independent number formatting.** User-facing numbers
   (`/broke` output, selftest, chat notice, badge) used
   `toLocaleString()` without a locale, so a German system printed
@@ -30,6 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deploy failed on CI, only the dry-run smoke had been exercised. The
   staging and archive paths now come from `GetTempPath()` (TMPDIR on
   Linux, %TEMP% on Windows).
+
+### Changed
+
+- **Toolchain upgrades**: TypeScript 7.0.2 (tsconfig no longer uses the
+  removed `moduleResolution: node10`; it now uses `module: Preserve` +
+  `moduleResolution: Bundler` with an explicit `types: ["node"]`,
+  verified against both TS 5.9 and TS 7), @types/node 26.2.0, and the
+  CI actions checkout v7.0.1 / setup-node v7.0.0 /
+  dependency-review-action v5.0.0, all still pinned to commit SHAs.
 
 ## [0.5.0] - 2026-08-22
 
