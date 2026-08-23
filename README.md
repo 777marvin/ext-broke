@@ -9,6 +9,10 @@ model** instead of your paid one.
 [![Release](https://img.shields.io/badge/release-v0.5.0-blue)](CHANGELOG.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/777marvin/ext-broke/ci.yml)](https://github.com/777marvin/ext-broke/actions)
 
+<p align="center">
+  <img src="docs/assets/stats.png" alt="broke in a real AiderDesk session: /broke stats output with per-pass savings, 💸 badge in the status bar" width="720">
+</p>
+
 **Author:** [@777marvin](https://github.com/777marvin), this is my first
 public repository. The extension is in active development, and feedback,
 bug reports and feature ideas are very welcome (see [Status](#status)).
