@@ -6,7 +6,7 @@ costs less, and its strongest compression level can run on a **free local
 model** instead of your paid one.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v0.5.0-blue)](CHANGELOG.md)
+[![Release](https://img.shields.io/github/v/release/777marvin/ext-broke)](https://github.com/777marvin/ext-broke/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/777marvin/ext-broke/ci.yml)](https://github.com/777marvin/ext-broke/actions)
 
 <p align="center">
@@ -178,6 +178,9 @@ commands) or from the gear icon on the extension card:
 /broke measure on | off            record every run to measure.jsonl (default: on)
 /broke reset                       clear this task's stats
 /broke selftest                    run the pipeline on synthetic input
+/broke update                      self-update from GitHub releases
+/broke update check                only check for a newer release
+/broke update <vX.Y.Z>             pin / roll back to an exact version
 /broke help                        all commands
 ```
 

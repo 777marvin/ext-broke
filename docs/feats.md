@@ -19,11 +19,12 @@ be resolved during the corresponding feature's development.
 | F3 | State Snapshotting & Memory Flushing | TBD | M | planned |
 | F4 | Local Keyword/Vector Index with snippet summaries | TBD | L | planned |
 
-**Version reality check (2026-08-22):** v0.3.0 to v0.5.0 are released
-(current: v0.5.0, 2026-08-22) and shipped F1 improvements, the reference
-benchmark, the measurement ledger, the error-archive privacy controls and
-the CI security automation. F2-F4 are **not** implemented in any released
-version. The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
+**Version reality check (2026-08-23):** v0.3.0 to v0.6.0 are released
+(current: v0.6.0, 2026-08-23) and shipped F1 improvements, the reference
+benchmark, the measurement ledger, the error-archive privacy controls,
+the CI security automation and the self-update command (`/broke update`,
+which installs tagged GitHub releases without deploy.ps1). F2-F4 are
+**not** implemented in any released version. The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
 F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without
 F2/F3, and 0.5.0 shipped the XF-hardening round instead) and stay TBD
 until the features are actually scheduled.

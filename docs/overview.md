@@ -1,7 +1,7 @@
 # Project Overview
 
-*Snapshot: v0.5.0 (2026-08-22), review rounds F1-F24 and XF1-XF16 closed,
-suite 174/174 green*
+*Snapshot: v0.6.0 (2026-08-23), review rounds F1-F24 and XF1-XF16 closed,
+suite 202/202 green*
 
 ## What broke is
 
@@ -21,28 +21,30 @@ applies to the input of each model call only.
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `index.ts` | 547 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate, reentry guard), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …` incl. measure), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`), per-run measurement persistence in `recordReport` |
-| `compress.ts` | 961 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
+| `index.ts` | 583 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate, reentry guard), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …` incl. measure + self-update wiring, config-watcher close/reopen for the folder swap), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`), per-run measurement persistence in `recordReport` |
+| `compress.ts` | 982 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
 | `output.ts` | 155 | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
 | `errors.ts` | 475 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir, retention sweep, archive on/off, XF9/XF10); `isCommandTool` classification |
 | `config.ts` | 243 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` toggle |
-| `commands.ts` | 356 | `/broke` parser + all subcommands (status, stats with measured-reduction headline, measure, reset, selftest, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
+| `commands.ts` | 373 | `/broke` parser + all subcommands (status, stats with measured-reduction headline, measure, reset, selftest, update, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
+| `update.ts` | 495 | Self-update (`/broke update`): resolves the latest tagged GitHub release (`releases/latest`, fallback highest-semver tag), strict `vMAJOR.MINOR.PATCH` tag validation before any URL use, tarball download with timeouts + size cap, system-`tar` extraction, runtime-state preservation (config.json, stats/measure ledgers incl. rotation files, errors/ ≤ 100 MB, node_modules), automatic `npm ci --omit=dev` on lockfile change, atomic swap with rollback plus in-place replacement when a Windows handle pins the directory, git-checkout guard, concurrency lock; all I/O injectable for hermetic tests |
 | `tokens.ts` | 385 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
 | `local.ts` | 135 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
-| `pricing.ts` | 90 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
+| `pricing.ts` | 91 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
 | `selftest.ts` | 194 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
 | `scripts/measure.ts` | 25 | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
 | `ConfigComponent.jsx` | 210 | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
 | `StatusBadge.jsx` | 64 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state |
-| `tests/index.test.ts` | 265 | Fake-host integration tests (XF11): real extension against a fake ExtensionContext/task, compression + stats/measure persistence, reentry guard, summarize auto-disable, tool-level archiving on/off, silence when disabled |
-| `tests/commands.test.ts` | 323 | Unit tests: `/broke` parse/apply/format, generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
+| `tests/index.test.ts` | 291 | Fake-host integration tests (XF11): real extension against a fake ExtensionContext/task, compression + stats/measure persistence, reentry guard, summarize auto-disable, tool-level archiving on/off, silence when disabled |
+| `tests/commands.test.ts` | 344 | Unit tests: `/broke` parse/apply/format (incl. `update` subcommands), generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
 | `tests/measure.test.ts` | 230 | Unit tests: run-record mapping, ledger append/rotation/malformed-skip, summary math (mean/median/max/byTask) |
-| `tests/compress.test.ts` | 1005 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
+| `tests/compress.test.ts` | 1079 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
 | `tests/config.test.ts` | 131 | Unit tests: config merge, corrupted-file fallback, pure updates, one-write multi-path persistence |
-| `tests/errors.test.ts` | 568 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap/retention/clear |
+| `tests/errors.test.ts` | 590 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap/retention/clear |
 | `tests/local.test.ts` | 137 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts |
 | `tests/pricing.test.ts` | 212 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats persistence privacy, stats loader TTL, task-stats reset |
 | `tests/selftest.test.ts` | 56 | Unit tests: synthetic-call-id linking, dedupe really applied, honest per-pass labels |
+| `tests/update.test.ts` | 405 | Unit tests: self-update flow with injected deps - release resolution + semver fallback, tag validation, happy-path swap with state preservation, check mode, explicit downgrade/reinstall, extract/npm failure aborts, git-checkout guard, concurrency lock, stale-backup recovery, in-place fallback, errors-archive size cap (sparse file) |
 
 ## How the pipeline works
 
@@ -118,8 +120,13 @@ real-session numbers.
 - Compatibility: the declared API line is `@aiderdesk/extensions` ^0.30.0
   (see package.json); CI runs typecheck + tests against both the lockfile
   and `@latest` so API drift is caught on every push
-- Deploy: `.\scripts\deploy.ps1 -Category extensions -Name broke` (from
-  this repo) → `~/.aider-desk/extensions/broke/`
+- Deploy / update: installed instances update themselves via `/broke
+  update` (installs the latest tagged release from GitHub; `update check`
+  peeks, `update <vX.Y.Z>` pins or rolls back). `.\scripts\deploy.ps1
+  -Category extensions -Name broke` (from this repo) →
+  `~/.aider-desk/extensions/broke/` stays the bootstrap for fresh machines
+  and the dev loop for uncommitted changes (`/broke update` refuses git
+  checkouts by design)
 - Runtime deps: AiderDesk >= 0.77, Node >= 22 (see `engines` in
   package.json), `zod`; Ollama for `summarize via local`
 

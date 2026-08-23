@@ -44,6 +44,10 @@ beyond TypeScript itself (`tsconfig.json`).
 
 ## Deploying
 
+Normal updates happen inside AiderDesk itself: `/broke update` installs
+the latest tagged release from GitHub (see README). The script below is
+for first installs on a fresh machine and for testing uncommitted changes.
+
 The extension deploys into `~/.aider-desk/extensions/broke/` via
 `scripts/deploy.ps1` (works from this repo):
 
