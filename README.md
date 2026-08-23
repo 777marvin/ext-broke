@@ -108,6 +108,24 @@ the previous installation automatically if anything fails.
 
 Extensions are hot-reloaded by AiderDesk: no restart needed.
 
+**Updating an existing install:** ask broke itself - no script, no clone:
+
+```
+/broke update          # install the latest GitHub release
+/broke update check    # only check whether a newer release exists
+/broke update v0.5.1   # pin / roll back to an exact tagged version
+```
+
+The update downloads the tagged release from GitHub, preserves your
+`config.json`, stats/measure ledgers, the errors archive and
+`node_modules`, refreshes dependencies when the lockfile changed, and
+swaps the installation atomically (automatic restore if anything fails).
+Unlike a first install (hot-reloaded above), an update needs an AiderDesk
+restart: the running instance keeps its previously loaded code until then.
+`scripts/deploy.ps1` stays useful for first installs on a fresh machine and
+for testing uncommitted changes during development; inside a git checkout
+`/broke update` refuses to run by design.
+
 ## Requirements
 
 - AiderDesk ≥ 0.77, Node.js ≥ 22

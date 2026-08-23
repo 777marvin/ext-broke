@@ -1,6 +1,7 @@
 import type { Config } from './config';
 import { DEFAULT_CONFIG, updateConfigPath, updateConfigPaths } from './config';
 import { isPlaintextRemoteUrl, ollamaStatus } from './local';
+import { normalizeTag } from './update';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from './pricing';
 import { estimateTokens, type MeasureSummary, type TaskStats, totalSavedChars } from './tokens';
 
@@ -37,6 +38,9 @@ Usage: /broke <subcommand>
   measure on | off              record every compression run to measure.jsonl (default: ${d.stats.measure ? 'on' : 'off'})
   reset                         clear this task's stats
   selftest                      run the pipeline on synthetic input and log results
+  update                        self-update from GitHub releases (installs the latest)
+  update check                  only report whether a newer release exists
+  update <vX.Y.Z>               install an exact tagged version (rollback path)
   help                          this text
 
 All estimates use the chars/4 heuristic - honest numbers, not provider counts.`;
@@ -67,6 +71,7 @@ export type BrokeCommand =
   | { kind: 'measure-toggle'; enabled: boolean }
   | { kind: 'reset' }
   | { kind: 'selftest' }
+  | { kind: 'update'; mode: 'install' | 'check'; tag?: string }
   | { kind: 'help' }
   | { kind: 'unknown'; raw: string };
 
@@ -167,6 +172,15 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
       return { kind: 'reset' };
     case 'selftest':
       return { kind: 'selftest' };
+    case 'update': {
+      const arg = rest[0];
+      const tag = arg === undefined ? null : normalizeTag(arg);
+      // Exactly one argument max - anything else is a typo, not an update.
+      if (arg === undefined && rest.length === 0) return { kind: 'update', mode: 'install' };
+      if (arg === 'check' && rest.length === 1) return { kind: 'update', mode: 'check' };
+      if (rest.length === 1 && tag) return { kind: 'update', mode: 'install', tag };
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
     case 'help':
       return { kind: 'help' };
     default:

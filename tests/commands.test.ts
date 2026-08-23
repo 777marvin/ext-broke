@@ -117,6 +117,16 @@ describe('parseBrokeCommand', () => {
     assert.deepEqual(parseBrokeCommand(['measure', 'off']), { kind: 'measure-toggle', enabled: false });
     expectUnknown(['measure', 'maybe']);
   });
+
+  it('parses update subcommands', () => {
+    assert.deepEqual(parseBrokeCommand(['update']), { kind: 'update', mode: 'install' });
+    assert.deepEqual(parseBrokeCommand(['update', 'check']), { kind: 'update', mode: 'check' });
+    assert.deepEqual(parseBrokeCommand(['update', 'v0.6.0']), { kind: 'update', mode: 'install', tag: 'v0.6.0' });
+    assert.deepEqual(parseBrokeCommand(['update', '0.6.0']), { kind: 'update', mode: 'install', tag: 'v0.6.0' }); // normalized
+    expectUnknown(['update', 'latest']);
+    expectUnknown(['update', 'v1.2']);
+    expectUnknown(['update', 'check', 'extra']);
+  });
 });
 
 describe('applyBrokeCommand', () => {

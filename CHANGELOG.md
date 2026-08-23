@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-23
+
+### Added
+
+- **Self-update from GitHub releases: `/broke update`.** Normal updates no
+  longer need `scripts/deploy.ps1`. The command resolves the latest tagged
+  release from GitHub, preserves your `config.json`, the stats/measure
+  ledgers, the errors archive and `node_modules`, refreshes dependencies
+  automatically when the lockfile changed, and swaps the installation
+  atomically with an automatic rollback on any failure. `/broke update
+  check` only reports what is available; `/broke update v0.5.1` pins or
+  rolls back to an exact version without the script. Safety rails: the
+  command refuses to run inside a git checkout (there, git pull +
+  deploy.ps1 remain the way), installs strictly `vMAJOR.MINOR.PATCH`
+  release tags - never a moving branch - and asks for an AiderDesk restart
+  afterwards, since the running instance keeps its previously loaded code
+  until then.
+
 ## [0.5.1] - 2026-08-23
 
 ### Fixed

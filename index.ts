@@ -39,6 +39,7 @@ import {
   type TaskStats,
 } from './tokens';
 import { boundedMapSet } from './compress';
+import { runUpdate } from './update';
 
 // Load the JSX templates once at module level (official template pattern).
 // A missing template must not prevent the extension from loading at all.
@@ -137,6 +138,16 @@ export default class Broke implements Extension {
       );
     }
     // Reflect config changes made outside the settings dialog immediately.
+    this.startConfigWatcher();
+  }
+
+  /**
+   * Watch the config file for external edits. Extracted so /broke update can
+   * close the watcher while the installer swaps the installation folder (the
+   * watcher's open handle pins that directory on Windows) and start a fresh
+   * one afterwards.
+   */
+  startConfigWatcher(): void {
     try {
       this.configWatcher = watch(dirname(CONFIG_PATH), (_event, filename) => {
         // Match the CONFIGURED file name, not a hardcoded 'config.json':
@@ -153,6 +164,12 @@ export default class Broke implements Extension {
     } catch {
       // best effort - getConfig() still picks up changes within its TTL
     }
+  }
+
+  /** Release the directory handle so /broke update can swap the folder. */
+  closeConfigWatcher(): void {
+    this.configWatcher?.close();
+    this.configWatcher = null;
   }
 
   async onUnload(): Promise<void> {
@@ -430,6 +447,17 @@ export default class Broke implements Extension {
             case 'selftest': {
               const result = await runSelfTest(config);
               return log(result.lines.join('\n'));
+            }
+            case 'update': {
+              // Self-update from GitHub releases. The hooks free the config
+              // watcher's directory handle for the folder swap and reopen it
+              // afterwards; progress goes to the extension log, not the chat.
+              const result = await runUpdate({ mode: cmd.mode, tag: cmd.tag }, {
+                onBeforeSwap: () => ext.closeConfigWatcher(),
+                onAfterSwap: () => ext.startConfigWatcher(),
+                progress: (line) => context.log(line, 'info'),
+              });
+              return log(result.message);
             }
             case 'errors-clear': {
               const result = clearArchive();
