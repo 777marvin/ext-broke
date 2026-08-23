@@ -4,7 +4,8 @@
  * requirement): the resolved task agent profile (with task-level overrides)
  * is matched against the model registry (getModelConfigs), and the model's
  * input price per token is used. Local models (Ollama) have no price -
- * savings are then honestly shown as $0.00.
+ * the cost figure stays hidden until a price is known (never shown as
+ * $0.00, which would read as "free").
  */
 
 import type { ExtensionContext } from '@aiderdesk/extensions';

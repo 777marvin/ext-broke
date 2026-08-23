@@ -271,7 +271,10 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
   const passSum = totalSavedChars(stats);
   const total = measured ?? passSum;
   const totalTokens = estimateTokens(total);
-  const money = price ? formatUsd(savedCostUsd(totalTokens, price.inputPerMToken)) : null;
+  // Money is only shown when a REAL input price is known: "$0.00" for a
+  // local or unregistered model would read as "free" when the truth is
+  // "unknown". Same policy as the compression log line and the badge.
+  const money = price?.inputPerMToken ? formatUsd(savedCostUsd(totalTokens, price.inputPerMToken)) : null;
   const lines = [
     `broke stats - ${stats.passes} compression run(s)`,
     measured !== null

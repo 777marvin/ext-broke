@@ -214,6 +214,16 @@ describe('formatStats', () => {
     assert.ok(!out.includes('estimated cost saved'));
   });
 
+  it('omits the money line for models without a registry price (no fake $0.00)', () => {
+    // A price object can exist while the model carries no input price
+    // (local/Ollama or not in the registry): "$0.00" would read as
+    // "free" - the cost figure must stay hidden instead.
+    const stats = { ...emptyStats('t'), passes: 3, savedChars: { structural: 100, error: 200, truncate: 300, summarize: 400 } };
+    const out = formatStats(DEFAULT_CONFIG, stats, { modelId: 'qwen2.5-coder:3b', providerId: 'ollama', inputPerMToken: null });
+    assert.ok(!out.includes('estimated cost saved'));
+    assert.ok(!out.includes('$0.00'));
+  });
+
   it('shows the MEASURED reduction as the headline (XF14)', () => {
     const stats = {
       ...emptyStats('t'),
