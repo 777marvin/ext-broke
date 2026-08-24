@@ -247,6 +247,78 @@ function filesDiffer(a: string, b: string): boolean {
   }
 }
 
+/** Synchronous pause - lets transient Windows locks (AV/indexer) clear. */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Rename with bounded retries. Right after npm ci has churned thousands of
+ * files, virus scanners and indexers briefly hold exclusive handles; such
+ * EPERM/EBUSY states clear within milliseconds. A single hard failure here
+ * used to abort the swap mid-way and leave the installation truncated.
+ */
+export function renameWithRetry(from: string, to: string, attempts = 5, delayMs = 120): void {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts) sleepSync(delayMs);
+    }
+  }
+  throw lastError;
+}
+
+/** Recursive relative-path -> byte-size map, POSIX-style keys. */
+function manifestOf(root: string, prefix = '', into: Map<string, number> = new Map()): Map<string, number> {
+  for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      manifestOf(root, rel, into);
+    } else {
+      try {
+        into.set(rel, statSync(join(root, rel)).size);
+      } catch {
+        // raced file - it will show up as missing in the comparison
+      }
+    }
+  }
+  return into;
+}
+
+/**
+ * Copy the payload into the install directory, then VERIFY the result: every
+ * payload file must exist with its original byte size. Extras in the install
+ * directory are tolerated (the running extension may append to ledgers
+ * mid-swap); missing or truncated files are not - they mean the copy died
+ * part-way, which historically left a silently broken installation behind.
+ */
+function copyPayloadVerified(payloadDir: string, installDir: string, rawCopy: (from: string, to: string) => void): void {
+  rawCopy(payloadDir, installDir);
+  const missing: string[] = [];
+  for (const [rel, size] of manifestOf(payloadDir)) {
+    try {
+      if (statSync(join(installDir, rel)).size !== size) missing.push(rel);
+    } catch {
+      missing.push(rel);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(`payload copy incomplete - ${missing.length} file(s) missing or truncated (first: ${missing[0]})`);
+  }
+}
+
+/** Injectable I/O for the swap functions - tests simulate locks/partial copies. */
+export interface SwapIo {
+  /** Move/rename one entry. Defaults to {@link renameWithRetry}. */
+  rename?: (from: string, to: string) => void;
+  /** Low-level recursive copy. Defaults to fs.cpSync. */
+  copyRaw?: (from: string, to: string) => void;
+}
+
 function writeDeployedVersion(installDir: string, tag: string): void {
   writeFileSync(join(installDir, '.deployed-version'), `${tag}\n`, 'utf-8');
 }
@@ -263,7 +335,8 @@ function recoverStaleBackup(backup: string, installDir: string): void {
  * directory with an open handle (Windows EPERM) - the caller then uses
  * replaceInstallationInPlace. Throws after restoring the previous state.
  */
-export function swapInstallDirectory(installDir: string, payloadDir: string, tag: string): 'swapped' | 'blocked' {
+export function swapInstallDirectory(installDir: string, payloadDir: string, tag: string, io: SwapIo = {}): 'swapped' | 'blocked' {
+  const doRename = io.rename ?? renameWithRetry;
   const backup = `${installDir}.old`;
   recoverStaleBackup(backup, installDir);
   try {
@@ -272,7 +345,7 @@ export function swapInstallDirectory(installDir: string, payloadDir: string, tag
     return 'blocked';
   }
   try {
-    cpSync(payloadDir, installDir, { recursive: true });
+    copyPayloadVerified(payloadDir, installDir, io.copyRaw ?? ((from, to) => cpSync(from, to, { recursive: true })));
     writeDeployedVersion(installDir, tag);
   } catch (err) {
     try {
@@ -280,38 +353,100 @@ export function swapInstallDirectory(installDir: string, payloadDir: string, tag
     } catch {
       // Restoring the backup matters more than removing the partial copy.
     }
-    renameSync(backup, installDir);
+    try {
+      doRename(backup, installDir);
+    } catch (restoreErr) {
+      throw new Error(
+        `${reasonOf(err)}; AND the previous installation could not be moved back from ${backup} (${reasonOf(restoreErr)}) - restore it manually.`,
+      );
+    }
     throw err;
   }
+  // A locked leftover backup is cosmetic - the next update's
+  // recoverStaleBackup drops it. Never fail a finished update over it.
   rmSync(backup, { recursive: true, force: true });
   return 'swapped';
 }
 
 /**
  * Fallback for a pinned directory: move current entries aside one by one,
- * copy the payload in, drop the backup. Less atomic than the rename swap
- * but immune to open DIRECTORY handles (files inside stay replaceable).
+ * copy the payload in (verified), drop the backup. Less atomic than the
+ * rename swap but immune to open DIRECTORY handles (files inside stay
+ * replaceable).
+ *
+ * Every phase rolls back completely on failure - a transient lock during
+ * staging used to abort this mid-loop and leave the installation truncated
+ * (leading-alphabetical slice stranded in the backup), which is exactly the
+ * "broke does not load after update" corruption class.
  */
-export function replaceInstallationInPlace(installDir: string, payloadDir: string, tag: string): void {
+export function replaceInstallationInPlace(installDir: string, payloadDir: string, tag: string, io: SwapIo = {}): void {
+  const doRename = io.rename ?? renameWithRetry;
   const backup = `${installDir}.old`;
   recoverStaleBackup(backup, installDir);
   mkdirSync(backup);
   const movedOut: string[] = [];
+
+  /** Move everything staged in the backup back; returns names that failed. */
+  const restoreFromBackup = (): string[] => {
+    const failures: string[] = [];
+    for (const entry of movedOut) {
+      try {
+        doRename(join(backup, entry), join(installDir, entry));
+      } catch {
+        failures.push(entry);
+      }
+    }
+    return failures;
+  };
+
+  // Phase 1: stage the current installation aside. If ANY move fails, put
+  // every already-moved entry back before surfacing the error.
   for (const entry of readdirSync(installDir)) {
-    renameSync(join(installDir, entry), join(backup, entry));
+    try {
+      doRename(join(installDir, entry), join(backup, entry));
+    } catch (moveErr) {
+      const failures = restoreFromBackup();
+      if (failures.length === 0) rmSync(backup, { recursive: true, force: true });
+      throw new Error(
+        `cannot stage '${entry}' for replacement (${reasonOf(moveErr)})` +
+          (failures.length > 0
+            ? `; ROLLBACK INCOMPLETE: ${failures.length} entr(y|ies) remain in ${backup} - move them back manually`
+            : '; previous installation is intact'),
+      );
+    }
     movedOut.push(entry);
   }
+
+  // Phase 2: copy + verify + mark. Any failure wipes the partial copy and
+  // restores the previous installation from the backup.
   try {
-    cpSync(payloadDir, installDir, { recursive: true });
+    copyPayloadVerified(payloadDir, installDir, io.copyRaw ?? ((from, to) => cpSync(from, to, { recursive: true })));
     writeDeployedVersion(installDir, tag);
   } catch (err) {
     for (const entry of readdirSync(installDir)) {
-      rmSync(join(installDir, entry), { recursive: true, force: true });
+      try {
+        rmSync(join(installDir, entry), { recursive: true, force: true });
+      } catch {
+        // best effort - a locked leftover surfaces as a restore failure below
+      }
     }
-    for (const entry of movedOut) renameSync(join(backup, entry), join(installDir, entry));
-    rmSync(backup, { recursive: true, force: true });
-    throw err;
+    const failures = restoreFromBackup();
+    if (failures.length === 0) {
+      try {
+        rmSync(backup, { recursive: true, force: true });
+      } catch {
+        // leftover backup is cosmetic; recoverStaleBackup clears it next time
+      }
+      throw err;
+    }
+    throw new Error(
+      `${reasonOf(err)}; ROLLBACK INCOMPLETE: ${failures.length} previous file(s)/folder(s) could not be moved back ` +
+        `(e.g. ${failures[0]}) - they are preserved in ${backup}; close whatever locks them and move them back`,
+    );
   }
+
+  // Success: drop the backup. A locked leftover is cosmetic - the next
+  // update's recoverStaleBackup drops it. Never fail a finished swap over it.
   rmSync(backup, { recursive: true, force: true });
 }
 

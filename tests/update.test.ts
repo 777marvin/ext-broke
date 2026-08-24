@@ -7,12 +7,14 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import {
   closeSync,
+  cpSync,
   ftruncateSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
   existsSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -374,6 +376,85 @@ describe('swapInstallDirectory / replaceInstallationInPlace', () => {
     assert.equal(existsSync(join(install, 'only-old.txt')), false); // full replacement
     assert.equal(existsSync(`${install}.old`), false);
     assert.equal(readFileSync(join(install, '.deployed-version'), 'utf-8').trim(), 'v8.8.8');
+  });
+
+  it('rolls back completely when staging hits an unmovable entry', () => {
+    const install = join(tmp, `lockmove-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(install);
+    for (const name of ['a-old.txt', 'b-old.txt', 'c-old.txt']) {
+      writeFileSync(join(install, name), 'old');
+    }
+    const payload = join(tmp, `lockmove-payload-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(payload);
+    writeFileSync(join(payload, 'new.txt'), 'new');
+
+    // The historical corruption: entry #2 cannot be renamed (transient lock)
+    // and the old code aborted mid-loop, stranding the leading entries in the
+    // backup. The hardened version must put everything back.
+    let calls = 0;
+    assert.throws(
+      () =>
+        replaceInstallationInPlace(install, payload, 'v7.7.7', {
+          rename: (from, to) => {
+            calls += 1;
+            if (calls === 2) throw new Error('EPERM: locked by another process');
+            renameSync(from, to);
+          },
+        }),
+        /cannot stage 'b-old\.txt'.*previous installation is intact/s,
+    );
+    for (const name of ['a-old.txt', 'b-old.txt', 'c-old.txt']) {
+      assert.equal(readFileSync(join(install, name), 'utf-8'), 'old', name);
+    }
+    assert.equal(existsSync(join(install, 'new.txt')), false); // nothing copied
+    assert.equal(existsSync(`${install}.old`), false); // backup fully folded back
+  });
+
+  it('detects an incomplete in-place copy and restores the previous installation', () => {
+    const install = join(tmp, `partial-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(install);
+    writeFileSync(join(install, 'keep.txt'), 'keep');
+    const payload = join(tmp, `partial-payload-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(payload);
+    writeFileSync(join(payload, 'new.txt'), 'new');
+
+    // Simulate a copier dying part-way: some files land, one goes missing.
+    assert.throws(
+      () =>
+        replaceInstallationInPlace(install, payload, 'v6.6.6', {
+          copyRaw: (from, to) => {
+            cpSync(from, to, { recursive: true });
+            rmSync(join(to, 'new.txt'), { force: true });
+          },
+        }),
+        /payload copy incomplete/,
+    );
+    assert.equal(readFileSync(join(install, 'keep.txt'), 'utf-8'), 'keep'); // restored
+    assert.equal(existsSync(join(install, 'new.txt')), false); // partial copy wiped
+    assert.equal(existsSync(`${install}.old`), false);
+  });
+
+  it('verifies the rename-swap copy and restores the backup on mismatch', () => {
+    const install = join(tmp, `swapverify-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(install);
+    writeFileSync(join(install, 'old.txt'), 'old');
+    const payload = join(tmp, `swapverify-payload-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(payload);
+    writeFileSync(join(payload, 'new.txt'), 'new');
+
+    assert.throws(
+      () =>
+        swapInstallDirectory(install, payload, 'v5.5.5', {
+          copyRaw: (from, to) => {
+            cpSync(from, to, { recursive: true });
+            rmSync(join(to, 'new.txt'), { force: true });
+          },
+        }),
+        /payload copy incomplete/,
+    );
+    assert.equal(readFileSync(join(install, 'old.txt'), 'utf-8'), 'old'); // backup moved back
+    assert.equal(existsSync(join(install, 'new.txt')), false);
+    assert.equal(existsSync(`${install}.old`), false);
   });
 });
 
