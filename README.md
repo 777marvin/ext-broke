@@ -119,7 +119,10 @@ Extensions are hot-reloaded by AiderDesk: no restart needed.
 The update downloads the tagged release from GitHub, preserves your
 `config.json`, stats/measure ledgers, the errors archive and
 `node_modules`, refreshes dependencies when the lockfile changed, and
-swaps the installation atomically (automatic restore if anything fails).
+swaps the installation atomically: transient file locks are retried,
+every payload file is verified after the copy before the update
+declares success, and any failure rolls back to the previous
+installation completely.
 Unlike a first install (hot-reloaded above), an update needs an AiderDesk
 restart: the running instance keeps its previously loaded code until then.
 `scripts/deploy.ps1` stays useful for first installs on a fresh machine and
@@ -128,7 +131,9 @@ for testing uncommitted changes during development; inside a git checkout
 
 ## Requirements
 
-- AiderDesk ≥ 0.77, Node.js ≥ 22
+- AiderDesk ≥ 0.77 (≥ 0.80 recommended: broke then registers its config
+  watcher via `context.addDisposable()`, so disabling or uninstalling the
+  extension releases its directory handle automatically), Node.js ≥ 22
 - Optional: [Ollama](https://ollama.com) running (`ollama pull
   qwen2.5-coder:3b`) for the free local summarizer. broke degrades
   gracefully when Ollama is offline: requests fail fast (at most 60 s per
@@ -282,6 +287,7 @@ npm run typecheck    # tsc --noEmit
 npm test             # node --test (tsx), pure-function tests
 npm run bench        # deterministic reference benchmark
 npm run measure      # analyze measure.jsonl (per-run real-session records)
+npm run validate:ui  # validate the JSX UI components (syntax + types)
 ```
 
 Conventional commits, Keep a Changelog, semantic versioning.
