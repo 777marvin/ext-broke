@@ -456,6 +456,88 @@ describe('swapInstallDirectory / replaceInstallationInPlace', () => {
     assert.equal(existsSync(join(install, 'new.txt')), false);
     assert.equal(existsSync(`${install}.old`), false);
   });
+
+  it('merges over an unmovable directory instead of failing (payload covers it)', () => {
+    const install = join(tmp, `mergedir-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(install);
+    mkdirSync(join(install, 'docs'));
+    writeFileSync(join(install, 'docs', 'shared.md'), 'old shared');
+    writeFileSync(join(install, 'docs', 'stale-only.txt'), 'stale');
+    writeFileSync(join(install, 'index.ts'), '// old');
+    const payload = join(tmp, `mergedir-payload-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(payload);
+    mkdirSync(join(payload, 'docs'));
+    writeFileSync(join(payload, 'docs', 'shared.md'), 'new shared');
+    writeFileSync(join(payload, 'index.ts'), '// new');
+
+    replaceInstallationInPlace(install, payload, 'v7.7.7', {
+      rename: (from, to) => {
+        if (from.endsWith('docs')) throw new Error('EPERM: operation not permitted, rename');
+        renameSync(from, to);
+      },
+    });
+
+    assert.equal(readFileSync(join(install, 'docs', 'shared.md'), 'utf-8'), 'new shared'); // merged
+    assert.equal(existsSync(join(install, 'docs', 'stale-only.txt')), false); // pruned
+    assert.equal(readFileSync(join(install, 'index.ts'), 'utf-8'), '// new'); // swapped
+    assert.equal(readFileSync(join(install, '.deployed-version'), 'utf-8').trim(), 'v7.7.7');
+    assert.equal(existsSync(`${install}.old`), false);
+  });
+
+  it('overwrites an unmovable file when the payload covers it', () => {
+    const install = join(tmp, `mergefile-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(install);
+    writeFileSync(join(install, 'locked.ts'), '// old code');
+    const payload = join(tmp, `mergefile-payload-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(payload);
+    writeFileSync(join(payload, 'locked.ts'), '// new code');
+
+    replaceInstallationInPlace(install, payload, 'v6.6.6', {
+      rename: (from, to) => {
+        if (from.endsWith('locked.ts')) throw new Error('EPERM: operation not permitted, rename');
+        renameSync(from, to);
+      },
+    });
+
+    assert.equal(readFileSync(join(install, 'locked.ts'), 'utf-8'), '// new code');
+    assert.equal(existsSync(`${install}.old`), false);
+  });
+
+  it('restores merged entries from their snapshot when the copy fails', () => {
+    const install = join(tmp, `mergerollback-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(install);
+    mkdirSync(join(install, 'docs'));
+    writeFileSync(join(install, 'docs', 'old.md'), 'keep me');
+    writeFileSync(join(install, 'other.txt'), 'old other');
+    const payload = join(tmp, `mergerollback-payload-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(payload);
+    mkdirSync(join(payload, 'docs'));
+    writeFileSync(join(payload, 'docs', 'old.md'), 'new md');
+    writeFileSync(join(payload, 'other.txt'), 'new other');
+
+    let copyCalls = 0;
+    assert.throws(
+      () =>
+        replaceInstallationInPlace(install, payload, 'v5.5.5', {
+          rename: (from, to) => {
+            if (from.endsWith('docs')) throw new Error('EPERM: locked by host view');
+            renameSync(from, to);
+          },
+          copyRaw: (from, to) => {
+            copyCalls += 1;
+            if (copyCalls === 1) throw new Error('copy died part-way');
+            cpSync(from, to, { recursive: true });
+          },
+        }),
+      /copy died/,
+    );
+
+    // Complete rollback: staged entry renamed back, merged entry rebuilt from
+    // its backup snapshot.
+    assert.equal(readFileSync(join(install, 'other.txt'), 'utf-8'), 'old other');
+    assert.equal(readFileSync(join(install, 'docs', 'old.md'), 'utf-8'), 'keep me');
+    assert.equal(existsSync(`${install}.old`), false);
+  });
 });
 
 describe('errors/ archive preserve cap', () => {
