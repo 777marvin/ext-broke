@@ -1,7 +1,7 @@
 # Project Overview
 
-*Snapshot: v0.6.2 (2026-08-24), review rounds F1-F24 and XF1-XF16 closed,
-suite 207/207 green*
+*Snapshot: v0.6.3 (2026-08-24), review rounds F1-F24 and XF1-XF16 closed,
+suite 210/210 green*
 
 ## What broke is
 
@@ -27,7 +27,7 @@ applies to the input of each model call only.
 | `errors.ts` | 475 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir, retention sweep, archive on/off, XF9/XF10); `isCommandTool` classification |
 | `config.ts` | 243 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` toggle |
 | `commands.ts` | 373 | `/broke` parser + all subcommands (status, stats with measured-reduction headline, measure, reset, selftest, update, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
-| `update.ts` | 630 | Self-update (`/broke update`): resolves the latest tagged GitHub release (`releases/latest`, fallback highest-semver tag), strict `vMAJOR.MINOR.PATCH` tag validation before any URL use, tarball download with timeouts + size cap, system-`tar` extraction, runtime-state preservation (config.json, stats/measure ledgers incl. rotation files, errors/ ≤ 100 MB, node_modules), automatic `npm ci --omit=dev` on lockfile change, atomic swap with rollback plus in-place replacement when a Windows handle pins the directory; rename retries for transient locks, byte-size manifest verification of the copied payload before success is declared (.deployed-version is written only then), complete rollback on every failure path, non-fatal leftover-backup cleanup; git-checkout guard, concurrency lock; all I/O injectable for hermetic tests |
+| `update.ts` | 719 | Self-update (`/broke update`): resolves the latest tagged GitHub release (`releases/latest`, fallback highest-semver tag), strict `vMAJOR.MINOR.PATCH` tag validation before any URL use, tarball download with timeouts + size cap, system-`tar` extraction, runtime-state preservation (config.json, stats/measure ledgers incl. rotation files, errors/ ≤ 100 MB, node_modules), automatic `npm ci --omit=dev` on lockfile change, atomic swap with rollback plus in-place replacement when a Windows handle pins the directory; rename retries for transient locks (~4 s staggered), merge-over fallback for persistently locked entries (snapshot by copy, merged over, pruned back to payload contents), byte-size manifest verification of the copied payload before success is declared (.deployed-version is written only then), complete rollback on every failure path, non-fatal leftover-backup cleanup; git-checkout guard, concurrency lock; all I/O injectable for hermetic tests |
 | `tokens.ts` | 385 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
 | `local.ts` | 135 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
 | `pricing.ts` | 91 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
@@ -44,7 +44,7 @@ applies to the input of each model call only.
 | `tests/local.test.ts` | 137 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts |
 | `tests/pricing.test.ts` | 212 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats persistence privacy, stats loader TTL, task-stats reset |
 | `tests/selftest.test.ts` | 56 | Unit tests: synthetic-call-id linking, dedupe really applied, honest per-pass labels |
-| `tests/update.test.ts` | 486 | Unit tests: self-update flow with injected deps - release resolution + semver fallback, tag validation, happy-path swap with state preservation, check mode, explicit downgrade/reinstall, extract/npm failure aborts, git-checkout guard, concurrency lock, stale-backup recovery, in-place fallback, errors-archive size cap (sparse file), mid-staging rename-lock rollback, partial-copy detection via the manifest check, swap manifest-mismatch rollback |
+| `tests/update.test.ts` | 568 | Unit tests: self-update flow with injected deps - release resolution + semver fallback, tag validation, happy-path swap with state preservation, check mode, explicit downgrade/reinstall, extract/npm failure aborts, git-checkout guard, concurrency lock, stale-backup recovery, in-place fallback, errors-archive size cap (sparse file), mid-staging rename-lock rollback, partial-copy detection via the manifest check, swap manifest-mismatch rollback, merge-over fallback for unmovable directories/files with pruning, merged-entry snapshot rollback |
 
 ## How the pipeline works
 

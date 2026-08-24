@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-08-24
+
+### Fixed
+
+- **`/broke update` now survives persistently locked entries.** When the
+  in-place fallback could not move an entry aside (for example `docs/`
+  held open by a host view reading the extension's markdown), the update
+  aborted - even though the payload covers the same name. Such entries
+  are now secured into the backup by copy (reads survive locks that
+  block renames), left in place and merged over; full-replacement
+  semantics are preserved by pruning files the payload no longer
+  contains. Entries absent from the payload still abort with a complete
+  rollback as before. The rename retry budget grew from ~0.6 s to ~4 s
+  of staggered waits for genuinely transient locks.
+
 ## [0.6.2] - 2026-08-24
 
 ### Fixed
