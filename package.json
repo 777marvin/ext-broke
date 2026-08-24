@@ -7,7 +7,8 @@
     "test": "tsx --test \"tests/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "bench": "tsx scripts/bench.ts",
-    "measure": "tsx scripts/measure.ts"
+    "measure": "tsx scripts/measure.ts",
+    "validate:ui": "node scripts/validate-extension-ui.mjs ConfigComponent.jsx StatusBadge.jsx"
   },
   "keywords": [
     "aiderdesk",
@@ -26,9 +27,12 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@aiderdesk/extensions": "^0.30.0",
+    "@aiderdesk/extensions": "^0.31.0",
     "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "sucrase": "^3.35.0",
     "tsx": "^4.23.11",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "typescript5": "npm:typescript@^5.9.3"
   }
 }
