@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-08-24
+
+### Fixed
+
+- **`/broke update` can no longer truncate the installation.** When the
+  install directory was pinned and the in-place fallback ran, one
+  transiently locked file (virus scanner or indexer, typically right
+  after the dependency refresh) aborted the staging loop mid-way: part
+  of the previous installation stayed stranded in `broke.old`, the rest
+  was left outdated, and broke could not load after the next AiderDesk
+  restart. The replacement now retries transient locks, rolls back
+  completely when anything fails, verifies that every payload file
+  actually arrived (byte-size check) before declaring success, and
+  treats a locked leftover backup as cosmetic instead of failing an
+  otherwise finished update. Regression tests cover the mid-staging
+  lock abort, the partial-copy detection and the rename-swap mismatch.
+- **The config watcher releases its directory handle when the extension
+  is disabled or uninstalled** on AiderDesk >= 0.80 via
+  `context.addDisposable()`. Older hosts keep using the existing
+  `onUnload` cleanup unchanged.
+
+### Added
+
+- CI job validating the JSX UI components with the official
+  `validate-extension-ui.mjs` script (vendored from AiderDesk 0.80.0),
+  so template breakage fails the build before a release ships.
+
+### Changed
+
+- Extension API types bumped to `@aiderdesk/extensions` ^0.31.0. The
+  release is additive (TLS policy registrar, `opencode-go` provider,
+  disposable resource management); no breaking changes for this
+  extension.
+
 ## [0.6.1] - 2026-08-24
 
 ### Fixed
