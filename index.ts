@@ -139,6 +139,11 @@ export default class Broke implements Extension {
     }
     // Reflect config changes made outside the settings dialog immediately.
     this.startConfigWatcher();
+    // API >= AiderDesk 0.80 (@aiderdesk/extensions 0.31): the host runs this
+    // cleanup itself on unload/disable, so the watcher's directory handle no
+    // longer leaks when the extension is toggled off or uninstalled. Optional
+    // chaining keeps older hosts (plain onUnload) working unchanged.
+    context.addDisposable?.(() => this.closeConfigWatcher());
   }
 
   /**
