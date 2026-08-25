@@ -111,6 +111,10 @@ describe('parseBrokeCommand', () => {
     expectUnknown(['bogus']);
   });
 
+  it('parses why', () => {
+    assert.deepEqual(parseBrokeCommand(['why']), { kind: 'why' });
+  });
+
   it('parses measure and measure on|off', () => {
     assert.deepEqual(parseBrokeCommand(['measure']), { kind: 'measure' });
     assert.deepEqual(parseBrokeCommand(['measure', 'on']), { kind: 'measure-toggle', enabled: true });

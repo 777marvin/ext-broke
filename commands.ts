@@ -34,6 +34,7 @@ Usage: /broke <subcommand>
                                 AiderDesk model for cloud summaries ('' = task model)
   summarize after <turns>       summarize only turns older than n user turns (default ${d.summarize.afterTurns})
   stats                         per-pass saved chars/tokens for this task
+  why                           live gate-by-gate verdict: why does this task save 0 (or not)?
   measure                       summarize the per-run measurement ledger (measure.jsonl)
   measure on | off              record every compression run to measure.jsonl (default: ${d.stats.measure ? 'on' : 'off'})
   reset                         clear this task's stats
@@ -67,6 +68,7 @@ export type BrokeCommand =
   | { kind: 'summarize-cloud'; modelId: string }
   | { kind: 'summarize-after'; turns: number }
   | { kind: 'stats' }
+  | { kind: 'why' }
   | { kind: 'measure' }
   | { kind: 'measure-toggle'; enabled: boolean }
   | { kind: 'reset' }
@@ -161,6 +163,8 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
     }
     case 'stats':
       return { kind: 'stats' };
+    case 'why':
+      return { kind: 'why' };
     case 'measure': {
       const opt = rest[0];
       if (opt === 'on') return { kind: 'measure-toggle', enabled: true };

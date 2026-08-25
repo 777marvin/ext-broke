@@ -2,6 +2,7 @@ import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type {
   CommandDefinition,
+  ContextMessage,
   Extension,
   ExtensionContext,
   OptimizeMessagesEvent,
@@ -11,6 +12,8 @@ import type {
 } from '@aiderdesk/extensions';
 import { applyBrokeCommand, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand } from './commands';
 import {
+  ACTIVE_TURN_TAIL,
+  compressibleRange,
   compressMessages,
   createCompressState,
   maskSecrets,
@@ -35,6 +38,7 @@ import {
   persistStats,
   summarizeRunRecords,
   totalSavedChars,
+  messagesChars,
   type StatsLoader,
   type TaskStats,
 } from './tokens';
@@ -110,6 +114,14 @@ export default class Broke implements Extension {
   /** Tasks whose summarize pass is auto-disabled after repeated failures. */
   private readonly summarizeDisabled = new Map<string, true>();
   /**
+   * Last optimize-run observation per task - recorded for EVERY real
+   * pipeline run, including no-op runs where nothing was compressed. This
+   * is what lets the badge and /broke why explain an honest zero ("input
+   * 31k of 60k chars") instead of leaving the user to guess whether the
+   * extension is broken or simply idle.
+   */
+  private readonly lastObservation = new Map<string, { at: number; inputChars: number }>();
+  /**
    * Reentry guard (per task): the cloud summarizer calls task.generateText,
    * and that call can fire onOptimizeMessages again on the same extension
    * instance. Without the guard the summarizer's own input would be
@@ -177,7 +189,21 @@ export default class Broke implements Extension {
     this.configWatcher = null;
   }
 
+  /**
+   * Persist every task's in-memory stats NOW. STATS_PERSIST_MIN_MS throttles
+   * writes during normal operation; without this flush a restart would lose
+   * up to that throttle window of runs per task. Best effort like every
+   * ledger write.
+   */
+  private flushStats(): void {
+    for (const [taskId, stats] of this.statsByTask) {
+      persistStats(stats);
+      this.lastPersistAt.set(taskId, Date.now());
+    }
+  }
+
   async onUnload(): Promise<void> {
+    this.flushStats();
     this.configWatcher?.close();
     this.configWatcher = null;
   }
@@ -224,6 +250,9 @@ export default class Broke implements Extension {
       // cached afterwards; the badge warms it on task open).
       const price = report.touched ? await resolveTaskModelPrice(context) : null;
       this.recordReport(taskId, report, price);
+      // Observe every real pipeline run - touched or not. No-op runs are
+      // still facts the UI needs: they are how a zero badge explains itself.
+      boundedMapSet(this.lastObservation, taskId, { at: Date.now(), inputChars: report.totalCharsBefore });
       if (report.touched) {
         this.refreshUI();
       }
@@ -433,6 +462,9 @@ export default class Broke implements Extension {
               const price = await resolveTaskModelPrice(context);
               return log(formatStats(config, ext.statsFor(context), price));
             }
+            case 'why': {
+              return log(await ext.explainWhy(context));
+            }
             case 'reset': {
               const taskId = context.getTaskContext()?.data.id;
               if (taskId) {
@@ -499,6 +531,65 @@ export default class Broke implements Extension {
     ];
   }
 
+  /**
+   * /broke why - measure the live task context and walk through every gate.
+   * Most "the badge is broken" reports are honest zeros: the input never
+   * crossed maxContextChars, or everything oversized sits in the protected
+   * tail. This makes those cases explicit instead of leaving them silent.
+   */
+  private async explainWhy(context: ExtensionContext): Promise<string> {
+    const config = getConfig();
+    const task = context.getTaskContext();
+    if (!task) return 'broke why - run this inside a task';
+    let messages: ContextMessage[];
+    try {
+      messages = (await task.getContextMessages()) ?? [];
+    } catch (err) {
+      return `broke why - could not read context messages (${err instanceof Error ? err.message : String(err)})`;
+    }
+    const totalChars = messagesChars(messages);
+    const userTurns = messages.filter((m) => m.role === 'user').length;
+    const { start, end } = compressibleRange(messages, config.protectedTurns);
+    const hasOldContent = start < end;
+    const regionChars = messagesChars(messages.slice(start, end));
+    const stats = this.statsFor(context);
+    const observation = this.lastObservation.get(task.data.id);
+
+    const lines = [
+      'broke why - gate-by-gate verdict for this task',
+      '  scope: conversation messages ONLY - system prompt & tool schemas are never measured or compressed',
+      `  pipeline: ${config.enabled ? 'enabled' : 'DISABLED (/broke on)'} | level: ${config.level} | threshold: ${config.maxContextChars.toLocaleString('en-US')} chars (≈ ${estimateTokens(config.maxContextChars).toLocaleString('en-US')} tokens est.)`,
+      `  current context: ${messages.length} message(s), ${totalChars.toLocaleString('en-US')} chars (≈ ${estimateTokens(totalChars).toLocaleString('en-US')} tokens), ${userTurns} user turn(s)`,
+      userTurns < config.protectedTurns
+        ? `  protection: only ${userTurns} turn(s) -> ACTIVE_TURN_TAIL keeps the last ${ACTIVE_TURN_TAIL} message(s) untouched`
+        : `  protection: last ${config.protectedTurns} user turn(s) kept untouched`,
+      hasOldContent
+        ? `  compressible region: msgs #${start}..#${end} (${regionChars.toLocaleString('en-US')} chars)`
+        : '  compressible region: none - everything is protected',
+    ];
+    if (!config.enabled) {
+      lines.push('  verdict: pipeline disabled - nothing will be compressed or recorded (/broke on).');
+    } else if (messages.length < 4) {
+      lines.push('  verdict: conversation too small to process (< 4 messages) - nothing happens by design.');
+    } else if (hasOldContent && totalChars > config.maxContextChars) {
+      lines.push(
+        `  verdict: ABOVE threshold with compressible history - lossy passes engage on the next model call. Savings depend on items exceeding per-item limits (truncate: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB, tool inputs > ${config.truncate.maxInputChars.toLocaleString('en-US')} chars${config.level === 'summarize' ? `, summarize regions ≥ ${config.summarize.minChars.toLocaleString('en-US')} chars` : ''}).`,
+      );
+    } else if (!hasOldContent && totalChars > config.maxContextChars) {
+      lines.push('  verdict: above threshold but everything is protected - wait for more turns/messages or lower /broke protect.');
+    } else {
+      lines.push(
+        `  verdict: input is ${(config.maxContextChars - totalChars).toLocaleString('en-US')} chars below the threshold - broke stays idle (an honest 0 on the badge). Engage earlier with /broke maxchars <n>.`,
+      );
+    }
+    lines.push(
+      observation
+        ? `  last optimize run: ${Math.max(1, Math.round((Date.now() - observation.at) / 1000))}s ago, input ${observation.inputChars.toLocaleString('en-US')} chars${stats ? `, ${stats.passes} recorded pass(es)` : ''}`
+        : '  last optimize run: none since extension load - no model call observed yet',
+    );
+    return lines.join('\n');
+  }
+
   private statsFor(context: ExtensionContext): TaskStats | null {
     const taskId = context.getTaskContext()?.data.id;
     if (!taskId) return null;
@@ -526,7 +617,9 @@ export default class Broke implements Extension {
   async getUIExtensionData(componentId: string, context: ExtensionContext): Promise<unknown> {
     if (componentId !== STATUS_BADGE_ID) return null;
     const config = getConfig();
+    const taskId = context.getTaskContext()?.data.id ?? '';
     const stats = this.statsFor(context);
+    const observation = this.lastObservation.get(taskId) ?? null;
     const totalTokens = stats ? estimateTokens(totalSavedChars(stats)) : 0;
     const ollama = await this.cachedOllamaStatus(config);
     // Money is always computed from the price of the task's CURRENT model.
@@ -544,6 +637,18 @@ export default class Broke implements Extension {
         modelLabel: price ? priceLabel(price) : null,
       },
       passes: stats?.passes ?? 0,
+      lastRunAt: stats?.lastRunAt ?? null,
+      maxContextChars: config.maxContextChars,
+      // What the last optimize run saw - including no-op runs. A zero badge
+      // can then say "31k of 60k chars" instead of a bare, suspicious 0.
+      observation: observation
+        ? {
+            at: observation.at,
+            inputChars: observation.inputChars,
+            inputTokens: estimateTokens(observation.inputChars),
+            belowThreshold: observation.inputChars <= config.maxContextChars,
+          }
+        : null,
       savedTokens: {
         structural: stats ? estimateTokens(stats.savedChars.structural) : 0,
         error: stats ? estimateTokens(stats.savedChars.error) : 0,
@@ -552,7 +657,7 @@ export default class Broke implements Extension {
       },
       totalSavedTokens: totalTokens,
       summarizeFailures: stats?.summarizeFailures ?? 0,
-      summarizeDisabled: this.summarizeDisabled.get(context.getTaskContext()?.data.id ?? '') === true,
+      summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
       inTask: !!context.getTaskContext(),
       now: Date.now(),
     };

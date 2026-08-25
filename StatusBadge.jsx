@@ -20,6 +20,14 @@
   const ollama = data?.ollama ?? null;
   const cost = data?.cost ?? { savedUsd: null, modelLabel: null };
   const disabled = data?.summarizeDisabled ?? false;
+  // Idle transparency (XF17): when nothing was ever compressed for this
+  // task, show WHY instead of a bare suspicious 0 - the last optimize run's
+  // input size vs the configured threshold.
+  const maxCtx = data?.maxContextChars ?? 0;
+  const passes = data?.passes ?? 0;
+  const obs = data?.observation ?? null;
+  const neverSaved = total === 0 && passes === 0;
+  const k = (n) => `${Math.round(n / 1000)}k`;
 
   const backendLabel = configured === 'local' ? 'local (Ollama)' : configured === 'cloud' ? 'cloud' : 'off';
   const usedLabel = used === 'local' ? 'local (Ollama)' : used === 'cloud' ? 'cloud' : 'never yet';
@@ -41,7 +49,11 @@
       : '';
   const title = [
     `broke - level: ${level}`,
+    `scope: conversation messages only (system prompt & tool schemas are never compressed)`,
     `saved ≈ ${total.toLocaleString('en-US')} input tokens${money} (chars/4 estimate)`,
+    neverSaved && obs && obs.inputChars > 0 && maxCtx > 0
+      ? `idle: last optimize run saw ${obs.inputChars.toLocaleString('en-US')} of ${maxCtx.toLocaleString('en-US')} chars - below threshold, nothing to compress yet (/broke why for details)`
+      : '',
     cost.modelLabel ? `  at current task model: ${cost.modelLabel}` : '',
     `  structural: ${(s.structural ?? 0).toLocaleString('en-US')} | error: ${(s.error ?? 0).toLocaleString('en-US')} | truncate: ${(s.truncate ?? 0).toLocaleString('en-US')} | summarize: ${(s.summarize ?? 0).toLocaleString('en-US')}`,
     `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` - ${failed} failure(s)` : ''}${disabled ? ' - auto-disabled after repeated failures (/broke reset re-enables)' : ''}`,
@@ -67,6 +79,11 @@
     >
       <span>💸</span>
       <span>{total.toLocaleString('en-US')}</span>
+      {neverSaved && obs && obs.inputChars > 0 && maxCtx > 0 ? (
+        <span style={{ opacity: 0.7 }}>
+          · {k(obs.inputChars)}/{k(maxCtx)}
+        </span>
+      ) : null}
       {level === 'summarize' && configured !== 'none' ? (
         <span title="summarizer backend">{configured === 'local' ? '🖥' : '☁'}{ollamaDown ? '⚠' : null}</span>
       ) : null}

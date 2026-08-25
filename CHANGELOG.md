@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Idle transparency for honest zeros.** The 💸 badge now shows why a task
+  has saved nothing yet: with no recorded passes but at least one observed
+  pipeline run, it renders e.g. `💸 0 · 31k/60k` (last run's input size vs
+  the configured threshold) plus an explanatory tooltip. Includes a scope
+  note: broke only measures/compresses conversation messages - system
+  prompt & tool schemas are never touched.
+- **`/broke why`.** Measures the live task context and walks through every
+  gate (enabled/level/threshold, turns & protection, compressible region,
+  per-item limits) and ends with an explicit verdict - so "the badge shows
+  0" becomes diagnosable per task instead of staying silent.
+
+### Fixed
+
+- **Stats flush on unload.** In-memory stats are persisted when the
+  extension unloads; before, a restart lost up to one persist-throttle
+  window (60 s) of compression runs per task.
+
 ## [0.6.3] - 2026-08-24
 
 ### Fixed

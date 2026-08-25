@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import type { ContextMessage, ExtensionContext, OptimizeMessagesEvent, ToolFinishedEvent } from '@aiderdesk/extensions';
 // Type-only: erased at compile time, so the runtime module graph is unaffected.
 import type { Config } from '../config';
+import type { TaskStats } from '../tokens';
 
 const tmp = mkdtempSync(join(tmpdir(), 'broke-index-'));
 process.env.BROKE_CONFIG_PATH = join(tmp, 'config.json');
@@ -34,12 +35,13 @@ let saveConfig: (typeof import('../config'))['saveConfig'];
 let loadRunRecords: (typeof import('../tokens'))['loadRunRecords'];
 let loadTaskStats: (typeof import('../tokens'))['loadTaskStats'];
 let messagesChars: (typeof import('../tokens'))['messagesChars'];
+let emptyStats: (typeof import('../tokens'))['emptyStats'];
 let buildSyntheticMessages: (typeof import('../selftest'))['buildSyntheticMessages'];
 
 before(async () => {
   ({ default: Broke } = await import('../index'));
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
-  ({ loadRunRecords, loadTaskStats, messagesChars } = await import('../tokens'));
+  ({ loadRunRecords, loadTaskStats, messagesChars, emptyStats } = await import('../tokens'));
   ({ buildSyntheticMessages } = await import('../selftest'));
 });
 
@@ -55,11 +57,16 @@ interface FakeHostState {
 }
 
 /** A task/context pair that satisfies the parts of the API broke actually uses. */
-function makeHost(taskId: string, summarizeImpl: () => string | Promise<string>): { context: ExtensionContext; state: FakeHostState } {
+function makeHost(
+  taskId: string,
+  summarizeImpl: () => string | Promise<string>,
+  contextMessages: unknown[] = [],
+): { context: ExtensionContext; state: FakeHostState } {
   const state: FakeHostState = { summarizeCalls: 0, generateTextCalls: [], logLines: [], uiRefreshCalls: 0 };
   const task = {
     data: { id: taskId, provider: 'openai', model: 'gpt-4o', mainModel: 'gpt-4o' },
     getTaskAgentProfile: async () => ({ provider: 'openai', model: 'gpt-4o' }),
+    getContextMessages: async () => contextMessages,
     generateText: async (modelId: string) => {
       state.summarizeCalls += 1;
       state.generateTextCalls.push(modelId);
@@ -312,5 +319,70 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.equal(state.summarizeCalls, 0);
     assert.equal(loadTaskStats('task-off'), null, 'no stats for a disabled run');
     assert.equal(loadRunRecords().length, runsBefore, 'no measure record for a disabled run');
+  });
+
+  it('records an idle observation on no-op runs so a zero badge can explain itself', async () => {
+    writeConfig();
+    const ext = new Broke();
+    const tiny = [
+      { id: 'm1', role: 'user', content: 'first short question' },
+      { id: 'a1', role: 'assistant', content: 'first short answer' },
+      { id: 'm2', role: 'user', content: 'second short question' },
+      { id: 'a2', role: 'assistant', content: 'second short answer' },
+    ] as unknown as ContextMessage[];
+    const { context } = makeHost('task-idle', () => 'stub', tiny);
+
+    await ext.onOptimizeMessages({ originalMessages: tiny, optimizedMessages: tiny }, context);
+    // Nothing compressible: no stats, no measure record - by design.
+    assert.equal(loadTaskStats('task-idle'), null, 'no-op runs stay unrecorded by design');
+
+    const data = (await ext.getUIExtensionData('broke-status', context)) as {
+      passes: number;
+      maxContextChars: number;
+      observation: { at: number; inputChars: number; inputTokens: number; belowThreshold: boolean } | null;
+    };
+    assert.equal(data.passes, 0);
+    assert.ok(data.observation, 'the no-op run must still be observable');
+    assert.ok(data.observation.inputChars > 0);
+    assert.equal(data.observation.inputTokens, Math.round(data.observation.inputChars / 4));
+    assert.equal(data.observation.belowThreshold, true, 'tiny input must read as below threshold');
+    assert.ok(data.maxContextChars > 0);
+  });
+
+  it('/broke why reports the live gate state for an honest zero', async () => {
+    writeConfig({ level: 'truncate' });
+    const ext = new Broke();
+    const tiny = [
+      { id: 'm1', role: 'user', content: 'first short question' },
+      { id: 'a1', role: 'assistant', content: 'first short answer' },
+      { id: 'm2', role: 'user', content: 'second short question' },
+      { id: 'a2', role: 'assistant', content: 'second short answer' },
+    ] as unknown as ContextMessage[];
+    const { context, state } = makeHost('task-why', () => 'stub', tiny);
+
+    const cmd = ext.getCommands(context)[0];
+    await cmd.execute(['why'], context);
+    const out = state.logLines.map((l) => l.line).join('\n');
+    assert.ok(out.includes('broke why'), 'the why report must be logged into the task');
+    assert.match(out, /below the threshold/);
+    assert.match(out, /scope: conversation messages ONLY/);
+    assert.match(out, /last optimize run/);
+  });
+
+  it('flushes in-memory stats on unload so a restart loses nothing', async () => {
+    writeConfig();
+    const ext = new Broke();
+    // Simulate a throttled-away tail: stats exist in memory but were never
+    // persisted (in production STATS_PERSIST_MIN_MS delays the write).
+    const stats: TaskStats = emptyStats('task-flush');
+    stats.passes = 3;
+    stats.savedChars.truncate = 1234;
+    (ext as unknown as { statsByTask: Map<string, TaskStats> }).statsByTask.set('task-flush', stats);
+
+    await ext.onUnload();
+    const loaded = loadTaskStats('task-flush');
+    assert.ok(loaded, 'unload must persist in-memory stats');
+    assert.equal(loaded.passes, 3);
+    assert.equal(loaded.savedChars.truncate, 1234);
   });
 });

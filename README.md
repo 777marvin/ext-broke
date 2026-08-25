@@ -152,10 +152,18 @@ Once installed, broke runs automatically. You will see:
 
 - a **💸 badge** in the task status bar: estimated tokens saved for the
   current task (tooltip shows the breakdown per pass, and money saved at
-  the current model's price);
+  the current model's price). While a task has saved nothing yet, the badge
+  shows why: `💸 0 · 31k/60k` means the conversation input is still below
+  the threshold — an honest zero, not a malfunction (`/broke why` gives the
+  full gate-by-gate verdict);
 - an **activation note** in every new task, showing the active config and
   whether Ollama is reachable;
 - a **notice** when a compression run saves ≥ ~1000 tokens.
+
+Scope note: broke measures and compresses only the **conversation messages**
+it is handed before each model call. The system prompt, tool schemas and
+provider-side prompt caching are outside its reach — a task can show 100k+
+prompt tokens while broke correctly reports small or zero savings for it.
 
 Everything can be controlled from the chat (`/broke help` lists all
 commands) or from the gear icon on the extension card:
@@ -179,6 +187,7 @@ commands) or from the gear icon on the extension card:
 /broke summarize cloud <provider/model>
 /broke summarize after <turns>     compress only turns older than n
 /broke stats                       per-pass saved chars/tokens
+/broke why                         live gate-by-gate verdict: why 0 (or not)?
 /broke measure                     summarize the per-run measurement ledger
 /broke measure on | off            record every run to measure.jsonl (default: on)
 /broke reset                       clear this task's stats
