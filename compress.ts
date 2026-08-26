@@ -796,7 +796,14 @@ export async function summarizePass(
   if (regionChars < config.summarize.minChars) return noop;
 
   const userTurns = region.filter((m) => m.role === 'user').length;
-  if (userTurns < config.summarize.afterTurns) return noop;
+  // Gate exception (autonomous runs): regions with ZERO user turns are the
+  // AiderDesk single-prompt tool-loop pattern - the loop was started by the
+  // task brief and never contains user turns afterwards. Requiring
+  // `afterTurns` there would leave the summarizer permanently dead for
+  // exactly those sessions (the config schema clamps afterTurns to >= 2,
+  // so no setting could enable it). minChars, the unsummarizable-parts skip
+  // and the XF6 grow-guard below still bound cost and context size.
+  if (userTurns > 0 && userTurns < config.summarize.afterTurns) return noop;
 
   const lastId = region[region.length - 1].id;
   const fingerprint = summarizeConfigFingerprint(config);

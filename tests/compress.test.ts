@@ -707,6 +707,34 @@ describe('summarizePass', () => {
     for (const resultId of outResults) assert.ok(outCalls.includes(resultId), `orphaned tool-result ${resultId}`);
   });
 
+  it('summarizes a zero-user-turn tool-loop region (autonomous runs)', async () => {
+    // The compressible region after the task brief holds NO user message at
+    // all (autonomous agent loop). The old afterTurns gate was unsatisfiable
+    // there - with zero turns in the region the exemption must apply.
+    const big = Array.from({ length: 40 }, (_, i) => `line ${i} of an autonomous tool run output`).join('\n');
+    const msgs: ContextMessage[] = [
+      user('Brief: work autonomously until the tests are green.'),
+      assistantWithCall('c1', 'power---bash', { command: 'npm test' }),
+      toolFor('c1', 'power---bash', big),
+      assistantWithCall('c2', 'power---read', { filePath: 'src/a.ts' }),
+      toolFor('c2', 'power---read', big),
+      assistant('Step 3: analysing.'),
+      assistant('Step 4: preparing the next fix.'),
+      assistant('Step 5: running the suite again.'),
+      assistant('Step 6: done for this pass.'),
+    ];
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const r = await summarizePass(msgs, 10, summarizeConfig(), countingDeps(calls), state, 'task-auto-1');
+    assert.equal(calls.n, 1, 'a zero-user-turn region must still reach the summarizer');
+    assert.ok(r.messages.some((m) => isSummaryMessage(m)), 'summary applied to the autonomous loop region');
+    // The swap must keep the pairing invariant intact as everywhere else.
+    const outCalls = collectCallIds(r.messages);
+    const outResults = collectResultIds(r.messages);
+    for (const callId of outCalls) assert.ok(outResults.includes(callId), `tool-call ${callId} lost its result`);
+    for (const resultId of outResults) assert.ok(outCalls.includes(resultId), `orphaned tool-result ${resultId}`);
+  });
+
   it('regenerates when a new user turn arrives', async () => {
     const msgs = summaryConversation();
     const state = createCompressState();

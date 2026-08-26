@@ -55,7 +55,11 @@ const ErrorsSchema = z.object({
 const errorsDefault = ErrorsSchema.parse({});
 
 const SummarizeSchema = z.object({
-  /** Only summarize turns older than this many user turns. */
+  /**
+   * Only summarize turns older than this many user turns. Regions without
+   * ANY user turn (autonomous single-prompt tool loops) are exempt - the
+   * gate would otherwise be unsatisfiable there.
+   */
   afterTurns: z.number().int().min(2).max(100).default(8),
   /** Minimum region size (chars) before summarization is worth it. */
   minChars: z.number().int().positive().default(8000),
