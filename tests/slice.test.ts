@@ -8,7 +8,9 @@ import {
   isSliceablePath,
   sliceInterfaces,
   sliceMarker,
+  slicePathKey,
   sliceWithFocus,
+  sameSlicePath,
 } from '../slice';
 
 // ---------------------------------------------------------------------------
@@ -260,5 +262,28 @@ describe('tool detection', () => {
     assert.equal(extractTargetPath({ file: 'c.ts' }), 'c.ts');
     assert.equal(extractTargetPath({ command: 'ls' }), null);
     assert.equal(extractTargetPath(undefined), null);
+  });
+});
+
+describe('slicePathKey (D5: relative resolution against the task dir)', () => {
+  it('resolves relative paths against the task dir', () => {
+    assert.equal(slicePathKey('src/a.ts', 'C:\\proj'), 'c:/proj/src/a.ts');
+  });
+
+  it('keeps absolute paths normalized but unchanged', () => {
+    assert.equal(slicePathKey('D:\\Repo\\SRC\\a.TS', 'c:/other'), 'd:/repo/src/a.ts');
+  });
+
+  it('matches a relative tool path against an absolute stored focus', () => {
+    assert.equal(sameSlicePath('src/a.ts', 'C:\\proj\\src\\a.ts', 'c:\\proj'), true);
+    assert.equal(sameSlicePath('C:/proj/src/a.ts', 'src\\A.TS', 'C:\\Proj'), true);
+  });
+
+  it('does not match when the base produces a different file', () => {
+    assert.equal(sameSlicePath('src/a.ts', 'C:\\other\\src\\a.ts', 'c:\\proj'), false);
+  });
+
+  it('behaves like before when no base is available', () => {
+    assert.equal(sameSlicePath('SRC/A.ts', 'src\\a.ts'), true);
   });
 });

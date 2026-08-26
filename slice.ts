@@ -673,8 +673,22 @@ export function sliceInterfaces(source: string, lang: SliceLang, opts: SliceOpti
 }
 
 /** Case-insensitive path comparison across separators (Windows-safe). */
-export function sameSlicePath(a: string, b: string): boolean {
-  return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
+export function sameSlicePath(a: string, b: string, base?: string | null): boolean {
+  return slicePathKey(a, base) === slicePathKey(b, base);
+}
+
+/**
+ * Normalized comparison key for focus matching (D5): tool inputs may carry
+ * relative or absolute paths while the stored focus carries the other form.
+ * Absolute paths pass through; anything else resolves against the task dir.
+ * Output is separator- and case-normalized so Windows matches.
+ */
+export function slicePathKey(path: string, base?: string | null): string {
+  const norm = path.replace(/\\/g, '/');
+  const isAbsolute = /^[a-zA-Z]:\//.test(norm) || norm.startsWith('/');
+  if (isAbsolute || !base) return norm.toLowerCase();
+  const cleanBase = base.replace(/\\/g, '/').replace(/\/+$/, '');
+  return `${cleanBase}/${norm}`.toLowerCase();
 }
 
 /**

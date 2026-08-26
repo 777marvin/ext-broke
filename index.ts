@@ -33,10 +33,10 @@ import {
   isEditTool,
   isSliceablePath,
   looksLikeReadTool,
-  sameSlicePath,
   sliceableLang,
   sliceInterfaces,
   sliceMarker,
+  slicePathKey,
 } from './slice';
 import { runSelfTest } from './selftest';
 import {
@@ -321,7 +321,7 @@ export default class Broke implements Extension {
     const config = getConfig();
     if (!config.enabled) return;
 
-    const sliced = this.sliceOnToolFinished(event, config, context);
+    const sliced = await this.sliceOnToolFinished(event, config, context);
     if (sliced) return sliced;
 
     if (!config.errors.enabled || !config.errors.toolLevel) return;
@@ -356,15 +356,15 @@ export default class Broke implements Extension {
     }
   }
 
-  /** True when this task currently treats `path` as its focus file. */
-  private isFocus(taskId: string, path: string, config: Config): boolean {
+  /** True when the target key matches this task's focus (explicit > edit > updated files). */
+  private isFocus(taskId: string, targetKey: string, base: string | null, config: Config): boolean {
     const explicit = this.explicitFocus.get(taskId);
-    if (explicit && sameSlicePath(explicit, path)) return true;
+    if (explicit && slicePathKey(explicit, base) === targetKey) return true;
     if (!config.slice.focusAuto) return false;
     const edit = this.lastEditPath.get(taskId);
-    if (edit && sameSlicePath(edit.path, path)) return true;
+    if (edit && slicePathKey(edit.path, base) === targetKey) return true;
     for (const updated of this.cachedUpdatedFiles(taskId)) {
-      if (sameSlicePath(updated, path)) return true;
+      if (slicePathKey(updated, base) === targetKey) return true;
     }
     return false;
   }
@@ -393,11 +393,11 @@ export default class Broke implements Extension {
    * views. Rewrites STORED history - hence default-off and every guard
    * failing toward untouched passthrough.
    */
-  private sliceOnToolFinished(
+  private async sliceOnToolFinished(
     event: ToolFinishedEvent,
     config: Config,
     context: ExtensionContext,
-  ): Partial<ToolFinishedEvent> | void {
+  ): Promise<Partial<ToolFinishedEvent> | void> {
     if (!config.slice.enabled) return;
     if (!looksLikeReadTool(event.toolName)) return;
     const path = extractTargetPath(event.input);
@@ -417,7 +417,18 @@ export default class Broke implements Extension {
       const { text, wrap } = extracted;
       if (text.length < config.slice.minChars) return;
 
-      if (taskId && this.isFocus(taskId, path, config)) {
+      // D5: tool inputs and stored focus may mix relative/absolute paths -
+      // resolve both against the task dir before comparing.
+      let base: string | null = null;
+      try {
+        const dir = await task?.getTaskDir?.();
+        base = typeof dir === 'string' && dir.trim() ? dir : null;
+      } catch {
+        base = null; // best effort - plain comparison still applies
+      }
+      const targetKey = slicePathKey(path, base);
+
+      if (taskId && this.isFocus(taskId, targetKey, base, config)) {
         return { output: wrap(`${FOCUS_MARKER}\n${text}`) };
       }
 

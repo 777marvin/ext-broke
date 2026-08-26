@@ -61,6 +61,7 @@ function makeHost(
   taskId: string,
   summarizeImpl: () => string | Promise<string>,
   contextMessages: unknown[] = [],
+  extraTask: Record<string, unknown> = {},
 ): { context: ExtensionContext; state: FakeHostState } {
   const state: FakeHostState = { summarizeCalls: 0, generateTextCalls: [], logLines: [], uiRefreshCalls: 0 };
   const task = {
@@ -75,6 +76,7 @@ function makeHost(
     addLogMessage: async (level: string, line: string) => {
       state.logLines.push({ level, line });
     },
+    ...extraTask,
   };
   const context = {
     log: () => undefined,
@@ -525,3 +527,35 @@ describe('ST-slicing hooks (fake host)', () => {
 
 
 
+
+describe('ST-slicing focus path resolution (D5)', () => {
+  it('matches a relative explicit focus against an absolute read via getTaskDir', async () => {
+    withSlice({ enabled: true, minChars: 300 });
+    const ext = new Broke();
+    const { context } = makeHost('task-d5-explicit', () => 'stub', [], { getTaskDir: async () => 'C:\\proj' });
+    attachContext(ext, context);
+    const [cmd] = ext.getCommands(context);
+    await cmd.execute(['slice', 'focus', 'src/billing.ts'], context);
+
+    const result = await ext.onToolFinished(readEvent('C:\\proj\\src\\billing.ts', TS_READ_PAYLOAD), context);
+    const out = JSON.stringify(result?.output ?? '');
+    assert.ok(out.includes('[broke: focus file'), 'absolute read must hit the relative focus');
+    assert.ok(out.includes('Math.round(cents * rate)'), 'focus file keeps its full body');
+  });
+
+  it('matches an absolute edit target against a relative read via getTaskDir', async () => {
+    withSlice({ enabled: true, minChars: 300 });
+    const ext = new Broke();
+    const { context } = makeHost('task-d5-edit', () => 'stub', [], { getTaskDir: async () => 'C:\\proj' });
+    attachContext(ext, context);
+    await ext.onToolCalled(
+      { toolCallId: 'c1', toolName: 'power---file_edit', input: { filePath: 'C:/proj/src/billing.ts' } } as never,
+      context,
+    );
+
+    const result = await ext.onToolFinished(readEvent('src/billing.ts', TS_READ_PAYLOAD), context);
+    const out = JSON.stringify(result?.output ?? '');
+    assert.ok(out.includes('[broke: focus file'), 'relative read must hit the absolute edit target');
+    assert.ok(out.includes('Math.round(cents * rate)'), 'focus file keeps its full body');
+  });
+});
