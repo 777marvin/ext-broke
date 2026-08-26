@@ -213,10 +213,14 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
     case 'snapshot': {
       const opt = rest[0];
       if (opt === undefined && rest.length === 0) return { kind: 'snapshot' };
-      if (opt === 'list' && rest.length === 1) return { kind: 'snapshot-list' };
+      if (opt === 'list') {
+        // Reserved keyword - typos like "snapshot list extra" must not
+        // silently become a label for a manual snapshot.
+        return rest.length === 1 ? { kind: 'snapshot-list' } : { kind: 'unknown', raw: args.join(' ') };
+      }
       if (opt === 'show') {
         const n = roundArg(rest[1]);
-        // 1-based, integer only - /broke snapshot show maps to the list order.
+        // roundArg rounds first (repo convention, XF8) - "2.5" lands on #3.
         if (Number.isInteger(n) && n >= 1 && rest.length === 2) return { kind: 'snapshot-show', index: n };
         return { kind: 'unknown', raw: args.join(' ') };
       }

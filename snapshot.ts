@@ -105,7 +105,10 @@ export function summaryTextOf(cached?: { message?: unknown }): string {
  */
 export function looksLikeGreenTests(text: string): boolean {
   const window = text.slice(0, 20_000);
-  const hasPassCount = /\b\d+\s+(?:tests?\s+)?(?:pass(?:ed|ing)?|ok)\b/i.test(window);
+  const hasPassCount =
+    /\b\d+\s+(?:tests?\s+)?(?:pass(?:ed|ing)?|ok)\b/i.test(window) ||
+    /(?:^|\r?\n)\s*ok\s+\d+\b/im.test(window) || // TAP-style "ok 7 suites"
+    /\ball\s+(?:\d+\s+)?(?:tests?\s+)?pass/i.test(window);
   const hasFailureSignal = /\bfail/i.test(window) || /\b[1-9]\d*\s+(?:failed|errors?)\b/i.test(window);
   return hasPassCount && !hasFailureSignal;
 }
@@ -131,7 +134,9 @@ export function makeSnapshotRecord(
     goal: truncateGoal(maskSecrets(input.goal)),
     achieved: truncateGoal(maskSecrets(input.achieved ?? '')),
     files: input.files ?? [],
-    commit: input.commit ? maskSecrets(input.commit) : undefined,
+    // Absent vs present matters: an absent key keeps JSON.stringify(state)
+    // byte-stable and avoids noise like "commit": null/undefined.
+    ...(input.commit ? { commit: maskSecrets(input.commit) } : {}),
     summary: maskSecrets(input.summary),
   });
 }
@@ -192,9 +197,10 @@ const SNAPSHOT_DIR_NAME = 'snapshots';
 /** Rotation ceiling per task - oldest record+history pair deleted first. */
 export const MAX_SNAPSHOTS_PER_TASK = 50;
 
-/** Default root next to the extension entry module (like stats.jsonl). */
+/** Root for snapshots: explicit override > env var (tests/host contract) >
+ * default next to the extension entry module (like stats.jsonl). */
 export function snapshotsRoot(overrides?: { dir?: string }): string {
-  return overrides?.dir ?? join(__dirname, SNAPSHOT_DIR_NAME);
+  return overrides?.dir ?? process.env.BROKE_SNAPSHOTS_DIR ?? join(__dirname, SNAPSHOT_DIR_NAME);
 }
 
 /** Filename-safe label fragment: alphanumerics, dash and underscore only. */

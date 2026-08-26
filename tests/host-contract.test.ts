@@ -15,11 +15,12 @@
  */
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionContext } from '@aiderdesk/extensions';
 import type { Config } from '../config';
+import { parseBrokeCommand } from '../commands';
 
 const tmp = mkdtempSync(join(tmpdir(), 'broke-contract-'));
 process.env.BROKE_CONFIG_PATH = join(tmp, 'config.json');
@@ -27,6 +28,7 @@ process.env.BROKE_STATS_PATH = join(tmp, 'stats.jsonl');
 process.env.BROKE_MEASURE_PATH = join(tmp, 'measure.jsonl');
 process.env.BROKE_ERRORS_DIR = join(tmp, 'errors');
 process.env.BROKE_STATS_PERSIST_MIN_MS = '0';
+process.env.BROKE_SNAPSHOTS_DIR = join(tmp, 'snapshots');
 
 let Broke: (typeof import('../index'))['default'];
 let DEFAULT_CONFIG: (typeof import('../config'))['DEFAULT_CONFIG'];
@@ -44,6 +46,10 @@ after(() => {
 interface HostOpts {
   /** When set, getTaskContext throws instead of returning a task. */
   failGetTaskContext?: Error;
+  /** When set, getContextMessages throws inside the task surface. */
+  failGetContextMessages?: Error;
+  /** Messages returned by getContextMessages. */
+  contextMessages?: unknown[];
 }
 
 function makeHost(taskId: string, opts: HostOpts = {}): { context: ExtensionContext; task: Record<string, unknown> } {
@@ -54,7 +60,13 @@ function makeHost(taskId: string, opts: HostOpts = {}): { context: ExtensionCont
     addLogMessage: async () => undefined,
     generateText: async () => 'contract summary',
     getModelConfigs: async () => [],
-    getContextMessages: async () => [],
+    getContextMessages: opts.failGetContextMessages
+      ? async (): Promise<never> => {
+          throw opts.failGetContextMessages;
+        }
+      : async () => opts.contextMessages ?? [],
+    loadContextMessages: async (): Promise<void> => undefined,
+    askQuestion: async (): Promise<string> => 'y',
   };
   const context = {
     ...(opts.failGetTaskContext
@@ -215,4 +227,104 @@ describe('host contract: hooks never throw on hostile surfaces', () => {
     const res = await ext.onOptimizeMessages(empty as never, context);
     assert.equal(res, undefined, 'nothing to do -> undefined, not an error');
   });
+});
+
+describe('host contract: F3 snapshots & flush', () => {
+  const parse = parseBrokeCommand;
+
+  it('onAfterCommit persists a valid record and survives a hostile context surface', async () => {
+    writeConfig();
+    const ext = new Broke();
+    const { context } = makeHost('f3-commit', { contextMessages: [user1(), assistantMsg()] });
+    // Success path: the record + undo file exist on disk.
+    await assert.doesNotReject(ext.onAfterCommit({ message: 'feat: billing discount\n\nbody text', amend: false }, context));
+    const files = readdirSync(join(tmp, 'snapshots', 'f3-commit'));
+    assert.ok(files.some((f) => f.endsWith('.json')), 'record written');
+    assert.ok(files.some((f) => f.endsWith('.history.json')), 'undo file written');
+
+    // Hostile path: getContextMessages throws -> hook resolves anyway.
+    const hostile = makeHost('f3-hostile', { failGetContextMessages: new Error('context exploded') });
+    await assert.doesNotReject(
+      ext.onAfterCommit({ message: 'feat: another commit', amend: false }, hostile.context),
+      'hook must never break the commit flow',
+    );
+  });
+
+  it('flush writes snapshot+history BEFORE replacement; --undo restores the exact history', async () => {
+    writeConfig();
+    const ext = new Broke() as unknown as {
+      handleFlushCommand(context: ExtensionContext, cmd: unknown): Promise<string>;
+    };
+    const original = [systemHeader(), user1(), assistantMsg(), { id: 'u2', role: 'user' as const, content: 'second turn' }];
+    const { context, task } = makeHost('f3-flush', {});
+    task.getContextMessages = async () => original;
+    let replacement: unknown[] | null = null;
+    task.loadContextMessages = async (msgs: unknown[]) => {
+      replacement = msgs;
+    };
+    let asked = '';
+    task.askQuestion = async (question: string): Promise<string> => {
+      asked = question;
+      return 'y';
+    };
+
+    // Confirmed through askQuestion (no --yes flag needed).
+    const note = await ext.handleFlushCommand(context, parse(['flush']));
+    assert.match(note, /flushed 2 message\(s\)/);
+    assert.ok(/broke flush removes/.test(asked), 'confirmation question was asked by default');
+
+    assert.ok(Array.isArray(replacement));
+    const rep = replacement as unknown[];
+    assert.equal(rep.length, 3, 'header + brief + state');
+    assert.deepEqual((rep[0] as { id: string }).id, 'sys0', 'header kept');
+    assert.deepEqual((rep[1] as { id: string }).id, 'u1', 'task brief kept verbatim');
+    const state = rep[2] as { role: string; content: string };
+    assert.equal(state.role, 'user');
+    assert.ok(state.content.startsWith('[broke-state]'), 'state message carries the marker');
+    const record = JSON.parse(state.content.slice('[broke-state]\n'.length)) as { goal?: string };
+    assert.ok(record.goal?.startsWith('Implement billing'), 'goal extracted from the brief');
+
+    // Undo restores EXACTLY what was captured before the flush.
+    task.getContextMessages = async () => (replacement as unknown[]) ?? [];
+    replacement = null;
+    const undoNote = await ext.handleFlushCommand(context, parse(['flush', '--undo', '1']));
+    assert.match(undoNote, /restored \d+ message\(s\)/);
+    assert.equal(JSON.stringify(replacement), JSON.stringify(original), 'byte-identical history restored');
+  });
+
+  it('flush aborts before any removal when persistence fails', async () => {
+    writeConfig();
+    const prevSnapshotsDir = process.env.BROKE_SNAPSHOTS_DIR;
+    try {
+      // A FILE where the snapshots dir must live makes mkdirSync throw.
+      process.env.BROKE_SNAPSHOTS_DIR = join(tmp, 'not-a-dir');
+      writeFileSync(join(tmp, 'not-a-dir'), 'occupied');
+      const ext = new Broke() as unknown as {
+        handleFlushCommand(context: ExtensionContext, cmd: unknown): Promise<string>;
+      };
+      const original = [user1(), assistantMsg()];
+      const { context, task } = makeHost('f3-abort', {});
+      task.getContextMessages = async () => original;
+      let replacement: unknown[] | null = null;
+      task.loadContextMessages = async (msgs: unknown[]) => {
+        replacement = msgs;
+      };
+      const note = await ext.handleFlushCommand(context, parse(['flush', '--yes']));
+      assert.match(note, /ABORTED before removing anything/);
+      assert.equal(replacement, null, 'context untouched when persistence fails');
+    } finally {
+      rmSync(join(tmp, 'not-a-dir'), { force: true });
+      process.env.BROKE_SNAPSHOTS_DIR = prevSnapshotsDir;
+    }
+  });
+
+  function user1(): Record<string, unknown> {
+    return { id: 'u1', role: 'user', content: 'Implement billing. Requirements: invoices, payments.' };
+  }
+  function assistantMsg(): Record<string, unknown> {
+    return { id: 'a1', role: 'assistant', content: 'Working on it - module created.' };
+  }
+  function systemHeader(): Record<string, unknown> {
+    return { id: 'sys0', role: 'system', content: 'You are helpful.' };
+  }
 });

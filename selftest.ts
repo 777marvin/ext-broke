@@ -1,6 +1,7 @@
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { Config } from './config';
 import { compressMessages, createCompressState, errorPass, structuralPass, truncatePass, type SummarizeDeps } from './compress';
+import { buildFlushPlan } from './snapshot';
 import { estimateTokens, messagesChars } from './tokens';
 
 let seq = 0;
@@ -189,6 +190,9 @@ export async function runSelfTest(config: Config): Promise<SelfTestResult> {
   lines.push(
     `  checks: summary message present: ${hasMarker ? 'yes' : 'no'}, error summary applied: ${hasErrorSummary ? 'yes' : 'no'}, truncation applied: ${truncationApplied ? 'yes' : 'no'}, dedupe applied: ${dedupeApplied ? 'yes' : 'no'}, structural cleanup applied: ${report.structuralChars > 0 ? 'yes' : 'no'}`,
   );
+  // F3 sanity: the pure flush planner agrees on a non-empty conversation.
+  const flushPlan = buildFlushPlan(messages);
+  lines.push(`  F3 flush plan: ${flushPlan.ok ? `would replace ${flushPlan.removedCount} of ${messages.length} message(s)` : `declined - ${flushPlan.reason}`}`);
 
   return { lines, touched: report.touched };
 }

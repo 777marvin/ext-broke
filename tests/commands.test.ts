@@ -445,3 +445,46 @@ describe('/broke slice commands', () => {
   });
 });
 
+describe('parseBrokeCommand: snapshot & flush (F3)', () => {
+  it('parses manual snapshot with a multi-word label', () => {
+    const cmd = parseBrokeCommand(['snapshot', 'billing', 'module', 'done']);
+    assert.deepEqual(cmd, { kind: 'snapshot', label: 'billing module done' });
+    assert.equal(parseBrokeCommand(['snapshot']).kind, 'snapshot');
+    expectUnknown(['snapshot', 'list', 'extra']);
+  });
+
+  it('parses snapshot list/show with strict numbering', () => {
+    assert.equal(parseBrokeCommand(['snapshot', 'list']).kind, 'snapshot-list');
+    const show = parseBrokeCommand(['snapshot', 'show', '3']);
+    assert.deepEqual(show, { kind: 'snapshot-show', index: 3 });
+    expectUnknown(['snapshot', 'show']);
+    expectUnknown(['snapshot', 'show', '0']);
+    expectUnknown(['snapshot', 'show', 'x']);
+    // Fractional indices round first, like every other numeric command (XF8).
+    assert.deepEqual(parseBrokeCommand(['snapshot', 'show', '2.5']), { kind: 'snapshot-show', index: 3 });
+    expectUnknown(['snapshot', 'list', 'extra']);
+  });
+
+  it('parses flush variants, refusing half-typed undo flags', () => {
+    assert.deepEqual(parseBrokeCommand(['flush']), { kind: 'flush' });
+    assert.deepEqual(parseBrokeCommand(['flush', '--yes']), { kind: 'flush', yes: true });
+    const undo = parseBrokeCommand(['flush', '--undo', '2']);
+    assert.deepEqual(undo, { kind: 'flush', undoIndex: 2 });
+    expectUnknown(['flush', '--undo']);
+    expectUnknown(['flush', '--undo', 'nope']);
+    expectUnknown(['flush', 'everything-else']);
+  });
+
+  it('leaves config untouched for side-effect snapshot commands (handled in index.ts)', () => {
+    const { config, message } = applyBrokeCommand(parseBrokeCommand(['snapshot', 'x']) as BrokeCommand, DEFAULT_CONFIG);
+    assert.equal(config, DEFAULT_CONFIG);
+    assert.equal(message, '');
+  });
+
+  it('lists snapshot and flush usage in the help text', () => {
+    assert.match(HELP_TEXT, /^  snapshot \[label\]/m);
+    assert.match(HELP_TEXT, /^  flush \[--yes\]/m);
+    assert.match(HELP_TEXT, /^  flush --undo <n>/m);
+  });
+});
+
