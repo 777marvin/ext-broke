@@ -239,7 +239,25 @@ export default class Broke implements Extension {
   // threshold), which is what makes the input compression "permanent": every
   // input the model sees is already compressed.
   // -------------------------------------------------------------------------
+  /**
+   * Contract wrapper (review R13): NOTHING in broke may break the host's
+   * model call - including a throwing getTaskContext or any other host
+   * surface in the prelude. The actual work lives in optimizeMessages.
+   */
   async onOptimizeMessages(event: OptimizeMessagesEvent, context: ExtensionContext): Promise<Partial<OptimizeMessagesEvent> | void> {
+    try {
+      return await this.optimizeMessages(event, context);
+    } catch (err) {
+      try {
+        context.log(`Broke: compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+      } catch {
+        // even logging may fail on a hostile surface - swallow
+      }
+      return undefined;
+    }
+  }
+
+  private async optimizeMessages(event: OptimizeMessagesEvent, context: ExtensionContext): Promise<Partial<OptimizeMessagesEvent> | void> {
     const task = context.getTaskContext();
     if (!task) return;
     const taskId = task.data.id;
@@ -330,8 +348,24 @@ export default class Broke implements Extension {
    * never-throwing; they are mutually exclusive by tool type:
    * - ST-slicing (F2): file reads -> interface views (slice.enabled).
    * - Error compression (errors.toolLevel): command output -> error summary.
+   * Contract wrapper (R13): the whole body is failure-isolated so a hostile
+   * host surface cannot break tool execution.
    */
   async onToolFinished(event: ToolFinishedEvent, context: ExtensionContext): Promise<Partial<ToolFinishedEvent> | void> {
+    try {
+      return await this.toolFinished(event, context);
+    } catch (err) {
+      // Never break tool execution - compression is best effort.
+      try {
+        context.log(`Broke: tool-level pass failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+      } catch {
+        // swallow - logging is best effort
+      }
+      return undefined;
+    }
+  }
+
+  private async toolFinished(event: ToolFinishedEvent, context: ExtensionContext): Promise<Partial<ToolFinishedEvent> | void> {
     const config = getConfig();
     if (!config.enabled) return;
 
@@ -577,6 +611,19 @@ export default class Broke implements Extension {
 
   // Visibility: tell the user the extension is active on every new task.
   async onTaskInitialized(event: TaskInitializedEvent, context: ExtensionContext): Promise<void> {
+    try {
+      await this.taskInitialized(event, context);
+    } catch (err) {
+      // Host surfaces must never see a broke failure.
+      try {
+        context.log(`Broke: task initialization notice failed - ${err instanceof Error ? err.message : String(err)}`, 'warn');
+      } catch {
+        // swallow - logging is best effort
+      }
+    }
+  }
+
+  private async taskInitialized(event: TaskInitializedEvent, context: ExtensionContext): Promise<void> {
     const config = getConfig();
     // Status checks use a short timeout (3 s) so a dead remote Ollama never
     // blocks task initialization.
