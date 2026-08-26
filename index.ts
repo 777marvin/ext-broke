@@ -7,6 +7,7 @@ import type {
   ExtensionContext,
   OptimizeMessagesEvent,
   TaskInitializedEvent,
+  ToolCalledEvent,
   ToolFinishedEvent,
   UIComponentDefinition,
 } from '@aiderdesk/extensions';
@@ -26,6 +27,17 @@ import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, s
 import { isPlaintextRemoteUrl, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
 import { extractOutputText } from './output';
 import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from './pricing';
+import {
+  extractTargetPath,
+  FOCUS_MARKER,
+  isEditTool,
+  isSliceablePath,
+  looksLikeReadTool,
+  sameSlicePath,
+  sliceableLang,
+  sliceInterfaces,
+  sliceMarker,
+} from './slice';
 import { runSelfTest } from './selftest';
 import {
   buildRunRecord,
@@ -131,6 +143,17 @@ export default class Broke implements Extension {
    */
   private readonly optimizingTasks = new Set<string>();
   private ollamaStatusCache: { at: number; status: OllamaStatus } | null = null;
+  /**
+   * ST-slicing state (F2), all task-scoped and bounded. The last edit target
+   * becomes the task focus (focusAuto); explicit focus comes from
+   * /broke slice focus. updatedFiles caches getUpdatedFiles() for a short
+   * TTL - it runs a git diff per call and must not fire on every file read.
+   */
+  private readonly lastEditPath = new Map<string, { path: string; at: number }>();
+  private readonly explicitFocus = new Map<string, string>();
+  private readonly updatedFilesCache = new Map<string, { paths: string[]; at: number }>();
+  private readonly unknownReadToolsLogged = new Set<string>();
+  private static readonly UPDATED_FILES_TTL_MS = 30_000;
 
   onLoad(context: ExtensionContext): void {
     this.context = context;
@@ -268,15 +291,40 @@ export default class Broke implements Extension {
   }
 
   /**
-   * Tool-level error compression (errors.toolLevel = on). Rewrites the
-   * stored tool result in the task history to its diagnostic essence and
-   * archives the full output under <extension>/errors/. Off by default -
-   * unlike the input pass this touches stored history, so the user must
-   * opt in explicitly. Never throws; never breaks tool execution.
+   * ST-slicing focus tracking (F2): when an edit/write tool fires, its
+   * target becomes the task focus - the next read of that file passes
+   * through in full while everything else is sliced. Read-only side effect;
+   * never modifies the event.
+   */
+  async onToolCalled(event: ToolCalledEvent, context: ExtensionContext): Promise<void> {
+    try {
+      const config = getConfig();
+      if (!config.enabled || !config.slice.enabled || !config.slice.focusAuto) return;
+      if (!isEditTool(event.toolName, event.input)) return;
+      const path = extractTargetPath(event.input);
+      const taskId = context.getTaskContext()?.data.id;
+      if (!path || !taskId) return;
+      boundedMapSet(this.lastEditPath, taskId, { path, at: Date.now() });
+    } catch (err) {
+      // Never break tool execution - focus tracking is best effort.
+      context.log(`Broke: slice focus tracking failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }
+
+  /**
+   * Tool-level passes. Two independent rewrites, both opt-in and both
+   * never-throwing; they are mutually exclusive by tool type:
+   * - ST-slicing (F2): file reads -> interface views (slice.enabled).
+   * - Error compression (errors.toolLevel): command output -> error summary.
    */
   async onToolFinished(event: ToolFinishedEvent, context: ExtensionContext): Promise<Partial<ToolFinishedEvent> | void> {
     const config = getConfig();
-    if (!config.enabled || !config.errors.enabled || !config.errors.toolLevel) return;
+    if (!config.enabled) return;
+
+    const sliced = this.sliceOnToolFinished(event, config, context);
+    if (sliced) return sliced;
+
+    if (!config.errors.enabled || !config.errors.toolLevel) return;
     if (!isCommandTool(event.toolName)) return;
 
     const task = context.getTaskContext();
@@ -305,6 +353,107 @@ export default class Broke implements Extension {
     } catch (err) {
       // Never break tool execution - compression is best effort.
       context.log(`Broke: tool-level error compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }
+
+  /** True when this task currently treats `path` as its focus file. */
+  private isFocus(taskId: string, path: string, config: Config): boolean {
+    const explicit = this.explicitFocus.get(taskId);
+    if (explicit && sameSlicePath(explicit, path)) return true;
+    if (!config.slice.focusAuto) return false;
+    const edit = this.lastEditPath.get(taskId);
+    if (edit && sameSlicePath(edit.path, path)) return true;
+    for (const updated of this.cachedUpdatedFiles(taskId)) {
+      if (sameSlicePath(updated, path)) return true;
+    }
+    return false;
+  }
+
+  /** TTL-cached getUpdatedFiles() - a git diff must not fire per file read. */
+  private cachedUpdatedFiles(taskId: string): string[] {
+    const cached = this.updatedFilesCache.get(taskId);
+    if (cached && Date.now() - cached.at < Broke.UPDATED_FILES_TTL_MS) return cached.paths;
+    void this.context
+      ?.getTaskContext()
+      ?.getUpdatedFiles?.()
+      .then((files) => {
+        boundedMapSet(
+          this.updatedFilesCache,
+          taskId,
+          { paths: files.map((f) => f.path), at: Date.now() },
+        );
+      })
+      .catch(() => undefined); // best effort - focus stays edit/explicit-driven
+    // Return the stale list meanwhile; an empty first call is acceptable.
+    return cached?.paths ?? [];
+  }
+
+  /**
+   * The ST-slicing pass: rewrite large sliceable file reads into interface
+   * views. Rewrites STORED history - hence default-off and every guard
+   * failing toward untouched passthrough.
+   */
+  private sliceOnToolFinished(
+    event: ToolFinishedEvent,
+    config: Config,
+    context: ExtensionContext,
+  ): Partial<ToolFinishedEvent> | void {
+    if (!config.slice.enabled) return;
+    if (!looksLikeReadTool(event.toolName)) return;
+    const path = extractTargetPath(event.input);
+    if (!path) {
+      this.logUnknownReadToolOnce(event.toolName, context);
+      return;
+    }
+    const lang = sliceableLang(path);
+    if (!lang || !isSliceablePath(path)) return;
+
+    const task = context.getTaskContext();
+    const taskId = task?.data.id ?? '';
+
+    try {
+      const extracted = extractOutputText(event.output, { eventOutput: true });
+      if (!extracted) return;
+      const { text, wrap } = extracted;
+      if (text.length < config.slice.minChars) return;
+
+      if (taskId && this.isFocus(taskId, path, config)) {
+        return { output: wrap(`${FOCUS_MARKER}\n${text}`) };
+      }
+
+      const view = sliceInterfaces(text, lang);
+      // Honest fallbacks: an oversized view or a non-shrinking one is worse
+      // than the original - pass the full content through untouched.
+      if (view.text.length > config.slice.maxChars || view.text.length >= text.length) return;
+
+      if (taskId) this.recordSliceStats(taskId, text.length - view.text.length);
+      return { output: wrap(`${sliceMarker(view)}\n${view.text}`) };
+    } catch (err) {
+      // Never break tool execution - slicing is best effort.
+      context.log(`Broke: slicing failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }
+
+  /** Diagnose read-tool candidates without a path field once per session. */
+  private logUnknownReadToolOnce(toolName: string, context: ExtensionContext): void {
+    if (this.unknownReadToolsLogged.has(toolName)) return;
+    this.unknownReadToolsLogged.add(toolName);
+    context.log(
+      `Broke: read tool '${toolName}' carries no path field - slicing skipped for it (S4 feature-detect). Report this if slicing should apply.`,
+      'info',
+    );
+  }
+
+  /** Record estimated slice savings on the task's stats (throttled persistence). */
+  private recordSliceStats(taskId: string, savedChars: number): void {
+    const stats = this.statsByTask.get(taskId) ?? this.statsLoader.get(taskId) ?? emptyStats(taskId);
+    stats.savedChars.slice += savedChars;
+    stats.lastRunAt = Date.now();
+    boundedMapSet(this.statsByTask, taskId, stats);
+    const lastPersist = this.lastPersistAt.get(taskId) ?? 0;
+    if (Date.now() - lastPersist >= STATS_PERSIST_MIN_MS) {
+      boundedMapSet(this.lastPersistAt, taskId, Date.now());
+      persistStats(stats);
     }
   }
 
@@ -504,6 +653,28 @@ export default class Broke implements Extension {
                   : 'broke: error archive was already empty',
               );
             }
+            case 'slice-focus':
+            case 'slice-focus-clear':
+            case 'slice-status': {
+              const taskId = context.getTaskContext()?.data.id;
+              if (!taskId) return log('broke: slice focus is task-scoped - run this inside a task');
+              if (cmd.kind === 'slice-focus') {
+                boundedMapSet(ext.explicitFocus, taskId, cmd.path);
+                return log(`broke: slice focus → ${cmd.path} (this file always returns in full while slicing is on)`);
+              }
+              if (cmd.kind === 'slice-focus-clear') {
+                ext.explicitFocus.delete(taskId);
+                return log('broke: explicit slice focus cleared - focusAuto rules apply again');
+              }
+              const configNow = getConfig();
+              const focus =
+                ext.explicitFocus.get(taskId) ??
+                ext.lastEditPath.get(taskId)?.path ??
+                '(none yet - becomes the last edited file with focusAuto)';
+              return log(
+                `broke slice status: slicing ${configNow.enabled ? '' : '(pipeline OFF) '}${configNow.slice.enabled ? 'on' : 'off'} | parser: ${configNow.slice.parser} | min ${configNow.slice.minChars.toLocaleString('en-US')} chars | view cap ${configNow.slice.maxChars.toLocaleString('en-US')} chars | focusAuto: ${configNow.slice.focusAuto ? 'on' : 'off'} | current focus: ${focus}`,
+              );
+            }
             case 'measure': {
               const summary = summarizeRunRecords(loadRunRecords());
               return log(formatMeasure(summary));
@@ -654,6 +825,7 @@ export default class Broke implements Extension {
         error: stats ? estimateTokens(stats.savedChars.error) : 0,
         truncate: stats ? estimateTokens(stats.savedChars.truncate) : 0,
         summarize: stats ? estimateTokens(stats.savedChars.summarize) : 0,
+        slice: stats ? estimateTokens(stats.savedChars.slice) : 0,
       },
       totalSavedTokens: totalTokens,
       summarizeFailures: stats?.summarizeFailures ?? 0,

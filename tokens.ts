@@ -40,6 +40,11 @@ export interface SavedTokens {
   error: number;
   truncate: number;
   summarize: number;
+  /**
+   * Estimated chars saved by ST-slicing (full file vs. interface view).
+   * Tool-level (outside optimize runs) - an estimate, labeled as such.
+   */
+  slice: number;
 }
 
 /** Fill missing counters with 0 - legacy stats.jsonl records predate some passes. */
@@ -49,6 +54,7 @@ export function normalizeSavedTokens(saved: Partial<SavedTokens> | undefined): S
     error: saved?.error ?? 0,
     truncate: saved?.truncate ?? 0,
     summarize: saved?.summarize ?? 0,
+    slice: saved?.slice ?? 0,
   };
 }
 
@@ -76,7 +82,7 @@ export function emptyStats(taskId: string): TaskStats {
   return {
     taskId,
     passes: 0,
-    savedChars: { structural: 0, error: 0, truncate: 0, summarize: 0 },
+    savedChars: { structural: 0, error: 0, truncate: 0, summarize: 0, slice: 0 },
     totalCharsBefore: 0,
     totalCharsAfter: 0,
     summarizedRanges: 0,
@@ -88,7 +94,13 @@ export function emptyStats(taskId: string): TaskStats {
 }
 
 export function totalSavedChars(stats: TaskStats): number {
-  return stats.savedChars.structural + stats.savedChars.error + stats.savedChars.truncate + stats.savedChars.summarize;
+  return (
+    stats.savedChars.structural +
+    stats.savedChars.error +
+    stats.savedChars.truncate +
+    stats.savedChars.summarize +
+    stats.savedChars.slice
+  );
 }
 
 const MAX_STATS_FILE_BYTES = 5 * 1024 * 1024;

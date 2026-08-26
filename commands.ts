@@ -333,6 +333,9 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
     `  error:         ${fmtChars(stats.savedChars.error)} (stack-trace/log compression)`,
     `  truncate:      ${fmtChars(stats.savedChars.truncate)}`,
     `  summarize:     ${fmtChars(stats.savedChars.summarize)} (${stats.summarizedRanges} range(s), ${stats.summarizeFailures} failure(s))`,
+    ...(stats.savedChars.slice > 0
+      ? [`  slice:         ${fmtChars(stats.savedChars.slice)} (ST-slicing, estimated full-file vs. interface view)`]
+      : []),
     `  summarizer LLM calls: ${stats.summarizeCalls} (cache reuse not counted - true cost side)`,
     `  last summarizer: ${stats.lastSummarizer}`,
     `  level: ${config.level} | maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} | protectedTurns: ${config.protectedTurns}`,

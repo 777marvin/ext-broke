@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -215,7 +215,7 @@ describe('formatStats', () => {
   });
 
   it('lists per-pass numbers and the money line when a price is known', () => {
-    const stats = { ...emptyStats('t'), passes: 5, savedChars: { structural: 100, error: 200, truncate: 300, summarize: 400 } };
+    const stats = { ...emptyStats('t'), passes: 5, savedChars: { structural: 100, error: 200, truncate: 300, summarize: 400, slice: 0 } };
     const out = formatStats(DEFAULT_CONFIG, stats, { modelId: 'm', providerId: 'p', inputPerMToken: 3 });
     assert.ok(out.includes('5 compression run(s)'));
     assert.ok(out.includes('structural'));
@@ -232,7 +232,7 @@ describe('formatStats', () => {
     // A price object can exist while the model carries no input price
     // (local/Ollama or not in the registry): "$0.00" would read as
     // "free" - the cost figure must stay hidden instead.
-    const stats = { ...emptyStats('t'), passes: 3, savedChars: { structural: 100, error: 200, truncate: 300, summarize: 400 } };
+    const stats = { ...emptyStats('t'), passes: 3, savedChars: { structural: 100, error: 200, truncate: 300, summarize: 400, slice: 0 } };
     const out = formatStats(DEFAULT_CONFIG, stats, { modelId: 'qwen2.5-coder:3b', providerId: 'ollama', inputPerMToken: null });
     assert.ok(!out.includes('estimated cost saved'));
     assert.ok(!out.includes('$0.00'));
@@ -244,7 +244,7 @@ describe('formatStats', () => {
       passes: 2,
       totalCharsBefore: 10000,
       totalCharsAfter: 6000,
-      savedChars: { structural: 100, error: 200, truncate: 300, summarize: 400 },
+      savedChars: { structural: 100, error: 200, truncate: 300, summarize: 400, slice: 500 },
     };
     const out = formatStats(DEFAULT_CONFIG, stats, { modelId: 'm', providerId: 'p', inputPerMToken: 3 });
     assert.ok(out.includes('saved actual'), 'measured headline expected');
@@ -257,7 +257,7 @@ describe('formatStats', () => {
   });
 
   it('labels the pass-sum fallback for legacy records without size data', () => {
-    const stats = { ...emptyStats('t'), passes: 3, savedChars: { structural: 100, error: 0, truncate: 0, summarize: 0 } };
+    const stats = { ...emptyStats('t'), passes: 3, savedChars: { structural: 100, error: 0, truncate: 0, summarize: 0, slice: 0 } };
     const out = formatStats(DEFAULT_CONFIG, stats, null);
     assert.ok(out.includes('saved total'), 'legacy headline expected');
     assert.ok(out.includes('predate'), 'legacy records must be labeled');
@@ -386,3 +386,4 @@ describe('/broke slice commands', () => {
     assert.match(HELP_TEXT, /^  slice focus <path>/m);
   });
 });
+

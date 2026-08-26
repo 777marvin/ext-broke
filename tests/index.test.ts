@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Fake-host integration tests for the orchestration path in index.ts (XF11).
  * Until now no test imported index.ts: only the pipeline and its helpers
  * were covered. These tests drive the real Broke extension with a fake
@@ -386,3 +386,142 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.equal(loaded.savedChars.truncate, 1234);
   });
 });
+
+// -------------------------------------------------------------------------
+// ST-slicing hooks (F2): onToolCalled focus tracking + onToolFinished views
+// -------------------------------------------------------------------------
+
+/** A mid-size TS module used as a file-read payload (~700 chars). */
+const TS_READ_PAYLOAD = [
+  "import { join } from 'node:path';",
+  '',
+  'export interface Invoice {',
+  '  id: string;',
+  '  totalCents: number;',
+  '  paidAt?: Date;',
+  ...Array.from({ length: 16 }, (_, i) => `  note${i}: string; // padding field ${i} to cross realistic thresholds`),
+  '}',
+  '',
+  'export type InvoiceState = "draft" | "sent" | "paid";',
+  '',
+  'function computeTax(cents: number): number {',
+  '  const rate = cents > 100 ? 0.19 : 0;',
+  '  return Math.round(cents * rate);',
+  '}',
+].join('\n');
+
+/** writeConfig + partial slice overrides (typed against the real schema). */
+function withSlice(over: Partial<Config['slice']>): Config {
+  const config = writeConfig();
+  const merged: Config = { ...config, slice: { ...config.slice, ...over } };
+  saveConfig(merged); // saveConfig invalidates the config cache
+  return merged;
+}
+
+function readEvent(path: string, output: unknown): ToolFinishedEvent {
+  return { toolCallId: 'call-read', toolName: 'power---file_read', input: { filePath: path }, output } as unknown as ToolFinishedEvent;
+}
+
+describe('ST-slicing hooks (fake host)', () => {
+  it('slices a large TS file read and records honest slice stats', async () => {
+    withSlice({ enabled: true, minChars: 300 });
+    const ext = new Broke();
+    const { context } = makeHost('task-slice', () => 'stub');
+    attachContext(ext, context);
+
+    const result = await ext.onToolFinished(readEvent('src/billing.ts', TS_READ_PAYLOAD), context);
+    const text = JSON.stringify(result?.output ?? '');
+    assert.ok(text.includes('[broke: interface view'), 'the view must carry the marker');
+    assert.ok(text.includes('export interface Invoice {'), 'contract declarations survive');
+    assert.ok(!text.includes('Math.round(cents * rate)'), 'bodies must be elided');
+
+    const stats = loadTaskStats('task-slice');
+    assert.ok(stats, 'slice savings must be persisted');
+    assert.ok(stats.savedChars.slice > 0, 'estimated slice savings must be recorded');
+  });
+
+  it('passes through when disabled (default) - stored history untouched', async () => {
+    writeConfig(); // slice.enabled stays false by default
+    const ext = new Broke();
+    const { context } = makeHost('task-slice-off', () => 'stub');
+    attachContext(ext, context);
+
+    const result = await ext.onToolFinished(readEvent('src/billing.ts', TS_READ_PAYLOAD), context);
+    assert.equal(result, undefined, 'no rewrite at all');
+  });
+
+  it('returns the focus file in full with a focus marker', async () => {
+    withSlice({ enabled: true, minChars: 300 });
+    const ext = new Broke();
+    const { context } = makeHost('task-focus', () => 'stub');
+    attachContext(ext, context);
+    // Edit first -> the edited file becomes the task focus.
+    await ext.onToolCalled(
+      { toolCallId: 'c1', toolName: 'power---file_edit', input: { filePath: 'src/billing.ts' } } as never,
+      context,
+    );
+
+    const result = await ext.onToolFinished(readEvent('SRC\\BILLING.TS', TS_READ_PAYLOAD), context);
+    const text = JSON.stringify(result?.output ?? '');
+    assert.ok(text.includes('focus file'), 'the focus marker must be present');
+    assert.ok(text.includes('Math.round(cents * rate)'), 'the focus file keeps its full body');
+
+    // A different file is still sliced.
+    const other = await ext.onToolFinished(readEvent('src/other.ts', TS_READ_PAYLOAD), context);
+    assert.ok(JSON.stringify(other?.output ?? '').includes('[broke: interface view'));
+  });
+
+  it('falls back to full content when the view would exceed maxChars', async () => {
+    withSlice({ enabled: true, minChars: 500, maxChars: 50 });
+    const ext = new Broke();
+    const { context } = makeHost('task-cap', () => 'stub');
+    attachContext(ext, context);
+
+    const result = await ext.onToolFinished(readEvent('src/billing.ts', TS_READ_PAYLOAD), context);
+    assert.equal(result, undefined, 'oversized views fall back to untouched passthrough');
+  });
+
+  it('skips non-code extensions and vendor paths', async () => {
+    withSlice({ enabled: true, minChars: 100 });
+    const ext = new Broke();
+    const { context } = makeHost('task-skip', () => 'stub');
+    attachContext(ext, context);
+
+    assert.equal(await ext.onToolFinished(readEvent('docs/notes.md', TS_READ_PAYLOAD), context), undefined, '.md is not sliceable');
+    assert.equal(
+      await ext.onToolFinished(readEvent('node_modules/pkg/index.js', TS_READ_PAYLOAD), context),
+      undefined,
+      'vendor paths are never sliced',
+    );
+  });
+
+  it('logs an unmatched read-tool name once, never crashes, passes through', async () => {
+    withSlice({ enabled: true, minChars: 100 });
+    const ext = new Broke();
+    const { context } = makeHost('task-log', () => 'stub');
+    attachContext(ext, context);
+
+    const event = { toolCallId: 'cx', toolName: 'power---file_read', input: { query: 'no path here' }, output: TS_READ_PAYLOAD } as unknown as ToolFinishedEvent;
+    assert.equal(await ext.onToolFinished(event, context), undefined, 'no path field -> no rewrite');
+    // Once-per-session logging goes through context.log.
+  });
+
+  it('explicit /broke slice focus overrides auto focus until cleared', async () => {
+    withSlice({ enabled: true, minChars: 300 });
+    const ext = new Broke();
+    const { context } = makeHost('task-explicit', () => 'stub');
+    attachContext(ext, context);
+    const [cmd] = ext.getCommands(context);
+    await cmd.execute(['slice', 'focus', 'src/other.ts'], context);
+
+    const focused = await ext.onToolFinished(readEvent('src/other.ts', TS_READ_PAYLOAD), context);
+    assert.ok(JSON.stringify(focused?.output ?? '').includes('focus file'));
+
+    await cmd.execute(['slice', 'focus', 'clear'], context);
+    const cleared = await ext.onToolFinished(readEvent('src/other.ts', TS_READ_PAYLOAD), context);
+    assert.ok(JSON.stringify(cleared?.output ?? '').includes('[broke: interface view'));
+  });
+});
+
+
+

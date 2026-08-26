@@ -673,7 +673,7 @@ export function sliceInterfaces(source: string, lang: SliceLang, opts: SliceOpti
 }
 
 /** Case-insensitive path comparison across separators (Windows-safe). */
-function samePath(a: string, b: string): boolean {
+export function sameSlicePath(a: string, b: string): boolean {
   return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
 }
 
@@ -688,7 +688,7 @@ export function sliceWithFocus(
   focus: { file: string; symbol?: string } | null,
   currentPath?: string | null,
 ): SlicedView {
-  if (!focus || !currentPath || !samePath(focus.file, currentPath)) {
+  if (!focus || !currentPath || !sameSlicePath(focus.file, currentPath)) {
     return sliceInterfaces(source, lang);
   }
   const lines = source.split('\n');
@@ -707,6 +707,9 @@ export function sliceWithFocus(
 export function sliceMarker(view: SlicedView): string {
   return `[broke: interface view - ${view.keptLines} of ${view.originalLines} lines. Full body only for the focus file (run /broke slice focus <path> or /broke slice off to disable)]`;
 }
+
+/** Marker prepended when a focus file passes through in full. */
+export const FOCUS_MARKER = '[broke: focus file - full content]';
 
 // ---------------------------------------------------------------------------
 // Tool detection (hook wiring support, S4 feature-detect pattern)
@@ -733,6 +736,11 @@ export function extractTargetPath(input: unknown): string | null {
  */
 export function isReadTool(toolName: string, input: unknown): boolean {
   return READ_TOOL_RE.test(toolName) && extractTargetPath(input) !== null;
+}
+
+/** Name-only pre-check for hook gating (the two-factor rule needs the input too). */
+export function looksLikeReadTool(toolName: string): boolean {
+  return READ_TOOL_RE.test(toolName);
 }
 
 /** Same two-factor rule for edit/write tools (focus tracking via onToolCalled). */
