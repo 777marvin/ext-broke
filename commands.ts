@@ -28,6 +28,10 @@ Usage: /broke <subcommand>
   errors archive <on|off>       save full outputs to errors/ (privacy: raw tool output stays on disk, default: ${d.errors.archive ? 'on' : 'off'})
   errors retention <days>       delete archived outputs older than n days (default ${d.errors.retentionDays})
   errors clear                  delete the whole error archive now
+  slice on | off                interface views for file reads (default: ${d.slice.enabled ? 'on' : 'off'} - changes what the agent sees)
+  slice focus <path>            always return this file in full (per task)
+  slice focus clear             drop the explicit focus
+  slice status                  slicing mode and current focus for this task
   summarize via <local|cloud>   summarizer backend (default: ${d.summarize.via}${d.summarize.via === 'local' ? ' = Ollama' : ''})
   summarize model <name>        Ollama model tag (default: ${d.summarize.localModel})
   summarize cloud <provider/model>
@@ -63,6 +67,10 @@ export type BrokeCommand =
   | { kind: 'errors-archive'; enabled: boolean }
   | { kind: 'errors-retention'; days: number }
   | { kind: 'errors-clear' }
+  | { kind: 'slice-toggle'; enabled: boolean }
+  | { kind: 'slice-focus'; path: string }
+  | { kind: 'slice-focus-clear' }
+  | { kind: 'slice-status' }
   | { kind: 'summarize-via'; via: 'local' | 'cloud' }
   | { kind: 'summarize-model'; model: string }
   | { kind: 'summarize-cloud'; modelId: string }
@@ -147,6 +155,16 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
         if (Number.isFinite(n) && n >= 1 && n <= 365) return { kind: 'errors-retention', days: n };
       }
       if (opt === 'clear') return { kind: 'errors-clear' };
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
+    case 'slice': {
+      const opt = rest[0];
+      if (opt === 'on') return { kind: 'slice-toggle', enabled: true };
+      if (opt === 'off') return { kind: 'slice-toggle', enabled: false };
+      if (opt === 'focus' && rest[1] === 'clear' && rest.length === 2) return { kind: 'slice-focus-clear' };
+      // A focus path may contain spaces - everything after 'focus' is one path.
+      if (opt === 'focus' && rest.length >= 2) return { kind: 'slice-focus', path: rest.slice(1).join(' ') };
+      if (opt === 'status' && rest.length === 1) return { kind: 'slice-status' };
       return { kind: 'unknown', raw: args.join(' ') };
     }
     case 'summarize': {
@@ -239,6 +257,18 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
       return { config: updateConfigPath('errors.retentionDays', cmd.days, filePath), message: `error archive retention → ${cmd.days} day(s)` };
     case 'errors-clear':
       // Side effect handled in index.ts (deletes the archive directory).
+      return { config, message: '' };
+    case 'slice-toggle':
+      return {
+        config: updateConfigPath('slice.enabled', cmd.enabled, filePath),
+        message: cmd.enabled
+          ? 'ST-slicing enabled - file reads return interface views (focus file stays full)'
+          : 'ST-slicing disabled - file reads pass through untouched',
+      };
+    case 'slice-focus':
+    case 'slice-focus-clear':
+    case 'slice-status':
+      // Side effects handled in index.ts (task-scoped focus state / live status).
       return { config, message: '' };
     case 'summarize-via':
       return { config: updateConfigPath('summarize.via', cmd.via, filePath), message: `summarizer → ${cmd.via}` };
@@ -355,6 +385,7 @@ export async function formatStatus(config: Config, stats: TaskStats | null, pric
     `  maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} chars | protectedTurns: ${config.protectedTurns}`,
     `  truncate limits: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB | maxInputChars: ${config.truncate.maxInputChars}`,
     `  errors: ${config.errors.enabled ? 'on' : 'off'} | min ${config.errors.minChars.toLocaleString('en-US')} chars | ${config.errors.contextLines} context lines | tool-level: ${config.errors.toolLevel ? 'on' : 'off'} | archive: ${config.errors.archive ? 'on' : 'off'} (${config.errors.retentionDays} d retention)`,
+    `  slice: ${config.slice.enabled ? 'on' : 'off'} | parser: ${config.slice.parser} | min ${config.slice.minChars.toLocaleString('en-US')} chars | view cap ${config.slice.maxChars.toLocaleString('en-US')} chars | focusAuto: ${config.slice.focusAuto ? 'on' : 'off'}`,
     `  summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (model: ${config.summarize.localModel})` : ` (model: ${config.summarize.cloudModelId || 'task model'})`} | after ${config.summarize.afterTurns} turns | min ${config.summarize.minChars.toLocaleString('en-US')} chars`,
   ];
   if (ollama) {

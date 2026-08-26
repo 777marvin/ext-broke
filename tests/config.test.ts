@@ -129,3 +129,27 @@ describe('updateConfigPaths', () => {
     }
   });
 });
+
+describe('slice config block', () => {
+  it('defaults to OFF with honest thresholds', () => {
+    assert.equal(DEFAULT_CONFIG.slice.enabled, false, 'slicing changes what the agent sees - opt-in');
+    assert.equal(DEFAULT_CONFIG.slice.parser, 'heuristic');
+    assert.equal(DEFAULT_CONFIG.slice.minChars, 4000);
+    assert.equal(DEFAULT_CONFIG.slice.maxChars, 20000);
+    assert.equal(DEFAULT_CONFIG.slice.focusAuto, true);
+  });
+
+  it('deep-merges partial slice overrides without losing sibling blocks', () => {
+    const merged = mergeConfig({ slice: { minChars: 100 } });
+    assert.equal(merged.slice.minChars, 100);
+    assert.equal(merged.slice.enabled, false);
+    assert.equal(merged.errors.enabled, true, 'errors block untouched');
+  });
+
+  it('supports dotted-path updates for slice keys', () => {
+    const updated = applyConfigUpdates(DEFAULT_CONFIG, [['slice.enabled', true], ['slice.maxChars', 1000]]);
+    assert.equal(updated.slice.enabled, true);
+    assert.equal(updated.slice.maxChars, 1000);
+    assert.equal(updated.slice.minChars, 4000, 'untouched default survives');
+  });
+});

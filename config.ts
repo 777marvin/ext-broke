@@ -73,6 +73,23 @@ const SummarizeSchema = z.object({
 });
 const summarizeDefault = SummarizeSchema.parse({});
 
+const SliceSchema = z.object({
+  /**
+   * Master switch - OFF by default: ST-slicing rewrites what the agent sees
+   * (and the stored tool result). Opt-in like every behavior-changing pass.
+   */
+  enabled: z.boolean().default(false),
+  /** v1 ships only the heuristic parser; 'ast' is reserved for web-tree-sitter (v2). */
+  parser: z.enum(['heuristic', 'ast']).default('heuristic'),
+  /** Files smaller than this many chars always pass through untouched. */
+  minChars: z.number().int().positive().default(4000),
+  /** Cap for the generated interface view; larger views fall back to full content. */
+  maxChars: z.number().int().positive().default(20000),
+  /** Derive focus from edit-tool calls (and updated files) automatically. */
+  focusAuto: z.boolean().default(true),
+});
+const sliceDefault = SliceSchema.parse({});
+
 const UiSchema = z.object({
   /** Show the 💸 saved-tokens badge in the task status bar. */
   showStatusBadge: z.boolean().default(true),
@@ -116,6 +133,7 @@ export const ConfigSchema = z.object({
   protectedTurns: z.number().int().min(1).max(50).default(2),
   truncate: TruncateSchema.default(truncateDefault),
   errors: ErrorsSchema.default(errorsDefault),
+  slice: SliceSchema.default(sliceDefault),
   summarize: SummarizeSchema.default(summarizeDefault),
   ui: UiSchema.default(uiDefault),
   stats: StatsSchema.default(statsDefault),
@@ -205,6 +223,7 @@ export function applyConfigUpdates(current: Config, updates: Array<[string, unkn
     ...current,
     truncate: { ...current.truncate },
     errors: { ...current.errors },
+    slice: { ...current.slice },
     summarize: { ...current.summarize },
     ui: { ...current.ui },
     stats: { ...current.stats },

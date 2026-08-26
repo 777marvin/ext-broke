@@ -346,3 +346,43 @@ describe('hasOllamaModel', () => {
     assert.equal(hasOllamaModel(['llama3.2:1b'], 'qwen2.5-coder:3b'), false);
   });
 });
+
+describe('/broke slice commands', () => {
+  it('parses toggle, focus and status forms', () => {
+    assert.deepEqual(parseBrokeCommand(['slice', 'on']), { kind: 'slice-toggle', enabled: true });
+    assert.deepEqual(parseBrokeCommand(['slice', 'off']), { kind: 'slice-toggle', enabled: false });
+    assert.deepEqual(parseBrokeCommand(['slice', 'focus', 'src/a.ts']), { kind: 'slice-focus', path: 'src/a.ts' });
+    assert.deepEqual(parseBrokeCommand(['slice', 'focus', 'clear']), { kind: 'slice-focus-clear' });
+    assert.equal(parseBrokeCommand(['slice', 'status']).kind, 'slice-status');
+  });
+
+  it('rejects malformed slice arguments', () => {
+    expectUnknown(['slice']);
+    expectUnknown(['slice', 'focus']);
+    expectUnknown(['slice', 'bogus']);
+    expectUnknown(['slice', 'parser', 'ast']);
+  });
+
+  it('treats everything after focus as one path (spaces are legal)', () => {
+    const cmd = parseBrokeCommand(['slice', 'focus', 'my docs', 'file ts.ts']);
+    assert.deepEqual(cmd, { kind: 'slice-focus', path: 'my docs file ts.ts' });
+  });
+
+  it('applies the toggle persistently', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-cmd-'));
+    const file = join(dir, 'config.json');
+    try {
+      const { config, message } = applyBrokeCommand(parseBrokeCommand(['slice', 'on']) as BrokeCommand, DEFAULT_CONFIG, file);
+      assert.equal(config.slice.enabled, true);
+      assert.match(message, /enabled/);
+      assert.equal(readFileSync(file, 'utf-8').includes('"slice"'), true, 'persisted to disk');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('lists slice commands in the help text', () => {
+    assert.match(HELP_TEXT, /^  slice on \| off/m);
+    assert.match(HELP_TEXT, /^  slice focus <path>/m);
+  });
+});
