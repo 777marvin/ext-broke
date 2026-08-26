@@ -80,6 +80,36 @@ export function extractGoal(messages: ReadonlyArray<{ role?: unknown; content?: 
   return firstUser ? contentToText(firstUser.content) : '';
 }
 
+/** Extract the most recent assistant statement as the "achieved" field input. */
+export function extractAchieved(messages: ReadonlyArray<{ role?: unknown; content?: unknown }>, maxChars = 1_500): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== 'assistant') continue;
+    const text = contentToText(m.content);
+    if (text) return truncateGoal(text, maxChars);
+  }
+  return '';
+}
+
+/** Pull plain text out of a cached summarizer message ({role, content} shape). */
+export function summaryTextOf(cached?: { message?: unknown }): string {
+  const content = (cached?.message as { content?: unknown } | undefined)?.content;
+  return contentToText(content);
+}
+
+/**
+ * Conservative test-green detection for the onTestPass trigger (default off).
+ * Requires an explicit pass count ("N tests passed" / "N ok") and NO failure
+ * indicators within the scan window. Exit codes are not visible at tool-result
+ * level, so this stays deliberately stricter than the feats.md sketch.
+ */
+export function looksLikeGreenTests(text: string): boolean {
+  const window = text.slice(0, 20_000);
+  const hasPassCount = /\b\d+\s+(?:tests?\s+)?(?:pass(?:ed|ing)?|ok)\b/i.test(window);
+  const hasFailureSignal = /\bfail/i.test(window) || /\b[1-9]\d*\s+(?:failed|errors?)\b/i.test(window);
+  return hasPassCount && !hasFailureSignal;
+}
+
 /** Masked, schema-valid record from milestone inputs. Secrets never persist. */
 export function makeSnapshotRecord(
   input: {
@@ -99,7 +129,7 @@ export function makeSnapshotRecord(
     taskName: input.taskName ?? '',
     createdAt,
     goal: truncateGoal(maskSecrets(input.goal)),
-    achieved: maskSecrets(input.achieved ?? ''),
+    achieved: truncateGoal(maskSecrets(input.achieved ?? '')),
     files: input.files ?? [],
     commit: input.commit ? maskSecrets(input.commit) : undefined,
     summary: maskSecrets(input.summary),

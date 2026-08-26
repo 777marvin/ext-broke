@@ -1,6 +1,7 @@
 import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type {
+  AfterCommitEvent,
   CommandDefinition,
   ContextMessage,
   Extension,
@@ -11,7 +12,7 @@ import type {
   ToolFinishedEvent,
   UIComponentDefinition,
 } from '@aiderdesk/extensions';
-import { applyBrokeCommand, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand } from './commands';
+import { applyBrokeCommand, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand, type BrokeCommand } from './commands';
 import {
   ACTIVE_TURN_TAIL,
   compressibleRange,
@@ -40,6 +41,20 @@ import {
   slicePathKey,
 } from './slice';
 import { runSelfTest } from './selftest';
+import {
+  buildFlushPlan,
+  buildStateMessage,
+  extractAchieved,
+  extractGoal,
+  listSnapshots,
+  looksLikeGreenTests,
+  makeSnapshotRecord,
+  persistSnapshot,
+  readHistory,
+  readSnapshot,
+  resolveSnapshot,
+  summaryTextOf,
+} from './snapshot';
 import {
   buildRunRecord,
   clearTaskStats,
@@ -464,12 +479,42 @@ export default class Broke implements Extension {
     }
   }
 
+  /**
+   * F3 trigger: record a milestone snapshot after every commit. The event is
+   * read-only; Broke only writes its own JSON under snapshots/<taskId>/.
+   * Isolation contract (host-contract suite): never throws into the loop.
+   */
+  async onAfterCommit(event: AfterCommitEvent, context: ExtensionContext): Promise<void> {
+    try {
+      const config = getConfig();
+      if (!config.enabled || !config.snapshot.onCommit || !event.message) return;
+      await this.snapshotMilestone(context, 'commit', event.message.split('\n')[0].slice(0, 200));
+    } catch (err) {
+      try {
+        context.log(`Broke: commit snapshot failed - ${err instanceof Error ? err.message : String(err)}`, 'warn');
+      } catch {
+        // swallow - logging is best effort
+      }
+    }
+  }
+
   private async toolFinished(event: ToolFinishedEvent, context: ExtensionContext): Promise<Partial<ToolFinishedEvent> | void> {
     const config = getConfig();
     if (!config.enabled) return;
 
     const sliced = await this.sliceOnToolFinished(event, config, context);
     if (sliced) return sliced;
+
+    // F3 trigger (off by default): test-green detection. Fire-and-forget -
+    // it must neither block nor influence the compression passes below.
+    if (config.enabled && config.snapshot.onTestPass && isCommandTool(event.toolName)) {
+      try {
+        const extracted = extractOutputText(event.output, { eventOutput: true });
+        if (extracted && looksLikeGreenTests(extracted.text)) void this.snapshotMilestone(context, 'tests-pass').catch(() => undefined);
+      } catch {
+        // detection is best effort
+      }
+    }
 
     if (!config.errors.enabled || !config.errors.toolLevel) return;
     if (!isCommandTool(event.toolName)) return;
@@ -850,6 +895,12 @@ export default class Broke implements Extension {
             }
             case 'summarize-now':
               return log(await ext.summarizeNow(context));
+            case 'snapshot':
+            case 'snapshot-list':
+            case 'snapshot-show':
+              return log(await ext.handleSnapshotCommand(context, cmd));
+            case 'flush':
+              return log(await ext.handleFlushCommand(context, cmd));
             case 'measure': {
               const summary = summarizeRunRecords(loadRunRecords());
               return log(formatMeasure(summary));
@@ -875,6 +926,158 @@ export default class Broke implements Extension {
         },
       },
     ];
+  }
+
+  // -------------------------------------------------------------------------
+  // F3 - snapshots & flush
+  // -------------------------------------------------------------------------
+
+  /** Build and persist a milestone record. Additive only - never touches messages. */
+  private async snapshotMilestone(context: ExtensionContext, label: string, commit?: string): Promise<string> {
+    const config = getConfig();
+    const task = context.getTaskContext();
+    if (!task) return 'broke: snapshots are task-scoped - run this inside a task';
+    const taskId = task.data.id;
+    if (!taskId) return 'broke: task has no id yet - send a message first';
+    let messages: ContextMessage[] = [];
+    try {
+      if (typeof task.getContextMessages === 'function') messages = await task.getContextMessages();
+    } catch {
+      // Degraded record below still persists goal-less; feature-detect pattern.
+    }
+    let files: string[] = [];
+    try {
+      if (typeof task.getUpdatedFiles === 'function') files = (await task.getUpdatedFiles()).map((f) => f.path);
+    } catch {
+      // degraded - empty file list
+    }
+    const cachedText = summaryTextOf(this.state.cachedSummaryByTask.get(taskId));
+    const record = makeSnapshotRecord({
+      taskId,
+      taskName: task.data.name ?? '',
+      goal: extractGoal(messages),
+      achieved: extractAchieved(messages),
+      files,
+      commit,
+      summary: cachedText || `template summary - ${messages.length} message(s), ${files.length} updated file(s)`,
+    });
+    const { recordPath, historyPath } = persistSnapshot(record, messages, { label, keepHistory: config.snapshot.keepHistory });
+    return `broke: snapshot recorded (${basename(recordPath)}${historyPath ? ' + undo file' : ''})`;
+  }
+
+  private async handleSnapshotCommand(context: ExtensionContext, cmd: BrokeCommand): Promise<string> {
+    const task = context.getTaskContext();
+    const taskId = task?.data.id;
+    if (!taskId) return 'broke: snapshots are task-scoped - run this inside a task';
+    try {
+      if (cmd.kind === 'snapshot-list') {
+        const entries = listSnapshots(taskId);
+        if (entries.length === 0) return 'broke: no snapshots for this task yet - /broke snapshot [label] or automatic on commits';
+        const lines = entries.map(
+          (e, i) => `#${i + 1} ${e.file}${e.bytes ? ` (${e.bytes.toLocaleString('en-US')} B)` : ''}${e.record?.commit ? ` | ${e.record.commit.slice(0, 12)}` : ''}${e.record ? ` | ${e.record.summary.slice(0, 100)}` : ' | (unreadable)'}`,
+        );
+        lines.unshift(`broke snapshots for this task (${entries.length}):`);
+        return lines.join('\n');
+      }
+      if (cmd.kind === 'snapshot-show') {
+        const resolved = resolveSnapshot(taskId, cmd.index);
+        if (!resolved) return `broke: no snapshot #${cmd.index} - /broke snapshot list shows the numbering (newest first)`;
+        const record = readSnapshot(resolved.path);
+        if (!record) return `broke: snapshot #${cmd.index} is unreadable/corrupt (${resolved.entry.file})`;
+        return JSON.stringify(record, null, 2);
+      }
+      if (cmd.kind !== 'snapshot') return '';
+      // Manual milestone with optional label.
+      return await this.snapshotMilestone(context, cmd.label ?? 'manual');
+    } catch (err) {
+      return `broke: snapshot failed - ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  /**
+   * The ONLY destructive operation in broke. Order of guarantees:
+   * 1. plan + confirm gate, 2. write snapshot AND undo file (abort on any IO
+   * failure BEFORE touching the conversation), 3. one loadContextMessages()
+   * replacement to task brief + [broke-state]. removeMessagesUpTo cannot keep
+   * the brief (inclusive-of-self), hence the documented loadContext alternative.
+   */
+  private async handleFlushCommand(context: ExtensionContext, cmd: BrokeCommand): Promise<string> {
+    if (cmd.kind !== 'flush') return '';
+    const config = getConfig();
+    const task = context.getTaskContext();
+    if (!task) return 'broke: flush runs inside a task - nothing done';
+    const taskId = task.data.id;
+    if (!taskId) return 'broke: task has no id yet - nothing to flush';
+
+    if (cmd.undoIndex !== undefined) {
+      try {
+        const resolved = resolveSnapshot(taskId, cmd.undoIndex);
+        if (!resolved) return `broke: no snapshot #${cmd.undoIndex} for this task - /broke snapshot list shows the numbering`;
+        const record = readSnapshot(resolved.path);
+        if (!record) return `broke: snapshot #${cmd.undoIndex} is unreadable - refusing a half-known restore`;
+        const history = readHistory(resolved.path, record);
+        if (!history || history.length === 0) {
+          return record.historyFile
+            ? 'broke: the undo file is missing or unreadable - refusing to half-restore'
+            : 'broke: no undo file for this snapshot (snapshot.keepHistory was off when it was taken)';
+        }
+        if (typeof task.loadContextMessages !== 'function') {
+          return 'broke: this AiderDesk build does not expose loadContextMessages - undo unavailable (feature-detect)';
+        }
+        await task.loadContextMessages(history as ContextMessage[]);
+        return `broke: restored ${history.length} message(s) from snapshot #${cmd.undoIndex}`;
+      } catch (err) {
+        return `broke: undo failed - ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    try {
+      const messages = typeof task.getContextMessages === 'function' ? await task.getContextMessages() : null;
+      if (!messages || messages.length === 0) {
+        return 'broke: this AiderDesk build does not expose getContextMessages - flush unavailable (feature-detect)';
+      }
+      const plan = buildFlushPlan(messages);
+      if (!plan.ok) return `broke: nothing flushed - ${plan.reason}`;
+      if (config.flush.confirm && !cmd.yes) {
+        if (typeof task.askQuestion !== 'function') {
+          return `broke: host confirmation is unavailable here - rerun with explicit "/broke flush --yes" to remove ${plan.removedCount} message(s)`;
+        }
+        const answer = await task.askQuestion(
+          `broke flush removes ${plan.removedCount} message(s) between the task brief and now and replaces them with ONE [broke-state] summary. A history file enables /broke flush --undo. Proceed?`,
+          { answers: [{ text: 'Flush', shortkey: 'y' }, { text: 'Cancel', shortkey: 'n' }], defaultAnswer: 'n' },
+        );
+        if (!/^y(es)?$/i.test(String(answer ?? '').trim())) return 'broke: flush cancelled - nothing changed';
+      }
+      let persistedName = '';
+      let stateText = '';
+      try {
+        const cachedText = summaryTextOf(this.state.cachedSummaryByTask.get(taskId));
+        const record = makeSnapshotRecord({
+          taskId,
+          taskName: task.data.name ?? '',
+          goal: extractGoal(messages),
+          achieved: extractAchieved(messages),
+          summary: cachedText || `${plan.removedCount} message(s) were flushed right after this state was recorded`,
+        });
+        stateText = buildStateMessage(record);
+        const { recordPath } = persistSnapshot(record, messages, { label: 'flush', keepHistory: config.snapshot.keepHistory });
+        persistedName = basename(recordPath);
+      } catch (err) {
+        return `broke: flush ABORTED before removing anything - could not write snapshot/history (${err instanceof Error ? err.message : String(err)})`;
+      }
+      if (typeof task.loadContextMessages !== 'function') {
+        return 'broke: flush stopped AFTER writing the snapshot but BEFORE removing anything - this AiderDesk build does not expose loadContextMessages (feature-detect)';
+      }
+      const replacement: ContextMessage[] = [
+        ...plan.headerIndexes.map((i) => messages[i]),
+        messages[plan.briefIndex],
+        { id: `broke-state-${Date.now()}`, role: 'user', content: stateText } as unknown as ContextMessage,
+      ];
+      await task.loadContextMessages(replacement);
+      return `broke: flushed ${plan.removedCount} message(s) - context is now the task brief plus one [broke-state] summary (snapshot ${persistedName}). Undo with /broke flush --undo <n>.`;
+    } catch (err) {
+      return `broke: flush failed - ${err instanceof Error ? err.message : String(err)}. If a replacement already happened, restore via /broke flush --undo.`;
+    }
   }
 
   /**
