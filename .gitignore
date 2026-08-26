@@ -32,6 +32,8 @@ stats.jsonl
 measure.jsonl
 # Runtime settings next to index.ts (deploy.ps1 keeps it in the install dir)
 config.json
+# F3 snapshot history (per-task JSON records written by snapshot.ts)
+snapshots/
 
 .aider*
 

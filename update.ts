@@ -380,6 +380,10 @@ function preserveRuntimeState(oldInstall: string, stagedPayload: string, warning
       warnings.push('errors/ archive exceeded 100 MB and was not carried over');
     }
   }
+  // F3 snapshot history is user session data - carried over like ledgers.
+  // Rotation bounds its size (a few JSON records per task), so no cap here.
+  const snapDir = join(oldInstall, 'snapshots');
+  if (existsSync(snapDir)) cpSync(snapDir, join(stagedPayload, 'snapshots'), { recursive: true });
 }
 
 function filesDiffer(a: string, b: string): boolean {

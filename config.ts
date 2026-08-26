@@ -102,6 +102,33 @@ const SliceSchema = z.object({
 });
 const sliceDefault = SliceSchema.parse({});
 
+const SnapshotSchema = z.object({
+  /**
+   * Record a milestone snapshot on every successful commit (onAfterCommit).
+   * Writing snapshots is additive - nothing in the task history changes.
+   */
+  onCommit: z.boolean().default(true),
+  /** Detect test-green tool results as milestones - off: exit-0/`passed`
+   *  heuristics misfire regularly on flaky suites. */
+  onTestPass: z.boolean().default(false),
+  /**
+   * Also write the raw message array next to each record (the undo file).
+   * Disabling this skips history files AND makes `/broke flush --undo`
+   * impossible - documented behavior.
+   */
+  keepHistory: z.boolean().default(true),
+});
+const snapshotDefault = SnapshotSchema.parse({});
+
+const FlushSchema = z.object({
+  /**
+   * The ONLY destructive operation in broke: /broke flush asks before
+   * removing anything. --yes skips the question - deliberate foot-gun.
+   */
+  confirm: z.boolean().default(true),
+});
+const flushDefault = FlushSchema.parse({});
+
 const UiSchema = z.object({
   /** Show the 💸 saved-tokens badge in the task status bar. */
   showStatusBadge: z.boolean().default(true),
@@ -150,6 +177,8 @@ export const ConfigSchema = z.object({
   summarize: SummarizeSchema.default(summarizeDefault),
   ui: UiSchema.default(uiDefault),
   stats: StatsSchema.default(statsDefault),
+  snapshot: SnapshotSchema.default(snapshotDefault),
+  flush: FlushSchema.default(flushDefault),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

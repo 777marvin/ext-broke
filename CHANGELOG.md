@@ -5,7 +5,28 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-08-26
+
+### Added
+
+- **F3 - State Snapshotting & Memory Flushing.** Milestone snapshots of a
+  task's state (goal / achieved / changed files / commit / masked summary)
+  live in `snapshots/<taskId>/` next to the extension - written after every
+  successful commit (`snapshot.onCommit`, default on), optionally on
+  test-green tool results (`snapshot.onTestPass`, default off), and manually
+  via `/broke snapshot [label] | list | show <n>`. `/broke flush` is the ONE
+  destructive command in broke: it replaces everything after the original
+  task brief with a single `[broke-state]` message so long tasks can continue
+  from brief + current state instead of full scrollback. Order of guarantees:
+  confirm question (`flush.confirm`) -> snapshot AND raw-history undo file on
+  disk (abort untouched if those writes fail) -> one loadContextMessages()
+  replacement -> byte-exact restore via `/broke flush --undo <n>` (requires
+  `snapshot.keepHistory`). Records rotate at 50/task incl. their undo files;
+  both deploy.ps1 and `/broke update` carry the folder across installs.
+  Known limitation (spike S2): AiderDesk's own `.aider.chat.history.md`
+  connector artifact is not rewritten by a flush; see README.
+- `/broke selftest` now reports what a flush would do to its synthetic
+  conversation (pure planner output).
 
 ### Added
 

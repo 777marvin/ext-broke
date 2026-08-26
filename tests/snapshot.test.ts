@@ -1,0 +1,235 @@
+/**
+ * F3 unit tests: record assembly, masking, persistence/rotation/undo files,
+ * the pure flush planner and the conservative test-green heuristic.
+ * Persistence tests use an explicit tmp dir override - never the repo tree.
+ */
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  buildFlushPlan,
+  buildStateMessage,
+  extractAchieved,
+  extractGoal,
+  GOAL_MAX_CHARS,
+  listSnapshots,
+  looksLikeGreenTests,
+  makeSnapshotRecord,
+  MAX_SNAPSHOTS_PER_TASK,
+  persistSnapshot,
+  readHistory,
+  readSnapshot,
+  resolveSnapshot,
+  rotateTaskDir,
+  safeLabel,
+} from '../snapshot';
+
+const user = (id: string, content: unknown) => ({ id, role: 'user', content });
+const assistant = (id: string, content: unknown) => ({ id, role: 'assistant', content });
+const systemLike = (id: string, content: unknown) => ({ id, role: 'system', content });
+
+function tmpSnapDir(): { dir: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'broke-snapshot-'));
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+describe('makeSnapshotRecord', () => {
+  it('produces a schema-valid, masked, truncated record', () => {
+    const longGoal = `Implement billing. ${'x'.repeat(GOAL_MAX_CHARS + 500)}`;
+    const record = makeSnapshotRecord(
+      {
+        taskId: 't1',
+        taskName: 'Task One',
+        goal: longGoal,
+        achieved: 'exports created',
+        files: ['src/a.ts'],
+        commit: 'abc1234',
+        summary: 'done',
+      },
+      '2026-08-26T10:00:00.000Z',
+    );
+    assert.equal(record.version, 1);
+    assert.equal(record.createdAt, '2026-08-26T10:00:00.000Z');
+    assert.equal(record.goal.length <= GOAL_MAX_CHARS, true);
+    assert.ok(record.goal.endsWith('…'), 'truncation is visible');
+    assert.deepEqual(record.files, ['src/a.ts']);
+    assert.equal(record.commit, 'abc1234');
+    assert.equal(record.historyFile, undefined);
+  });
+
+  it('masks secrets in goal and summary', () => {
+    const secretGoal = 'use token api_key=sk-qZ9wb8sL2mN4xR7vT5uJ0kA3 for calls';
+    const record = makeSnapshotRecord({ taskId: 't1', goal: secretGoal, summary: 'token sk-qZ9wb8sL2mN4xR7vT5uJ0kA3 kept working' });
+    assert.ok(!record.goal.includes('sk-qZ9wb8sL2mN4xR7vT5uJ0kA3'));
+    assert.ok(record.goal.includes('[REDACTED]'));
+    assert.ok(!record.summary.includes('sk-qZ9wb8sL2mN4xR7vT5uJ0kA3'));
+  });
+});
+
+describe('extractGoal / extractAchieved', () => {
+  it('takes the first user turn as goal and tolerates parts-array content', () => {
+    const messages = [
+      systemLike('s1', 'You are helpful.'),
+      user('u1', [{ type: 'text', text: 'First part.' }, { type: 'text', text: 'Second part.' }]),
+      assistant('a1', 'working...'),
+      user('u2', 'later instruction - NOT the goal'),
+    ];
+    assert.equal(extractGoal(messages), 'First part.\nSecond part.');
+  });
+
+  it('returns empty strings for conversations without user/assistant turns', () => {
+    assert.equal(extractGoal([assistant('a1', 'hi')]), '');
+    assert.equal(extractAchieved([user('u1', 'hi')]), '');
+  });
+
+  it('extractAchieved picks the most recent non-empty assistant statement', () => {
+    const messages = [user('u1', 'go'), assistant('a1', ''), assistant('a2', 'feature X built')];
+    assert.equal(extractAchieved(messages), 'feature X built');
+  });
+});
+
+describe('buildStateMessage', () => {
+  it('starts with the marker and round-trips the record through JSON', () => {
+    const record = makeSnapshotRecord({ taskId: 't1', goal: 'g', summary: 's' });
+    const msg = buildStateMessage(record);
+    assert.ok(msg.startsWith('[broke-state]\n'));
+    assert.deepEqual(JSON.parse(msg.slice('[broke-state]\n'.length)), record);
+  });
+});
+
+describe('buildFlushPlan (pure)', () => {
+  it('rejects a conversation without any user turn', () => {
+    const plan = buildFlushPlan([assistant('a1', 'hi')]);
+    assert.equal(plan.ok, false);
+    assert.match(plan.reason ?? '', /no user turn/);
+  });
+
+  it('declines when nothing follows the task brief', () => {
+    const plan = buildFlushPlan([user('u1', 'only the brief')]);
+    assert.equal(plan.ok, false);
+    assert.match(plan.reason ?? '', /nothing to flush|already minimal/i);
+  });
+
+  it('plans keep-header+brief / remove-rest with exact counts', () => {
+    const messages = [systemLike('s1', 'sys'), user('u1', 'brief'), assistant('a1', 'one'), user('u2', 'two'), assistant('a2', 'three')];
+    const plan = buildFlushPlan(messages);
+    assert.equal(plan.ok, true);
+    assert.equal(plan.briefIndex, 1);
+    assert.deepEqual(plan.headerIndexes, [0]);
+    assert.equal(plan.removedCount, 3);
+  });
+
+  it('collapses earlier state messages into the new one (re-flush)', () => {
+    const stateText = `[broke-state]\n{}`;
+    const messages = [user('u1', 'brief'), assistant('a0', 'mid'), { id: 'st0', role: 'user' as const, content: stateText }, assistant('a1', 'more work')];
+    const plan = buildFlushPlan(messages);
+    assert.equal(plan.ok, true);
+    assert.equal(plan.removedCount, messages.length - 1, 'everything after the brief is replaced');
+  });
+});
+
+describe('persistence round-trip', () => {
+  it('writes record + history first, reads both back; list is newest-first', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const record1 = makeSnapshotRecord({ taskId: 't9', goal: 'first', summary: 's1' }, '2026-08-26T10:00:00.000Z');
+      const history = [user('u1', 'brief'), assistant('a1', 'work')];
+      const p1 = persistSnapshot(record1, history, { dir, label: 'manual' });
+      assert.ok(existsSync(p1.recordPath));
+      assert.ok(p1.historyPath && existsSync(p1.historyPath));
+      const parsed = readSnapshot(p1.recordPath);
+      assert.ok(parsed);
+      assert.equal(parsed.goal, 'first');
+      assert.ok(parsed.historyFile?.endsWith('.history.json'), 'record links its undo file');
+      const restored = readHistory(p1.recordPath, parsed);
+      assert.equal(restored?.length, 2);
+
+      const record2 = makeSnapshotRecord({ taskId: 't9', goal: 'second', summary: 's2' }, '2026-08-26T11:00:00.000Z');
+      persistSnapshot(record2, history, { dir, label: 'commit' });
+      const entries = listSnapshots('t9', { dir });
+      assert.equal(entries.length, 2);
+      assert.equal(entries[0].createdAt, '2026-08-26T11:00:00.000Z', 'newest first');
+      assert.equal(entries[0].label, 'commit');
+      assert.equal(entries[1].label, 'manual');
+
+      const resolved = resolveSnapshot('t9', 2, { dir });
+      assert.ok(resolved && resolved.entry.label === 'manual');
+      assert.equal(resolveSnapshot('t9', 0, { dir }), undefined);
+      assert.equal(resolveSnapshot('t9', 99, { dir }), undefined);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('skips history files when keepHistory is false (undo impossible)', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const record = makeSnapshotRecord({ taskId: 'tk', goal: 'g', summary: 's' });
+      const p = persistSnapshot(record, [user('u1', 'x')], { dir, label: 'flush', keepHistory: false });
+      assert.equal(p.historyPath, undefined);
+      const parsed = readSnapshot(p.recordPath);
+      assert.ok(parsed);
+      assert.equal(parsed.historyFile, undefined);
+      assert.equal(readHistory(p.recordPath, parsed), undefined);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails loudly BEFORE creating a record when the history write fails', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const record = makeSnapshotRecord({ taskId: 'tk', goal: 'g', summary: 's' }, '2026-08-26T12:00:00.000Z');
+      // A poisoned history array throws during JSON.stringify - BEFORE any
+      // file write happens, so no half state can exist on disk.
+      const poisonedHistory = [{ toJSON() { throw new Error('boom'); } }];
+      assert.throws(() => persistSnapshot(record, poisonedHistory, { dir }));
+      assert.equal(listSnapshots('tk', { dir }).length, 0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('rotates to MAX_SNAPSHOTS_PER_TASK, deleting oldest records AND their undo files', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      for (let i = 0; i < MAX_SNAPSHOTS_PER_TASK + 5; i++) {
+        const minute = String(i % 60).padStart(2, '0');
+        const hour = String(Math.floor(i / 60)).padStart(2, '0');
+        const iso = `2026-08-26T${hour}:${minute}:00.000Z`;
+        persistSnapshot(makeSnapshotRecord({ taskId: 'rot', goal: `g${i}`, summary: 's' }, iso), [user('u1', 'h')], { dir, label: `n${i}` });
+      }
+      const entries = listSnapshots('rot', { dir });
+      assert.equal(entries.length, MAX_SNAPSHOTS_PER_TASK);
+      const dirFiles = readdirSync(join(dir, 'rot'));
+      assert.equal(dirFiles.filter((f) => f.endsWith('.history.json')).length, MAX_SNAPSHOTS_PER_TASK, 'undo files rotate with their records');
+      assert.ok(!existsSync(join(dir, 'rot', dirFiles.find((f) => f.includes('n0.json')) ?? 'never.json')), 'oldest record deleted');
+      // Manual rotation on an already-clean dir is a no-op.
+      assert.equal(rotateTaskDir(join(dir, 'rot')), 0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('sanitizes task ids and labels into filename-safe fragments', () => {
+    assert.equal(safeLabel('my feature!! v2'), 'my-feature-v2');
+    assert.equal(safeLabel('///'), 'snapshot');
+    assert.equal(safeLabel('x'.repeat(100)).length <= 40, true);
+  });
+});
+
+describe('looksLikeGreenTests (snapshot.onTestPass heuristic)', () => {
+  it('accepts explicit pass counts without failure signals', () => {
+    assert.equal(looksLikeGreenTests('npm test\nℹ pass 42\nℹ fail 0'), false, '"fail" word veto');
+    assert.equal(looksLikeGreenTests('Tests:\n24 passed, 24 total'), true);
+    assert.equal(looksLikeGreenTests('ok 7 suites'), true);
+  });
+
+  it('vetoes failures and ignores unrelated output', () => {
+    assert.equal(looksLikeGreenTests('3 failed, 21 passed'), false);
+    assert.equal(looksLikeGreenTests('hello world'), false);
+    assert.equal(looksLikeGreenTests(`2 failed of ${'x'.repeat(30_000)} 100 passed`), false, 'failure anywhere in window vetoes');
+  });
+});
