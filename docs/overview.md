@@ -1,19 +1,19 @@
 # Project Overview
 
-*Snapshot: v0.6.3 (2026-08-24), review rounds F1-F24 and XF1-XF16 closed,
-suite 210/210 green*
+*Snapshot: v0.8.0 (2026-08-26), review rounds F1-F24 + XF1-XF16 closed and
+external review R1-R14 dispositioned, suite 299/299 green*
 
 ## What broke is
 
 A token-budget extension for AiderDesk. It compresses the conversation input
 **before every model call**, in three depth levels, and can run the
 summarization pass on a **free local model** (Ollama) instead of the task's
-expensive model. The stored task history is never rewritten, compression
-applies to the input of each model call only.
+expensive model. The stored task history is never rewritten by the input
+pipeline, compression applies to the input of each model call only.
 
 | Level | What happens | Loss |
 |---|---|---|
-| `structural` | drop empty messages, dedupe identical adjacent tool results (producing tool-call must match, XF1), merge consecutive assistant texts | none (lossless) |
+| `structural` | drop empty messages, dedupe identical adjacent tool results (producing tool-call must match, XF1), merge consecutive assistant texts | text preserved; message framing may change (content-preserving) |
 | `truncate` (default) | + error compression of compiler/test output (tsc, Python/pytest, Jest/Vitest, Node stack traces) + head/tail truncation of old tool outputs, trimming of oversized tool-call inputs | middle of old outputs, error-dump detail |
 | `summarize` | + replace old conversation turns with a dense summary, via local Ollama (default, 0 cloud tokens) or a cloud model | detail of old turns |
 
@@ -21,15 +21,19 @@ applies to the input of each model call only.
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `index.ts` | 598 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate, reentry guard), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …` incl. measure + self-update wiring, config-watcher close/reopen for the folder swap), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`), per-run measurement persistence in `recordReport`; on AiderDesk ≥ 0.80 the watcher is additionally registered via `context.addDisposable()` so disable/uninstall releases the directory handle |
-| `compress.ts` | 982 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
-| `output.ts` | 155 | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
-| `errors.ts` | 475 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir, retention sweep, archive on/off, XF9/XF10); `isCommandTool` classification |
-| `config.ts` | 243 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` toggle |
-| `commands.ts` | 373 | `/broke` parser + all subcommands (status, stats with measured-reduction headline, measure, reset, selftest, update, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
-| `update.ts` | 719 | Self-update (`/broke update`): resolves the latest tagged GitHub release (`releases/latest`, fallback highest-semver tag), strict `vMAJOR.MINOR.PATCH` tag validation before any URL use, tarball download with timeouts + size cap, system-`tar` extraction, runtime-state preservation (config.json, stats/measure ledgers incl. rotation files, errors/ ≤ 100 MB, node_modules), automatic `npm ci --omit=dev` on lockfile change, atomic swap with rollback plus in-place replacement when a Windows handle pins the directory; rename retries for transient locks (~4 s staggered), merge-over fallback for persistently locked entries (snapshot by copy, merged over, pruned back to payload contents), byte-size manifest verification of the copied payload before success is declared (.deployed-version is written only then), complete rollback on every failure path, non-fatal leftover-backup cleanup; git-checkout guard, concurrency lock; all I/O injectable for hermetic tests |
-| `tokens.ts` | 385 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
-| `local.ts` | 135 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
+| `index.ts` | 897 | Extension entry: `class Broke implements Extension`, `onOptimizeMessages` (core pipeline, summarize auto-disable gate, reentry guard), `onToolFinished` (optional tool-level rewrite), `onTaskInitialized` (activation notice), `getCommands` (`/broke …` incl. measure + self-update wiring, config-watcher close/reopen for the folder swap), `getUIComponents` (💸 badge), config API (`getConfigComponent` / `getConfigData` / `saveConfigData`), per-run measurement persistence in `recordReport`; on AiderDesk ≥ 0.80 the watcher is additionally registered via `context.addDisposable()` so disable/uninstall releases the directory handle |
+| `compress.ts` | 936 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
+| `output.ts` | 149 | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
+| `errors.ts` | 434 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir, retention sweep, archive on/off, XF9/XF10); `isCommandTool` classification |
+| `config.ts` | 253 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` toggle |
+| `commands.ts` | 426 | `/broke` parser + all subcommands (status, stats with measured-reduction headline, measure, reset, selftest, update, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
+| `update.ts` | 820 | Self-update (`/broke update`): resolves the latest tagged GitHub release (`releases/latest`, fallback highest-semver tag), strict `vMAJOR.MINOR.PATCH` tag validation before any URL use, tarball download with timeouts + size cap, system-`tar` extraction, runtime-state preservation (config.json, stats/measure ledgers incl. rotation files, errors/ ≤ 100 MB, node_modules), automatic `npm ci --omit=dev` on lockfile change, atomic swap with rollback plus in-place replacement when a Windows handle pins the directory; rename retries for transient locks (~4 s staggered), merge-over fallback for persistently locked entries (snapshot by copy, merged over, pruned back to payload contents), byte-size manifest verification of the copied payload before success is declared (.deployed-version is written only then), complete rollback on every failure path, non-fatal leftover-backup cleanup; git-checkout guard, concurrency lock; all I/O injectable for hermetic tests. Since 0.8.0 (R1): installs ONLY release ASSETS - Ed25519-signed SHA256SUMS verified against the embedded public key plus checksum match BEFORE extraction/npm ci; unsigned (pre-0.8.0) releases are refused |
+| `tokens.ts` | 383 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
+| `local.ts` | 142 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
+| `validate.ts` | 75 | ContextValidator (external review P0): pure provider-bound invariant checks - no duplicate tool-call/result ids, no orphaned calls or results; `compressMessages` reverts to the original input when its output violates invariants that the input did not have |
+| `slice.ts` | 730 | ST-slicing (opt-in, 0.7.0): heuristic TS/Python interface-view extraction; unrecognized top-level `export`/`declare` statements pass through in full (R6 fail-safe); focus resolution + tool detection helpers |
+| `scripts/sign-release.mjs` | 78 | Release artifact signing: sha256sum manifest + Ed25519 signature (`BROKE_RELEASE_SIGNING_KEY`, CI-only) |
+| `.github/workflows/release.yml` | 55 | Tag-push release pipeline: byte-stable `git archive` artifact -> signed manifest -> GitHub release assets (the ONLY supported release path since 0.8.0) |
 | `pricing.ts` | 91 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
 | `selftest.ts` | 194 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
 | `scripts/measure.ts` | 25 | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |

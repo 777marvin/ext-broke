@@ -358,3 +358,44 @@ on PRs, Dependabot for npm + GitHub Actions, least-privilege job
 permissions. Secret scanning runs automatically on public repos (GitHub
 feature); push protection is a repo-settings toggle, not configurable
 from the workflow file.
+
+---
+
+# External Review Round - 2026-08-26 (R1-R14)
+
+Findings from the external static architecture/security review of
+`777marvin/ext-broke` v0.7.0. All 14 findings dispositioned in the same
+round (commits 584b47e..a7d06bf, suite 299/299 green, released as 0.8.0).
+
+| ID | Finding | Severity | Disposition |
+|---|---|---|---|
+| R1 | Self-updater without cryptographic release verification | 🔴 P0 | **Fixed** (8ef93e2): signed release artifacts (Ed25519 + SHA256SUMS via `release.yml` + `scripts/sign-release.mjs`, embedded public key), updater verifies signature + checksum before extraction; strict mode - pre-0.8.0 unsigned releases are refused |
+| R2 | ST-slicing destructively rewrites stored history | 🔴 P0 | **Mitigated / API-limited** (e468d52): host `ToolFinishedEvent` exposes a single `output` field - rawOutput/modelOutput split impossible today; explicit consent wording + README documentation of irreversibility; revisit when AiderDesk extends the event |
+| R3 | Remote summarizer can exfiltrate sensitive content | 🔴 P0 | **Fixed** (9e6a292): `summarize.allowRemoteHost` consent gate (default off), non-loopback hosts refused without it, status/init surfaces report blocked state |
+| R4 | Secret redaction necessarily incomplete | 🟠 P1 | **Documented** (10391bf): best-effort wording everywhere incl. summarizer prompt; no guarantee claims |
+| R5 | "structural = lossless" overstated | 🟠 P1 | **Fixed wording** (10391bf): relabeled "content-preserving", framing-change documented in stats/help/UI/README |
+| R6 | Heuristic TS slicer can hide valid APIs (`export default class` etc.) | 🟠 P1 | **Fixed** (7625a1b): unmatched top-level `export`/`declare` statements pass through in full + full regression matrix (JSX/regex/template-literal robustness test included) |
+| R7 | Error archive default-on grows privacy footprint | 🟠 P1 | **Fixed** (ae7c90d): `errors.archive` defaults to false |
+| R8 | File permissions not hardened | 🟠 P1 | **Fixed** (e2f29a9): mode 0600 files / 0700 archive dir (POSIX) |
+| R9 | Windows in-place fallback only partially atomic | 🟠 P1 | **Accepted residual risk**: rollback/retry/verified-copy hardening already landed earlier (2026-08-24 incident fix); versioned-installs redesign rejected for now - the host loads the install dir directly and a junction pointer swap is more fragile than the residual risk it removes. Documented here as deliberate |
+| R10 | Cloud summarization changes the cost model | 🟠 P1 | **Fixed observability** (9207a51): ledger records summarizer in/out chars; `/broke measure` shows cost side + estimated NET savings with billing caveats |
+| R11 | `chars / 4` is only an estimate | 🟡 P2 | **Documented** (already labeled everywhere); provider-reported usage is not exposed via the OptimizeMessages event - three-tier claim framing added to README |
+| R12 | `unknownReadToolsLogged` unbounded | 🟡 P2 | **Fixed** (c3546e3): bounded at 1000 via shared eviction helper |
+| R13 | Host/provider semantics undertested | 🟡 P2 | **Fixed** (a7d06bf): `tests/host-contract.test.ts` walks the full lifecycle with hostile-host injection; immediately surfaced and fixed unguarded `getTaskContext` preludes in all hooks |
+| R14 | "Saves money" claim stronger than provable effect | 🟡 P2 | **Fixed docs** (10391bf): guaranteed / estimated / not-guaranteed three-tier framing |
+
+Also introduced this round (review's target architecture, phase 1):
+the **ContextValidator** (`validate.ts`) - central provider-bound invariant
+check with fail-safe revert, wired into `compressMessages` and covered by
+its own suite.
+
+## Accepted limitations (explicit, reviewed)
+
+- **R2 canonical history:** until AiderDesk splits tool-event output into
+  stored vs. projected, slicing and tool-level error compression remain
+  opt-in rewrites of stored history with explicit consent messaging.
+- **R9 atomicity:** the Windows in-place fallback keeps its merge path
+  (rollback + retries + verified copy + snapshot restore). A crash mid-merge
+  can still require manual recovery from `broke.old`; the next update's
+  stale-backout recovery handles leftovers automatically.
+

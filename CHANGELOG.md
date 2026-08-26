@@ -15,6 +15,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   function-declaration matcher no longer overlaps whitespace quantifiers.
   Behavior for real-world code is unchanged.
 
+## [0.8.0] - 2026-08-26
+
+Hardening release driven by the external architecture/security review of
+2026-08-26 (findings R1-R14; disposition recorded in
+docs/review-backlog.md).
+
+### Added
+
+- **Cryptographically verified self-updates (R1, P0).** Releases are now
+  installed ONLY from signed artifacts: a new `release` workflow builds a
+  byte-stable git-archive tarball per tag, writes a sha256sum manifest and
+  signs it with Ed25519 (private key lives only in the
+  `BROKE_RELEASE_SIGNING_KEY` repository secret). The updater resolves
+  release *assets* (no more GitHub auto-tarballs) and verifies signature +
+  checksum BEFORE anything is extracted or `npm ci` runs. Unsigned or
+  tampered releases are refused outright - releases older than 0.8.0 can no
+  longer be (re-)installed via `/broke update`; roll back to the last signed
+  version instead.
+- **ContextValidator (P0).** New `validate.ts` checks provider-bound
+  invariants on the pipeline output: no duplicated tool-call/result ids, no
+  orphaned calls, no orphaned results. If a compression pass ever produced a
+  broken context from a sound input, the whole run reverts to the original
+  messages (fail-safe over fail-broken); already-corrupt inputs ship
+  compressed as before so the guard cannot become a silent kill-switch.
+  Reverted savings are discarded; an LLM summarizer call already made stays
+  on the honest cost side.
+- **Remote Ollama hosts require explicit consent (R3, P0).** A non-loopback
+  `summarize.ollamaUrl` means conversation content leaves the machine. The
+  local summarizer now refuses such hosts until
+  `/broke summarize allow-remote on` (or the settings toggle) is used.
+  Refusal is graceful: the model call proceeds uncompressed and repeated
+  refusals trip the existing auto-disable.
+- **Summarizer cost accounting + net savings (R10/R11).** The measure
+  ledger records chars sent to / received from the summarizer LLM;
+  `/broke measure` reports the traffic and an estimated NET savings line
+  (gross saved tokens minus summarizer traffic), labeled as estimate with
+  explicit billing caveats.
+- **Host-contract test suite (R13).** Drives the real extension through the
+  full event lifecycle with a fake host, including hostile-surface cases
+  (throwing `getTaskContext`, degenerate events).
+
+### Changed
+
+- **`errors.archive` defaults to OFF (R7).** Persisting full tool outputs is
+  now an explicit opt-in; tool-level summaries say "full output removed"
+  until it is enabled. Config table/docs updated accordingly.
+- **"lossless" relabeled to "content-preserving" (R5).** Textual content of
+  structural passes survives, but message framing may change (consecutive
+  assistant texts merge into one message). User-facing surfaces and docs say
+  so; config enum values are unchanged.
+- **Honest product claims (R4/R14).** README separates guaranteed (payload
+  reduction), estimated (chars/4 token figures) and not-guaranteed (actual
+  billing savings) tiers; redaction is consistently described as best effort
+  with unknown formats passing through.
+- **Consent wording for history-rewriting passes (R2 mitigation).** Enabling
+  ST-slicing or errors tool-level rewriting now states explicitly that the
+  rewrite lands in stored task history irreversibly - disabling later does
+  not restore original outputs. (The AiderDesk API currently exposes only a
+  single `output` field on tool events, so a non-destructive
+  rawOutput/modelOutput split is impossible today; documented.)
+
+### Fixed
+
+- **Slicer fail-safe for unrecognized exports (R6).** Statements the
+  heuristic parser does not know - `export default class`, `export =`,
+  ambient `declare module/global` blocks - were silently dropped from the
+  interface view, hiding real API surface from the model. Any unmatched
+  top-level statement starting with `export`/`declare` now passes through
+  in full, plus a regression matrix covering the review's case list.
+- **Owner-only file permissions (R8).** Error archive, config.json and
+  stats/measure ledgers write with mode 0600 (archive dir 0700) where the
+  OS honors POSIX bits.
+- **`unknownReadToolsLogged` bounded (R12).**
+
 ## [0.7.0] - 2026-08-26
 
 ### Added
