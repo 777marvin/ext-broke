@@ -290,6 +290,9 @@ export interface RunRecord {
   /** Real summarizer LLM calls this run (0 = cache reuse). */
   summarizeCalls: number;
   summarizer: 'local' | 'cloud' | 'none';
+  /** Cost side (R10): chars sent to / received from the summarizer LLM. Optional: pre-0.8.0 records lack them. */
+  summarizerInputChars?: number;
+  summarizerOutputChars?: number;
 }
 
 /** Map a compression report to its measurement record (pure). */
@@ -307,6 +310,8 @@ export function buildRunRecord(taskId: string, report: CompressReport): RunRecor
     summarizeChars: report.summarizeChars,
     summarizeCalls: report.summarizeCalls,
     summarizer: report.summarizer,
+    summarizerInputChars: report.summarizerInputChars,
+    summarizerOutputChars: report.summarizerOutputChars,
   };
 }
 
@@ -353,6 +358,9 @@ export interface MeasureSummary {
   medianSavedCharsPerRun: number;
   maxSavedCharsPerRun: number;
   summarizeCalls: number;
+  /** Cost side (R10): summarizer traffic summed over runs (chars). */
+  summarizerInputChars: number;
+  summarizerOutputChars: number;
   /** Per-task breakdown, sorted by savedChars descending. */
   byTask: Array<{ taskId: string; runs: number; savedChars: number }>;
 }
@@ -392,6 +400,8 @@ export function summarizeRunRecords(records: RunRecord[]): MeasureSummary | null
     medianSavedCharsPerRun: median,
     maxSavedCharsPerRun: sorted[sorted.length - 1],
     summarizeCalls: records.reduce((sum, r) => sum + r.summarizeCalls, 0),
+    summarizerInputChars: records.reduce((sum, r) => sum + (r.summarizerInputChars ?? 0), 0),
+    summarizerOutputChars: records.reduce((sum, r) => sum + (r.summarizerOutputChars ?? 0), 0),
     byTask: [...byTask.entries()]
       .map(([taskId, entry]) => ({ taskId, runs: entry.runs, savedChars: entry.savedChars }))
       .sort((a, b) => b.savedChars - a.savedChars),

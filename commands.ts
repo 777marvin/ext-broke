@@ -381,6 +381,19 @@ export function formatMeasure(summary: MeasureSummary | null): string {
     `  saved per run:   mean ${fmtChars(summary.meanSavedCharsPerRun)} | median ${fmtChars(summary.medianSavedCharsPerRun)} | max ${fmtChars(summary.maxSavedCharsPerRun)}`,
     `  summarizer calls: ${summary.summarizeCalls} (true cost side - cache reuse not counted)`,
   ];
+  // Net view (review R10): gross savings minus the summarizer's own traffic
+  // (chars/4 on both sides). Only shown when a summarizer actually ran.
+  if (summary.summarizerInputChars > 0 || summary.summarizerOutputChars > 0) {
+    const summarizerTokens = estimateTokens(summary.summarizerInputChars + summary.summarizerOutputChars);
+    const savedGross = estimateTokens(summary.savedChars);
+    const net = Math.max(savedGross - summarizerTokens, 0);
+    lines.push(
+      `  summarizer cost: ≈ ${summarizerTokens.toLocaleString('en-US')} tokens (in ${fmtChars(summary.summarizerInputChars)}, out ${fmtChars(summary.summarizerOutputChars)})`,
+    );
+    lines.push(
+      `  estimated NET savings after summarizer traffic: ≈ ${net.toLocaleString('en-US')} tokens (gross ≈ ${savedGross.toLocaleString('en-US')}; actual billing also depends on caching and model prices)`,
+    );
+  }
   if (summary.byTask.length > 0) {
     lines.push('  per task:');
     for (const t of summary.byTask.slice(0, 5)) {

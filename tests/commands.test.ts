@@ -321,6 +321,8 @@ describe('formatMeasure', () => {
       medianSavedCharsPerRun: 2500,
       maxSavedCharsPerRun: 3000,
       summarizeCalls: 0,
+      summarizerInputChars: 0,
+      summarizerOutputChars: 0,
       byTask: [{ taskId: 't1', runs: 2, savedChars: 5000 }],
     });
     assert.ok(out.includes('2 run(s)'));
@@ -328,6 +330,30 @@ describe('formatMeasure', () => {
     assert.ok(out.includes('NOT a cumulative context claim'));
     assert.ok(out.includes('25%'));
     assert.ok(out.includes('per task'));
+  });
+
+  it('shows the net-savings line when the summarizer actually ran (R10)', () => {
+    const out = formatMeasure({
+      runs: 2,
+      tasks: 1,
+      spanMs: 0,
+      charsBefore: 20000,
+      charsAfter: 15000,
+      savedChars: 5000,
+      savedTokens: 1250,
+      meanSavedCharsPerRun: 2500,
+      medianSavedCharsPerRun: 2500,
+      maxSavedCharsPerRun: 3000,
+      summarizeCalls: 2,
+      summarizerInputChars: 8000,
+      summarizerOutputChars: 2000,
+      byTask: [],
+    });
+    // gross ≈ 1250 tokens, summarizer traffic = (8000+2000)/4 = 2500 tokens
+    // → net clamps to 0 but must be REPORTED honestly.
+    assert.ok(out.includes('summarizer cost'));
+    assert.ok(out.includes('NET savings after summarizer traffic'));
+    assert.ok(out.includes('gross ≈ 1,250'));
   });
 
   it('rounds the reduction percentage', () => {
@@ -343,6 +369,8 @@ describe('formatMeasure', () => {
       medianSavedCharsPerRun: 10000,
       maxSavedCharsPerRun: 10000,
       summarizeCalls: 0,
+      summarizerInputChars: 0,
+      summarizerOutputChars: 0,
       byTask: [],
     });
     assert.ok(out.includes('33.3%'));
