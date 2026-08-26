@@ -148,7 +148,9 @@ export function appendJsonLine(filePath: string, line: string, maxBytes: number)
     if (existsSync(filePath) && statSync(filePath).size > maxBytes) {
       rotateLedger(filePath);
     }
-    appendFileSync(filePath, `${line}\n`, 'utf-8');
+    // mode 0o600 (POSIX): ledgers carry task ids and usage patterns - keep
+    // them owner-only where the OS honors it (review R8).
+    appendFileSync(filePath, `${line}\n`, { encoding: 'utf-8', mode: 0o600 });
   } catch {
     // ledgers are best effort - never break the extension over them
   }
@@ -186,7 +188,7 @@ export function clearTaskStats(taskId: string, filePath: string = STATS_PATH): v
         }
         kept.push(line);
       }
-      writeFileSync(f, kept.length ? `${kept.join('\n')}\n` : '', 'utf-8');
+      writeFileSync(f, kept.length ? `${kept.join('\n')}\n` : '', { encoding: 'utf-8', mode: 0o600 });
     }
   } catch {
     // best effort

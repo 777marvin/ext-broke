@@ -214,7 +214,9 @@ export function invalidateConfigCache(): void {
  */
 export function saveConfig(config: Config, filePath: string = CONFIG_PATH): void {
   const tmpPath = `${filePath}.tmp`;
-  writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf-8');
+  // mode 0o600 (POSIX): config can hold summarizer endpoints; owner-only is
+  // the least-surprise default for sensitive local state (review R8).
+  writeFileSync(tmpPath, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 });
   const fd = openSync(tmpPath, 'r+');
   try {
     fsyncSync(fd);

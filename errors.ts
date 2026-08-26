@@ -175,10 +175,13 @@ export interface SaveErrorOutputOptions {
 export function saveErrorOutput(taskId: string, callId: string, text: string, dir: string = ERRORS_DIR, opts: SaveErrorOutputOptions = {}): string {
   try {
     const taskDir = join(dir, safeName(taskId));
-    mkdirSync(taskDir, { recursive: true });
+    // Owner-only permissions where the OS honors them (POSIX; Windows
+    // ignores the mode bits): the archive holds redacted-but-sensitive tool
+    // output and must not be world-readable (review R8).
+    mkdirSync(taskDir, { recursive: true, mode: 0o700 });
     const file = join(taskDir, `${safeName(callId)}.log`);
     const size = Buffer.byteLength(text, 'utf-8');
-    writeFileSync(file, text, 'utf-8');
+    writeFileSync(file, text, { encoding: 'utf-8', mode: 0o600 });
 
     // Incremental accounting: overwriting the same call id must not
     // double-count the previous content.
