@@ -182,6 +182,10 @@ commands) or from the gear icon on the extension card:
 /broke errors archive <on|off>   save full outputs to errors/ (default: on)
 /broke errors retention <days>   delete archived outputs older than n days (default 30)
 /broke errors clear              delete the whole error archive now
+/broke slice on | off            interface views for file reads (default: off)
+/broke slice focus <path>        always return this file in full (per task)
+/broke slice focus clear         drop the explicit focus
+/broke slice status              slicing mode and current focus for this task
 /broke summarize via <local|cloud> summarizer backend
 /broke summarize model <name>      Ollama model tag
 /broke summarize cloud <provider/model>
@@ -231,6 +235,29 @@ After 3 consecutive summarize failures, broke disables summarization for
 that task and tells you why. The badge tooltip shows the disabled state;
 `/broke reset` or changing the summarizer backend/model re-enables it.
 
+### ST-slicing (tool-level, opt-in)
+
+Independent of the input pipeline, `slice.enabled` (default **off**)
+rewrites what large file reads deliver to the model: instead of full file
+bodies, the agent receives an interface view - imports, type/interface
+declarations in full, function/class signatures with bodies elided,
+dataclass fields and def signatures for Python - capped at
+`slice.maxChars` with an honest fallback to full content when the view
+would not shrink or would grow too large. The view carries an explicit
+`[broke: interface view - N of M lines ...]` marker naming the escape
+hatch (`/broke slice off`).
+
+The *focus* file always returns in full: explicitly via
+`/broke slice focus <path>`, automatically after an edit-tool call on it
+(`focusAuto`), or while it has pending task changes. Because this rewrites
+the stored tool result (unlike the input pipeline above), it is opt-in by
+default.
+
+Known gap (verified by spike S1): files Aider itself injects into context -
+repo map, `/add`, connector-read content - bypass tool hooks entirely and
+are never sliced. Slicing only covers what flows through file-read tools.
+Savings appear as an estimate under `slice:` in `/broke stats`.
+
 ## Security notes
 
 The summarize pass condenses conversation content (tool outputs, web
@@ -263,6 +290,11 @@ it only changes which model sees the untrusted text first.
 | errors.toolLevel | off | rewrite stored history at tool level |
 | errors.archive | on | save full tool outputs to errors/ (off: nothing is written) |
 | errors.retentionDays | 30 | delete archived outputs older than N days |
+| slice.enabled | off | interface views for large file reads (ST-slicing) |
+| slice.parser | `heuristic` | v1 heuristic only; `ast` reserved for web-tree-sitter |
+| slice.minChars | 4000 | files smaller pass through untouched |
+| slice.maxChars | 20000 | view cap; larger views fall back to full content |
+| slice.focusAuto | on | derive focus from edit-tool calls / updated files |
 | summarize.via | `local` | local (Ollama) / cloud |
 | summarize.localModel | `qwen2.5-coder:3b` | Ollama model tag |
 | summarize.ollamaUrl | `http://127.0.0.1:11434` | Ollama base URL |
@@ -275,10 +307,11 @@ it only changes which model sees the untrusted text first.
 ## Status
 
 broke is in active development. The roadmap
-([docs/feats.md](docs/feats.md)) covers planned features: ST-slicing,
+([docs/feats.md](docs/feats.md)) covers the remaining planned features:
 state snapshotting & memory flushing, a local keyword/vector index, with
-implementation specs. Suggestions and bug reports are very welcome: just
-open an [issue](https://github.com/777marvin/ext-broke/issues).
+implementation specs (ST-slicing shipped in v0.7.0). Suggestions and bug
+reports are very welcome: just open an
+[issue](https://github.com/777marvin/ext-broke/issues).
 
 broke targets AiderDesk's extension API. The compression logic itself is
 plain TypeScript, so porting it to other agent platforms is possible in

@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-26
+
 ### Added
 
+- **ST-slicing (Semantic Context Thinning), opt-in.** `/broke slice on`
+  makes large file reads deliver interface views instead of full bodies:
+  imports, type/interface declarations, function/class signatures with
+  bodies elided, decorated members, dataclass fields and Python def
+  signatures - capped by `slice.maxChars` with an honest fallback to full
+  content when a view would not shrink. The focus file always returns in
+  full: explicitly via `/broke slice focus <path>`, automatically after an
+  edit-tool call (`slice.focusAuto`) or while it has pending task changes.
+  Every view carries an explicit marker naming the escape hatch
+  (`/broke slice off`). Estimated savings show as `slice:` in
+  `/broke stats` and the badge tooltip. Known gap (spike S1): Aider-injected
+  context files (repo map, `/add`) bypass tool hooks and are never sliced.
 - **Idle transparency for honest zeros.** The 💸 badge now shows why a task
   has saved nothing yet: with no recorded passes but at least one observed
   pipeline run, it renders e.g. `💸 0 · 31k/60k` (last run's input size vs

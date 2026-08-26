@@ -15,18 +15,20 @@ be resolved during the corresponding feature's development.
 | # | Feature | Target version | Effort | Status |
 |---|---------|----------------|--------|--------|
 | F1 | Active Log & Stack-Trace Compressor | 0.2.0 | S | shipped |
-| F2 | ST-Slicing (Semantic Context Thinning) | TBD | M | planned |
+| F2 | ST-Slicing (Semantic Context Thinning) | 0.7.0 | M | shipped |
 | F3 | State Snapshotting & Memory Flushing | TBD | M | planned |
 | F4 | Local Keyword/Vector Index with snippet summaries | TBD | L | planned |
 
-**Version reality check (2026-08-24):** v0.3.0 to v0.6.2 are released
-(current: v0.6.2, 2026-08-24) and shipped F1 improvements, the reference
+**Version reality check (2026-08-26):** v0.3.0 to v0.6.3 are released
+and shipped F1 improvements, the reference
 benchmark, the measurement ledger, the error-archive privacy controls,
 the CI security automation, the self-update command (`/broke update`,
 which installs tagged GitHub releases without deploy.ps1) plus its
 hardening round (rename retries, byte-size payload verification,
-complete rollback), the always-live status badge and the AiderDesk 0.80
-extension-API updates (disposable config-watcher cleanup). F2-F4 are
+complete rollback), the always-live status badge, the AiderDesk 0.80
+extension-API updates (disposable config-watcher cleanup), the honest-zero
+transparency work (idle badge hint, `/broke why`, stats flush) and F2
+ST-slicing (v0.7.0). F3-F4 are
 **not** implemented in any released version. The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
 F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without
 F2/F3, and 0.5.0 shipped the XF-hardening round instead) and stay TBD
@@ -204,7 +206,14 @@ counts, region protection).
 
 ## F2: ST-Slicing (Semantic Context Thinning)
 
-**Version:** TBD (originally planned for 0.3.0, which shipped without it; feat: → minor). **Effort:** M.
+**Version:** 0.7.0 (shipped; originally planned for 0.3.0, which shipped without it). **Effort:** M.
+
+Implementation notes (v1 as built): two-factor tool detection (name regex +
+input path-field shape, S4); focus = explicit > last edit target >
+`getUpdatedFiles()` behind a 30 s TTL cache; heuristic parser only (the
+`parser` schema field exists, no command - the ast backend ships with its
+command together in v2); oversized/non-shrinking views fall back to full
+content; `savedChars.slice` is an estimate outside the measure ledger.
 
 ### Objective
 
@@ -296,18 +305,18 @@ replaced content).
 
 ### Acceptance criteria
 
-- [ ] Reading a TS file ≥ `minChars` returns imports + declarations +
+- [x] Reading a TS file ≥ `minChars` returns imports + declarations +
       signatures with elided bodies; reading the focus file returns the full
       body (focus symbol when resolvable).
-- [ ] Edit-tool call on file X makes the next read of X full-body
+- [x] Edit-tool call on file X makes the next read of X full-body
       (`focusAuto`), and reads of other files stay sliced.
-- [ ] Python files slice correctly (def signatures incl. type hints,
+- [x] Python files slice correctly (def signatures incl. type hints,
       `__init__`, class members).
-- [ ] `slice.enabled: false`, non-sliceable extensions, small files, error
+- [x] `slice.enabled: false`, non-sliceable extensions, small files, error
       outputs and image parts pass through untouched.
-- [ ] Unknown read/edit tool names are logged once and never crash the hook.
-- [ ] `/broke slice status` shows the current focus and parser mode.
-- [ ] README documents the Aider-CLI-context gap (S1 result) honestly.
+- [x] Unknown read/edit tool names are logged once and never crash the hook.
+- [x] `/broke slice status` shows the current focus and parser mode.
+- [x] README documents the Aider-CLI-context gap (S1 result) honestly.
 
 ### Verification
 
@@ -509,7 +518,7 @@ via agent; verify snippet budget in a large repo.
 - Deploy: `.\scripts\deploy.ps1 -Category extensions -Name broke` from a
   clean, tagged state (verify S3: config.json **and** new artifact folders
   survive).
-- Version bumps: F1 → 0.2.0/0.2.1 (shipped). F2–F4 are unimplemented; their originally planned bumps (F2 → 0.3.0, F3 → 0.4.0, F4 → 0.5.0) are obsolete because 0.3.0/0.4.0 shipped without them. New bumps are assigned when each feature is scheduled (see roadmap).
+- Version bumps: F1 → 0.2.0/0.2.1 (shipped). F2 → 0.7.0 (shipped). F3-F4 are unimplemented; their originally planned bumps (F3 → 0.4.0, F4 → 0.5.0) are obsolete because 0.3.0/0.4.0 shipped without them. New bumps are assigned when each feature is scheduled (see roadmap).
 
 ## Risk register
 
