@@ -14,6 +14,11 @@
  *   node_modules - mirroring deploy.ps1's preserve list.
  * - Only tagged releases (vMAJOR.MINOR.PATCH) are ever installed, never a
  *   moving branch: what lands on disk is exactly what CI tested.
+ * - Trust model (R1): releases are installed ONLY from signed artifacts -
+ *   the release workflow attaches a source archive plus SHA256SUMS and an
+ *   Ed25519 signature of that manifest. The updater verifies signature and
+ *   checksum BEFORE anything is extracted; unsigned or tampered releases
+ *   are refused outright.
  * - All network operations have hard timeouts; the tag is strictly
  *   validated before it may appear in a URL.
  */
@@ -31,6 +36,7 @@ import {
   writeFileSync,
   type Dirent,
 } from 'node:fs';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -71,12 +77,97 @@ const API_TIMEOUT_MS = 15_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 const EXTRACT_TIMEOUT_MS = 60_000;
 const DEPS_TIMEOUT_MS = 180_000;
-/** Sanity cap for the downloaded tarball (the whole repo is well under 1 MB). */
+/** Sanity cap for the downloaded release artifact (the whole repo is well under 1 MB). */
 const MAX_TARBALL_BYTES = 50 * 1024 * 1024;
+/** SHA256SUMS / signature assets are tiny; anything larger is hostile. */
+const MAX_SUMS_BYTES = 1024 * 1024;
 
-function tarballUrl(tag: string): string {
-  // `tag` passed TAG_RE before this is ever called: only 'v', digits, dots.
-  return `https://github.com/${UPDATE_REPO.owner}/${UPDATE_REPO.repo}/archive/refs/tags/${tag}.tar.gz`;
+/**
+ * Ed25519 public key (SPKI DER, base64) whose private counterpart signs
+ * every official release artifact (review R1). The private key lives ONLY
+ * in the BROKE_RELEASE_SIGNING_KEY repository secret used by the release
+ * workflow - it never travels with the code. The updater refuses any
+ * release whose SHA256SUMS file does not carry this key's valid signature,
+ * and refuses the artifact when its SHA-256 does not match the manifest.
+ */
+export const RELEASE_SIGNING_PUBLIC_KEY_B64 =
+  'MCowBQYDK2VwAyEAgQkYOmgMDvywgIpei0OJ5lrbWFzj1hkCDPWJ6Cc+Zqs=';
+
+/** Release asset names attached by .github/workflows/release.yml. */
+export const SUMS_ASSET_NAME = 'SHA256SUMS';
+export const SIG_ASSET_NAME = 'SHA256SUMS.sig';
+
+/** Name of the signed source artifact for a tag ('v0.8.0' -> broke-v0.8.0.tar.gz). */
+export function releaseAssetName(tag: string): string {
+  return `broke-${tag}.tar.gz`;
+}
+
+/** Lowercase hex SHA-256 of `data`. */
+export function sha256Hex(data: Uint8Array): string {
+  return createHash('sha256').update(data).digest('hex');
+}
+
+/**
+ * Expected checksum for `fileName` from a standard sha256sum-format
+ * manifest ("<hex>  <name>" per line), or null when absent.
+ */
+export function checksumFromSums(sumsText: string, fileName: string): string | null {
+  for (const line of sumsText.split('\n')) {
+    const m = line.trim().match(/^([a-fA-F0-9]{64})\s+\*?(.+)$/);
+    if (m && m[2] === fileName) return m[1].toLowerCase();
+  }
+  return null;
+}
+
+/** True when `signature` is a valid Ed25519 signature of `sums` under `publicKeyB64`. */
+export function verifySumsSignature(sums: Uint8Array, signature: Uint8Array, publicKeyB64: string = RELEASE_SIGNING_PUBLIC_KEY_B64): boolean {
+  if (signature.length === 0) return false;
+  try {
+    const key = createPublicKey({ key: Buffer.from(publicKeyB64, 'base64'), format: 'der', type: 'spki' });
+    // Ed25519: the algorithm parameter must be null (digest comes from the key).
+    return verify(null, sums, key, signature);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Full artifact verification: manifest signature first (trust anchor), then
+ * the artifact's checksum against that manifest. Throws with a precise
+ * reason on any failure - runUpdate refuses to touch the installation.
+ * `publicKeyB64` defaults to the embedded release key; tests and future key
+ * rotations can pass a different anchor.
+ */
+export function defaultVerifyRelease(
+  sums: Uint8Array,
+  signature: Uint8Array,
+  artifact: Uint8Array,
+  artifactName: string,
+  publicKeyB64: string = RELEASE_SIGNING_PUBLIC_KEY_B64,
+): void {
+  if (!verifySumsSignature(sums, signature, publicKeyB64)) {
+    throw new Error('release signature verification failed - artifacts are not signed with the official broke release key');
+  }
+  const expected = checksumFromSums(Buffer.from(sums).toString('utf-8'), artifactName);
+  if (!expected) throw new Error(`${SUMS_ASSET_NAME} contains no entry for ${artifactName}`);
+  const actual = sha256Hex(artifact);
+  if (actual !== expected) {
+    throw new Error(`checksum mismatch for ${artifactName} - downloaded ${actual}, manifest says ${expected}`);
+  }
+}
+
+async function defaultDownloadBytes(url: string): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'broke-extension' }, signal: controller.signal });
+    if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > MAX_SUMS_BYTES) throw new Error(`asset exceeds ${MAX_SUMS_BYTES} bytes - refusing`);
+    return buf;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function defaultFetchJson(url: string): Promise<unknown> {
@@ -124,8 +215,16 @@ async function defaultRunNpmCi(dir: string): Promise<void> {
 export interface UpdateDeps {
   fetchJson(url: string): Promise<unknown>;
   downloadTarball(url: string, destFile: string): Promise<void>;
+  /** Small release assets (SHA256SUMS + signature), fetched into memory. */
+  downloadBytes(url: string): Promise<Uint8Array>;
   extractTarball(archiveFile: string, destDir: string): Promise<void>;
   runNpmCi(dir: string): Promise<void>;
+  /**
+   * Release verification (R1). Defaults to {@link defaultVerifyRelease}
+   * against the embedded public key; tests inject stubs to exercise the
+   * failure paths without holding the real private key.
+   */
+  verifyRelease(sums: Uint8Array, signature: Uint8Array, artifact: Uint8Array, artifactName: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +269,50 @@ export async function resolveLatestVersion(
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(`cannot resolve latest broke release (${reason})`);
+  }
+}
+
+/**
+ * Assets of one release (name -> browser_download_url). Missing/malformed
+ * entries are skipped; the caller decides which assets are REQUIRED.
+ */
+export function assetsFromRelease(rel: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  if (rel && typeof rel === 'object' && Array.isArray((rel as Record<string, unknown>).assets)) {
+    for (const a of (rel as { assets: unknown[] }).assets) {
+      if (
+        a &&
+        typeof a === 'object' &&
+        typeof (a as Record<string, unknown>).name === 'string' &&
+        typeof (a as Record<string, unknown>).browser_download_url === 'string'
+      ) {
+        out.set((a as { name: string }).name, (a as { browser_download_url: string }).browser_download_url);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolve the release to install - latest when `tag` is undefined, else the
+ * exact tag. Unlike resolveLatestVersion (check mode), install mode REQUIRES
+ * a release object with assets: unsigned tags cannot be installed (R1).
+ */
+async function fetchRelease(
+  fetchJson: (url: string) => Promise<unknown>,
+  tag?: string,
+): Promise<{ tag: string; version: string; assets: Map<string, string> }> {
+  const path = tag ? `/releases/tags/${tag}` : '/releases/latest';
+  try {
+    const rel = await fetchJson(`https://api.github.com/repos/${UPDATE_REPO.owner}/${UPDATE_REPO.repo}${path}`);
+    const resolvedTag =
+      tag ??
+      (rel && typeof rel === 'object' ? tagFromUnknown((rel as Record<string, unknown>).tag_name) : null);
+    if (!resolvedTag) throw new Error('release has no valid vMAJOR.MINOR.PATCH tag');
+    return { tag: resolvedTag, version: resolvedTag.slice(1), assets: assetsFromRelease(rel) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`cannot resolve broke release ${tag ?? '(latest)'} (${reason})`);
   }
 }
 
@@ -613,8 +756,10 @@ export async function runUpdate(
     const io: UpdateDeps = {
       fetchJson: deps.fetchJson ?? defaultFetchJson,
       downloadTarball: deps.downloadTarball ?? defaultDownloadTarball,
+      downloadBytes: deps.downloadBytes ?? defaultDownloadBytes,
       extractTarball: deps.extractTarball ?? defaultExtractTarball,
       runNpmCi: deps.runNpmCi ?? defaultRunNpmCi,
+      verifyRelease: deps.verifyRelease ?? defaultVerifyRelease,
     };
 
     let targetTag: string;
@@ -653,11 +798,34 @@ export async function runUpdate(
       };
     }
 
-    hooks.progress?.(`downloading ${targetTag}...`);
+    hooks.progress?.(`resolving ${targetTag}...`);
+    // Install mode resolves the RELEASE OBJECT (not just the tag): the
+    // signed artifacts live as release assets. Strict trust model (R1):
+    // releases without the full signed-asset set are refused - installing
+    // unsigned code is exactly the attack this gate exists for.
+    const release = await fetchRelease(io.fetchJson, targetTag);
+    const artifactName = releaseAssetName(release.tag);
+    const artifactUrl = release.assets.get(artifactName);
+    const sumsUrl = release.assets.get(SUMS_ASSET_NAME);
+    const sigUrl = release.assets.get(SIG_ASSET_NAME);
+    if (!artifactUrl || !sumsUrl || !sigUrl) {
+      return fail(
+        `release ${release.tag} has no signed artifacts (expected assets: ${artifactName}, ${SUMS_ASSET_NAME}, ${SIG_ASSET_NAME}) - refusing to install unverified code. Signed releases start at v0.8.0.`,
+        currentVersion,
+      );
+    }
+
+    hooks.progress?.(`downloading ${artifactName}...`);
     const work = mkdtempSync(join(tmpdir(), 'broke-update-'));
     try {
       const archive = join(work, 'release.tgz');
-      await io.downloadTarball(tarballUrl(targetTag), archive);
+      await io.downloadTarball(artifactUrl, archive);
+      const [sums, signature] = await Promise.all([io.downloadBytes(sumsUrl), io.downloadBytes(sigUrl)]);
+
+      hooks.progress?.('verifying signature and checksum...');
+      // Trust boundary: NOTHING from the download is executed or extracted
+      // before this check passed.
+      io.verifyRelease(sums, signature, readFileSync(archive), artifactName);
 
       const staging = join(work, 'staging');
       mkdirSync(staging);

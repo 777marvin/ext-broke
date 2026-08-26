@@ -24,9 +24,12 @@ import {
   compareSemver,
   MAX_PRESERVED_ERRORS_BYTES,
   normalizeTag,
+  releaseAssetName,
   replaceInstallationInPlace,
   resolveLatestVersion,
   runUpdate,
+  SIG_ASSET_NAME,
+  SUMS_ASSET_NAME,
   swapInstallDirectory,
 } from '../update';
 
@@ -63,23 +66,40 @@ interface FakeCalls {
 
 /**
  * Fake UpdateDeps whose "tarball" extracts into one GitHub-style root
- * folder (`ext-broke-<version>/`) containing payloadFiles.
+ * folder (`ext-broke-<version>/`) containing payloadFiles. The release JSON
+ * carries a full signed-asset set; verification is stubbed per test.
  */
 function makeDeps(
   releaseTag: string | Error,
   payloadVersion: string,
   payloadFiles: Record<string, string>,
-  opts: { failExtract?: Error; failNpm?: Error; calls?: FakeCalls } = {},
+  opts: { failExtract?: Error; failNpm?: Error; failVerify?: Error; calls?: FakeCalls } = {},
 ) {
+  const artifact = releaseAssetName(releaseTag as string);
   return {
     fetchJson: async (url: string) => {
-      if (!url.includes('/releases/latest')) throw new Error(`unexpected url ${url}`);
+      if (!url.includes('/releases/latest') && !url.includes('/releases/tags/')) throw new Error(`unexpected url ${url}`);
       if (releaseTag instanceof Error) throw releaseTag;
-      return { tag_name: releaseTag };
+      // Explicit-tag installs resolve /releases/tags/<tag> - unknown tags 404.
+      if (url.includes('/releases/tags/') && !url.endsWith(`/${String(releaseTag)}`)) {
+        throw new Error('HTTP 404 - Not Found');
+      }
+      return {
+        tag_name: releaseTag,
+        assets: [
+          { name: artifact, browser_download_url: `https://assets.test/${artifact}` },
+          { name: SUMS_ASSET_NAME, browser_download_url: 'https://assets.test/SHA256SUMS' },
+          { name: SIG_ASSET_NAME, browser_download_url: 'https://assets.test/SHA256SUMS.sig' },
+        ],
+      };
     },
     downloadTarball: async (_url: string, destFile: string) => {
       opts.calls?.downloads.push(_url);
       writeFileSync(destFile, 'tarball-bytes');
+    },
+    downloadBytes: async () => new Uint8Array([1, 2, 3]),
+    verifyRelease: () => {
+      if (opts.failVerify) throw opts.failVerify;
     },
     extractTarball: async (_archive: string, destDir: string) => {
       if (opts.failExtract) throw opts.failExtract;
@@ -203,8 +223,9 @@ describe('runUpdate (install)', () => {
     // Dependencies were refreshed inside the staged payload (lockfile changed).
     assert.equal(calls.npmCiDirs.length, 1);
     assert.equal(existsSync(join(install, 'node_modules', 'fresh.js')), true);
-    // The tarball URL contains exactly the validated tag.
-    assert.equal(calls.downloads[0], 'https://github.com/777marvin/ext-broke/archive/refs/tags/v0.6.0.tar.gz');
+    // The artifact is downloaded from the release ASSET (signed pipeline),
+    // not from GitHub's auto-generated archive.
+    assert.equal(calls.downloads[0], 'https://assets.test/broke-v0.6.0.tar.gz');
     // No leftovers.
     assert.equal(existsSync(`${install}.old`), false);
   });
@@ -218,6 +239,42 @@ describe('runUpdate (install)', () => {
     assert.match(res.message, /already on v0\.6\.0/);
     assert.equal(calls.downloads.length, 0);
     assert.match(readFileSync(join(install, 'index.ts'), 'utf-8'), /^\/\/ v0\.6\.0$/); // old file untouched
+  });
+
+  it('refuses a release WITHOUT signed artifacts (strict trust model, R1)', async () => {
+    const install = fakeInstall('0.5.1');
+    const deps = makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD);
+    // Strip the asset set: an old-style unsigned release object.
+    const originalFetch = deps.fetchJson;
+    type ReleaseJson = Awaited<ReturnType<typeof originalFetch>>;
+    deps.fetchJson = async (url: string): Promise<ReleaseJson> => {
+      const rel = (await originalFetch(url)) as Record<string, unknown>;
+      return { tag_name: rel.tag_name } as unknown as ReleaseJson;
+    };
+    const res = await runUpdate({ mode: 'install' }, {}, deps, install);
+    assert.equal(res.ok, false);
+    assert.match(res.message, /no signed artifacts/);
+    assert.match(readFileSync(join(install, 'index.ts'), 'utf-8'), /^\/\/ v0\.5\.1$/); // untouched
+    assert.equal(existsSync(join(install, '.deployed-version')), false);
+  });
+
+  it('refuses when signature verification fails - nothing is extracted or installed', async () => {
+    const install = fakeInstall('0.5.1');
+    const calls: FakeCalls = { downloads: [], npmCiDirs: [] };
+    const res = await runUpdate(
+      { mode: 'install' },
+      {},
+      makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD, {
+        calls,
+        failVerify: new Error('boom - bad signature'),
+      }),
+      install,
+    );
+    assert.equal(res.ok, false);
+    assert.match(res.message, /boom - bad signature/);
+    assert.equal(existsSync(join(install, 'node_modules', 'fresh.js')), false, 'npm ci must not have run');
+    assert.match(readFileSync(join(install, 'index.ts'), 'utf-8'), /^\/\/ v0\.5\.1$/); // untouched
+    assert.equal(existsSync(`${install}.old`), false, 'no backup may linger after a refused update');
   });
 
   it('installs an explicitly requested older tag as a downgrade', async () => {
