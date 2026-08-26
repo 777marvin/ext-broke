@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { Socket } from 'node:net';
 import { once } from 'node:events';
 import { after, describe, it } from 'node:test';
-import { isPlaintextRemoteUrl, ollamaGenerate, ollamaStatus } from '../local';
+import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaGenerate, ollamaStatus } from '../local';
 
 /**
  * Real HTTP round-trips against a local server: the timeout fix (body read
@@ -133,5 +133,29 @@ describe('isPlaintextRemoteUrl', () => {
     assert.equal(isPlaintextRemoteUrl('https://example.com'), false);
     assert.equal(isPlaintextRemoteUrl('http://localhost:11434'), false);
     assert.equal(isPlaintextRemoteUrl('http://127.0.0.1:11434'), false);
+  });
+});
+
+describe('isRemoteOllamaHost (review R3 trust gate)', () => {
+  it('accepts loopback hosts in all common spellings', () => {
+    assert.equal(isRemoteOllamaHost('http://127.0.0.1:11434'), false);
+    assert.equal(isRemoteOllamaHost('http://localhost:11434'), false);
+    assert.equal(isRemoteOllamaHost('http://[::1]:11434'), false);
+    assert.equal(isRemoteOllamaHost('http://0.0.0.0:11434'), false);
+  });
+
+  it('flags non-loopback hosts regardless of scheme or port', () => {
+    assert.equal(isRemoteOllamaHost('http://192.168.1.50:11434'), true);
+    assert.equal(isRemoteOllamaHost('https://ollama.example.com'), true);
+    assert.equal(isRemoteOllamaHost('https://box.lan:11434'), true);
+  });
+
+  it('is conservative on malformed URLs (treated as local)', () => {
+    assert.equal(isRemoteOllamaHost('not a url'), false);
+  });
+
+  it('keeps isPlaintextRemoteUrl scheme-aware', () => {
+    assert.equal(isPlaintextRemoteUrl('https://ollama.example.com'), false);
+    assert.equal(isPlaintextRemoteUrl('http://192.168.1.50:11434'), true);
   });
 });

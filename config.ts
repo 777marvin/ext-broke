@@ -64,6 +64,12 @@ const SummarizeSchema = z.object({
   /** Ollama base URL. */
   ollamaUrl: z.string().url().default('http://127.0.0.1:11434'),
   /**
+   * Explicit consent gate for NON-loopback Ollama hosts (review R3): when
+   * false (default), a remote summarize.ollamaUrl is refused - conversation
+   * content never leaves the machine until the user actively allows it.
+   */
+  allowRemoteHost: z.boolean().default(false),
+  /**
    * AiderDesk model id ('provider/model') for the cloud summarizer.
    * Empty string = use the task's current model (like built-in compact).
    */

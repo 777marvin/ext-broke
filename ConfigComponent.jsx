@@ -171,6 +171,13 @@
             onBlur={(e) => updateConfig({ ...config, summarize: { ...summarize, cloudModelId: e.target.value.trim() } })}
           />
         )}
+        {(summarize.via ?? 'local') === 'local' ? (
+          <Checkbox
+            label="Allow remote Ollama host (conversation content is sent to that machine)"
+            checked={summarize.allowRemoteHost ?? false}
+            onChange={(checked) => updateConfig({ ...config, summarize: { ...summarize, allowRemoteHost: checked } })}
+          />
+        ) : null}
         <div className="flex gap-4">
           {numberField('Summarize only turns older than (user turns)', summarize.afterTurns ?? 8, (n) =>
             updateConfig({ ...config, summarize: { ...summarize, afterTurns: n } }),

@@ -1,6 +1,6 @@
 import type { Config } from './config';
 import { DEFAULT_CONFIG, updateConfigPath, updateConfigPaths } from './config';
-import { isPlaintextRemoteUrl, ollamaStatus } from './local';
+import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaStatus } from './local';
 import { normalizeTag } from './update';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from './pricing';
 import { estimateTokens, type MeasureSummary, type TaskStats, totalSavedChars } from './tokens';
@@ -37,6 +37,8 @@ Usage: /broke <subcommand>
   summarize cloud <provider/model>
                                 AiderDesk model for cloud summaries ('' = task model)
   summarize after <turns>       summarize only turns older than n user turns (default ${d.summarize.afterTurns})
+  summarize allow-remote <on|off>
+                                allow NON-loopback Ollama hosts (default: ${d.summarize.allowRemoteHost ? 'on' : 'off'} - conversation content stays on this machine)
   stats                         per-pass saved chars/tokens for this task
   why                           live gate-by-gate verdict: why does this task save 0 (or not)?
   measure                       summarize the per-run measurement ledger (measure.jsonl)
@@ -75,6 +77,7 @@ export type BrokeCommand =
   | { kind: 'summarize-model'; model: string }
   | { kind: 'summarize-cloud'; modelId: string }
   | { kind: 'summarize-after'; turns: number }
+  | { kind: 'summarize-allow-remote'; enabled: boolean }
   | { kind: 'stats' }
   | { kind: 'why' }
   | { kind: 'measure' }
@@ -177,6 +180,9 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
         const n = roundArg(value);
         if (Number.isFinite(n) && n >= 2) return { kind: 'summarize-after', turns: n };
       }
+      if (opt === 'allow-remote' && (value === 'on' || value === 'off') && rest.length === 2) {
+        return { kind: 'summarize-allow-remote', enabled: value === 'on' };
+      }
       return { kind: 'unknown', raw: args.join(' ') };
     }
     case 'stats':
@@ -278,6 +284,13 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
       return { config: updateConfigPath('summarize.cloudModelId', cmd.modelId, filePath), message: `cloud summarizer model → ${cmd.modelId || 'task model'}` };
     case 'summarize-after':
       return { config: updateConfigPath('summarize.afterTurns', cmd.turns, filePath), message: `summarize after → ${cmd.turns} turns` };
+    case 'summarize-allow-remote':
+      return {
+        config: updateConfigPath('summarize.allowRemoteHost', cmd.enabled, filePath),
+        message: cmd.enabled
+          ? 'remote summarizer host ALLOWED - conversation content (incl. tool outputs) may be sent to another machine'
+          : 'remote summarizer host blocked - conversation content stays on this machine',
+      };
     case 'measure-toggle':
       return {
         config: updateConfigPath('stats.measure', cmd.enabled, filePath),
@@ -400,6 +413,9 @@ export async function formatStatus(config: Config, stats: TaskStats | null, pric
     }
     if (isPlaintextRemoteUrl(config.summarize.ollamaUrl)) {
       lines.push('  ⚠ remote Ollama via plaintext http - conversation content is sent unencrypted. Prefer https:// or a local Ollama.');
+    }
+    if (isRemoteOllamaHost(config.summarize.ollamaUrl) && !config.summarize.allowRemoteHost) {
+      lines.push('  ⛔ remote summarizer host is BLOCKED - conversation content never leaves this machine until you run /broke summarize allow-remote on.');
     }
   }
   const statsBlock = formatStats(config, stats, price);

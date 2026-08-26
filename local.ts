@@ -59,13 +59,30 @@ function errorMessage(err: unknown, timeoutMs: number): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Loopback hostnames that never leave the machine. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
+
+/**
+ * True when the URL points at a NON-loopback host (review R3): conversation
+ * content sent there leaves the machine - regardless of scheme. Used by the
+ * summarizer trust gate and by status/warning surfaces.
+ */
+export function isRemoteOllamaHost(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return !LOOPBACK_HOSTS.has(host);
+  } catch {
+    return false;
+  }
+}
+
 /** True when the URL is plaintext HTTP to a non-loopback host. */
 export function isPlaintextRemoteUrl(url: string): boolean {
   try {
     const u = new URL(url);
     if (u.protocol !== 'http:') return false;
-    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-    return host !== 'localhost' && host !== '127.0.0.1' && host !== '::1' && host !== '0.0.0.0';
+    return isRemoteOllamaHost(url);
   } catch {
     return false;
   }

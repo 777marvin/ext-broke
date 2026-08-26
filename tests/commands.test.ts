@@ -103,6 +103,25 @@ describe('parseBrokeCommand', () => {
     expectUnknown(['summarize', 'via', 'remote']);
   });
 
+  it('parses and applies summarize allow-remote (review R3)', () => {
+    assert.deepEqual(parseBrokeCommand(['summarize', 'allow-remote', 'on']), {
+      kind: 'summarize-allow-remote',
+      enabled: true,
+    });
+    assert.deepEqual(parseBrokeCommand(['summarize', 'allow-remote', 'off']), {
+      kind: 'summarize-allow-remote',
+      enabled: false,
+    });
+    // Missing/garbage value must not flip a privacy default by accident.
+    expectUnknown(['summarize', 'allow-remote']);
+    expectUnknown(['summarize', 'allow-remote', 'yes']);
+    expectUnknown(['summarize', 'allow-remote', 'on', 'extra']);
+
+    const applied = applyBrokeCommand(parseBrokeCommand(['summarize', 'allow-remote', 'on']) as BrokeCommand, DEFAULT_CONFIG);
+    assert.equal(applied.config.summarize.allowRemoteHost, true);
+    assert.match(applied.message, /may be sent to another machine/);
+  });
+
   it('parses stats, reset, selftest, help', () => {
     assert.equal(kind(['stats']), 'stats');
     assert.equal(kind(['reset']), 'reset');

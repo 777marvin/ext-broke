@@ -153,3 +153,14 @@ describe('slice config block', () => {
     assert.equal(updated.slice.minChars, 4000, 'untouched default survives');
   });
 });
+
+describe('summarize.allowRemoteHost default (review R3)', () => {
+  it('defaults to false - remote hosts are blocked without explicit consent', () => {
+    assert.equal(DEFAULT_CONFIG.summarize.allowRemoteHost, false);
+  });
+
+  it('accepts an explicit true through merge/apply paths', () => {
+    const merged = mergeConfig({ summarize: { allowRemoteHost: true } });
+    assert.equal(merged.summarize.allowRemoteHost, true);
+  });
+});

@@ -24,7 +24,7 @@ import {
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, saveConfig, type Config } from './config';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
-import { isPlaintextRemoteUrl, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
+import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
 import { extractOutputText } from './output';
 import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from './pricing';
 import {
@@ -247,6 +247,18 @@ export default class Broke implements Extension {
 
     const deps: SummarizeDeps = {
       generateLocal: async (model, prompt) => {
+        // Trust gate (review R3): a non-loopback Ollama host means
+        // conversation content leaves this machine. Without explicit consent
+        // the summarizer refuses - graceful failure, the model call proceeds
+        // uncompressed. Repeated refusals trip the existing auto-disable,
+        // which keeps this warning from spamming every model call.
+        if (isRemoteOllamaHost(config.summarize.ollamaUrl) && !config.summarize.allowRemoteHost) {
+          context.log(
+            `Broke: local summarizer refused - ${config.summarize.ollamaUrl} is a remote host and conversation content (incl. tool outputs) would be sent to another machine. Consent with /broke summarize allow-remote on (or use a loopback URL).`,
+            'warn',
+          );
+          return undefined;
+        }
         const result = await ollamaGenerate(config.summarize.ollamaUrl, model, prompt, 800);
         return result.ok ? result.text : undefined;
       },
@@ -575,11 +587,13 @@ export default class Broke implements Extension {
           : `ollama NOT reachable - local summaries inactive (ollama serve)`
         : `cloud summarizer (${config.summarize.cloudModelId || 'task model'})`;
     const remotePlaintext = config.summarize.via === 'local' && isPlaintextRemoteUrl(config.summarize.ollamaUrl);
+    const remoteBlocked =
+      config.summarize.via === 'local' && isRemoteOllamaHost(config.summarize.ollamaUrl) && !config.summarize.allowRemoteHost;
     await context
       .getTaskContext()
       ?.addLogMessage(
         'info',
-        `broke active - level: ${config.level}, threshold: ${config.maxContextChars.toLocaleString('en-US')} chars, protectedTurns: ${config.protectedTurns}, ${ollamaNote}${remotePlaintext ? ' - WARNING: remote Ollama via plaintext http, data is sent unencrypted' : ''} - /broke help lists all commands`,
+        `broke active - level: ${config.level}, threshold: ${config.maxContextChars.toLocaleString('en-US')} chars, protectedTurns: ${config.protectedTurns}, ${ollamaNote}${remotePlaintext ? ' - WARNING: remote Ollama via plaintext http, data is sent unencrypted' : ''}${remoteBlocked ? ' - NOTE: remote summarizer host is BLOCKED until you consent (/broke summarize allow-remote on)' : ''} - /broke help lists all commands`,
       );
     this.refreshUI(event.task.id);
   }
