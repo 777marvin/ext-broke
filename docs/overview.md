@@ -39,16 +39,20 @@ pipeline, compression applies to the input of each model call only.
 | `scripts/measure.ts` | 25 | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
 | `ConfigComponent.jsx` | 210 | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
 | `StatusBadge.jsx` | 75 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state; always renders and polls every 10 s so a missed push refresh cannot hide it |
-| `tests/index.test.ts` | 316 | Fake-host integration tests (XF11): real extension against a fake ExtensionContext/task, compression + stats/measure persistence, reentry guard, summarize auto-disable, tool-level archiving on/off, silence when disabled |
-| `tests/commands.test.ts` | 344 | Unit tests: `/broke` parse/apply/format (incl. `update` subcommands), generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
-| `tests/measure.test.ts` | 230 | Unit tests: run-record mapping, ledger append/rotation/malformed-skip, summary math (mean/median/max/byTask) |
-| `tests/compress.test.ts` | 1079 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
-| `tests/config.test.ts` | 131 | Unit tests: config merge, corrupted-file fallback, pure updates, one-write multi-path persistence |
-| `tests/errors.test.ts` | 590 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap/retention/clear |
-| `tests/local.test.ts` | 137 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts |
-| `tests/pricing.test.ts` | 212 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats persistence privacy, stats loader TTL, task-stats reset |
-| `tests/selftest.test.ts` | 56 | Unit tests: synthetic-call-id linking, dedupe really applied, honest per-pass labels |
-| `tests/update.test.ts` | 568 | Unit tests: self-update flow with injected deps - release resolution + semver fallback, tag validation, happy-path swap with state preservation, check mode, explicit downgrade/reinstall, extract/npm failure aborts, git-checkout guard, concurrency lock, stale-backup recovery, in-place fallback, errors-archive size cap (sparse file), mid-staging rename-lock rollback, partial-copy detection via the manifest check, swap manifest-mismatch rollback, merge-over fallback for unmovable directories/files with pruning, merged-entry snapshot rollback |
+| `tests/index.test.ts` | 492 | Fake-host integration tests (XF11): real extension against a fake ExtensionContext/task, compression + stats/measure persistence, reentry guard, summarize auto-disable, tool-level archiving on/off, silence when disabled |
+| `tests/commands.test.ts` | 394 | Unit tests: `/broke` parse/apply/format (incl. `update` subcommands), generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
+| `tests/measure.test.ts` | 214 | Unit tests: run-record mapping, ledger append/rotation/malformed-skip, summary math incl. summarizer cost side (mean/median/max/byTask) |
+| `tests/compress.test.ts` | 1017 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
+| `tests/config.test.ts` | 155 | Unit tests: config merge, corrupted-file fallback, pure updates, one-write multi-path persistence |
+| `tests/errors.test.ts` | 540 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap/retention/clear |
+| `tests/local.test.ts` | 145 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts; remote-host classification (`isRemoteOllamaHost`) |
+| `tests/pricing.test.ts` | 191 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats persistence privacy, stats loader TTL, task-stats reset |
+| `tests/selftest.test.ts` | 51 | Unit tests: synthetic-call-id linking, dedupe really applied, honest per-pass labels |
+| `tests/update.test.ts` | 574 | Unit tests: self-update flow with injected deps - release ASSET resolution + semver fallback, tag validation, strict signed-release trust model (refuses unsigned/tampered), happy-path swap with state preservation, check mode, explicit downgrade/reinstall, extract/npm failure aborts, git-checkout guard, concurrency lock, stale-backup recovery, in-place fallback, errors-archive size cap (sparse file), mid-staging rename-lock rollback, partial-copy detection via the manifest check, swap manifest-mismatch rollback, merge-over fallback for unmovable directories/files with pruning, merged-entry snapshot rollback |
+| `tests/validate.test.ts` | 186 | Unit tests: ContextValidator invariants (duplicates/orphans/format failures) + compressMessages revert semantics (output-broken reverts, input-corrupt ships) |
+| `tests/host-contract.test.ts` | 199 | Full lifecycle contract with a fake host: TaskInitialized -> ToolCalled -> ToolFinished -> OptimizeMessages state flow + never-break-the-host guarantees under hostile surfaces |
+| `tests/update-signing.test.ts` | 79 | Signature/checksum primitives against an isolated test keypair (verifySumsSignature, checksumFromSums, defaultVerifyRelease failure paths) |
+| `tests/slice.test.ts` | 325 | Unit tests: TS/Python slicing, focus resolution, tool detection, fail-safe export pass-through regression matrix (R6) |
 
 ## How the pipeline works
 
@@ -57,7 +61,8 @@ everything older than the protected region:
 
 1. **structural**: drop empty messages, dedupe identical adjacent tool
    results (only when the producing tool-call, name and input, matches
-   too, XF1), merge consecutive assistant texts (lossless).
+   too, XF1), merge consecutive assistant texts (text survives, framing
+   may change).
 2. **errors** (F1): compiler/test output becomes its diagnostic essence
    with an explicit `… [broke: error summary - N lines → M lines]` marker.
    Engages per-message above `errors.minChars` (default 8000), before

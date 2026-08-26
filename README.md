@@ -124,15 +124,21 @@ Extensions are hot-reloaded by AiderDesk: no restart needed.
 ```
 /broke update          # install the latest GitHub release
 /broke update check    # only check whether a newer release exists
-/broke update v0.5.1   # pin / roll back to an exact tagged version
+/broke update v0.8.0   # pin / roll back to an exact tagged version
 ```
 
-The update downloads the tagged release from GitHub, preserves your
-`config.json`, stats/measure ledgers, the errors archive and
-`node_modules`, refreshes dependencies when the lockfile changed, and
-swaps the installation atomically: transient file locks are retried,
-every payload file is verified after the copy before the update
-declares success, and any failure rolls back to the previous
+Since 0.8.0, updates are cryptographically verified: the tagged release
+ships a sha256sum manifest signed with Ed25519, and the updater checks
+signature and checksum BEFORE anything is extracted or installed.
+Unsigned or tampered releases are refused outright - which also means
+releases older than 0.8.0 can no longer be (re-)installed this way;
+roll back to the last signed version instead.
+
+The update preserves your `config.json`, stats/measure ledgers, the
+errors archive and `node_modules`, refreshes dependencies when the
+lockfile changed, and swaps the installation atomically: transient file
+locks are retried, every payload file is verified after the copy before
+the update declares success, and any failure rolls back to the previous
 installation completely.
 Unlike a first install (hot-reloaded above), an update needs an AiderDesk
 restart: the running instance keeps its previously loaded code until then.

@@ -39,7 +39,7 @@ Two consequences:
 
 | Lever | When | Loss |
 |---|---|---|
-| Structural pass (dedupe, drop empties, merge) | every call | none (lossless) |
+| Structural pass (dedupe, drop empties, merge) | every call | text preserved; message framing may change |
 | Error pass (compiler/test output → diagnostic essence) | above `errors.minChars`, old turns only | error-dump detail |
 | Truncate pass (head+tail of old tool outputs, trim tool-call inputs) | above threshold | middle of old outputs |
 | Summarize pass (LLM summary of old turns) | above threshold, old turns only | detail of old turns |

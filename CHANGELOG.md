@@ -5,16 +5,6 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- Defused three regexes in the slicer flagged by CodeQL as polynomial-ReDoS
-  risks (`js/polynomial-redos`): comment and string-literal stripping now use
-  linear character scans instead of backtracking-prone patterns, and the
-  function-declaration matcher no longer overlaps whitespace quantifiers.
-  Behavior for real-world code is unchanged.
-
 ## [0.8.0] - 2026-08-26
 
 Hardening release driven by the external architecture/security review of
@@ -78,6 +68,11 @@ docs/review-backlog.md).
 
 ### Fixed
 
+- Defused three regexes in the slicer flagged by CodeQL as polynomial-ReDoS
+  risks (`js/polynomial-redos`): comment and string-literal stripping now use
+  linear character scans instead of backtracking-prone patterns, and the
+  function-declaration matcher no longer overlaps whitespace quantifiers.
+  Behavior for real-world code is unchanged.
 - **Slicer fail-safe for unrecognized exports (R6).** Statements the
   heuristic parser does not know - `export default class`, `export =`,
   ambient `declare module/global` blocks - were silently dropped from the
