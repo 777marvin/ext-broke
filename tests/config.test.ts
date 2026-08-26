@@ -164,3 +164,9 @@ describe('summarize.allowRemoteHost default (review R3)', () => {
     assert.equal(merged.summarize.allowRemoteHost, true);
   });
 });
+
+describe('errors.archive default (review R7)', () => {
+  it('defaults to OFF - persisting raw tool output is explicit opt-in', () => {
+    assert.equal(DEFAULT_CONFIG.errors.archive, false);
+  });
+});

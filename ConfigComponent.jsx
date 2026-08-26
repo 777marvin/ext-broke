@@ -105,10 +105,10 @@
         />
         <Checkbox
           label="Save full outputs to the errors archive"
-          checked={errors.archive ?? true}
+          checked={errors.archive ?? false}
           onChange={(checked) => updateConfig({ ...config, errors: { ...errors, archive: checked } })}
         />
-        {errors.archive !== false ? (
+        {errors.archive ? (
           <div className="flex gap-4">
             {numberField('Archive retention (days)', errors.retentionDays ?? 30, (n) =>
               updateConfig({ ...config, errors: { ...errors, retentionDays: n } }),
