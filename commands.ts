@@ -32,6 +32,12 @@ Usage: /broke <subcommand>
   slice focus <path>            always return this file in full (per task)
   slice focus clear             drop the explicit focus
   slice status                  slicing mode and current focus for this task
+  snapshot [label]              record a milestone snapshot of this task now
+  snapshot list                 list this task's snapshots (newest first)
+  snapshot show <n>             print snapshot #n from the list
+  flush [--yes]                 DANGEROUS: replace everything after the task brief with
+                                one [broke-state] summary - asks for confirmation unless --yes
+  flush --undo <n>              restore the exact message history stored with snapshot #n
   summarize via <local|cloud>   summarizer backend (default: ${d.summarize.via}${d.summarize.via === 'local' ? ' = Ollama' : ''})
   summarize model <name>        Ollama model tag (default: ${d.summarize.localModel})
   summarize cloud <provider/model>
@@ -75,6 +81,10 @@ export type BrokeCommand =
   | { kind: 'slice-focus'; path: string }
   | { kind: 'slice-focus-clear' }
   | { kind: 'slice-status' }
+  | { kind: 'snapshot'; label?: string }
+  | { kind: 'snapshot-list' }
+  | { kind: 'snapshot-show'; index: number }
+  | { kind: 'flush'; yes?: boolean; undoIndex?: number }
   | { kind: 'summarize-via'; via: 'local' | 'cloud' }
   | { kind: 'summarize-model'; model: string }
   | { kind: 'summarize-cloud'; modelId: string }
@@ -200,6 +210,31 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
       if (opt === undefined) return { kind: 'measure' };
       return { kind: 'unknown', raw: args.join(' ') };
     }
+    case 'snapshot': {
+      const opt = rest[0];
+      if (opt === undefined && rest.length === 0) return { kind: 'snapshot' };
+      if (opt === 'list' && rest.length === 1) return { kind: 'snapshot-list' };
+      if (opt === 'show') {
+        const n = roundArg(rest[1]);
+        // 1-based, integer only - /broke snapshot show maps to the list order.
+        if (Number.isInteger(n) && n >= 1 && rest.length === 2) return { kind: 'snapshot-show', index: n };
+        return { kind: 'unknown', raw: args.join(' ') };
+      }
+      // Free-form label; safeLabel() in snapshot.ts sanitizes for filenames.
+      const label = rest.join(' ').trim();
+      if (label.length > 0 && label.length <= 120) return { kind: 'snapshot', label };
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
+    case 'flush': {
+      if (rest[0] === '--undo') {
+        const n = roundArg(rest[1]);
+        if (Number.isInteger(n) && n >= 1 && rest.length === 2) return { kind: 'flush', undoIndex: n };
+        return { kind: 'unknown', raw: args.join(' ') };
+      }
+      if (rest.length === 0) return { kind: 'flush' };
+      if (rest.length === 1 && rest[0] === '--yes') return { kind: 'flush', yes: true };
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
     case 'reset':
       return { kind: 'reset' };
     case 'selftest':
@@ -282,6 +317,12 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
       return { config, message: '' };
     case 'summarize-now':
       // Side effect handled in index.ts (LLM call + task-scoped summary cache).
+      return { config, message: '' };
+    case 'snapshot':
+    case 'snapshot-list':
+    case 'snapshot-show':
+    case 'flush':
+      // Side effects handled in index.ts (record/list/read/confirm+flush/undo).
       return { config, message: '' };
     case 'summarize-via':
       return { config: updateConfigPath('summarize.via', cmd.via, filePath), message: `summarizer → ${cmd.via}` };
