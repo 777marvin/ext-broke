@@ -1,6 +1,6 @@
 ﻿import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -207,6 +207,17 @@ describe('applyBrokeCommand', () => {
       assert.equal(onDisk(file).summarize.localModel, 'llama3.2:1b');
       applyBrokeCommand(parseBrokeCommand(['summarize', 'after', '4']), DEFAULT_CONFIG, file);
       assert.equal(onDisk(file).summarize.afterTurns, 4);
+    });
+  });
+
+  it('parses "summarize now" without touching the config', () => {
+    assert.deepEqual(parseBrokeCommand(['summarize', 'now']), { kind: 'summarize-now' });
+    // Extra junk after 'now' is a typo, not an intent to run.
+    assert.equal(parseBrokeCommand(['summarize', 'now', 'later']).kind, 'unknown');
+    withTemp((file) => {
+      const { message } = applyBrokeCommand(parseBrokeCommand(['summarize', 'now']), DEFAULT_CONFIG, file);
+      assert.equal(message, '', 'the side effect is handled in index.ts');
+      assert.ok(!existsSync(file), 'a pure side-effect command must not persist any config');
     });
   });
 

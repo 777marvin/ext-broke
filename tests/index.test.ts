@@ -371,6 +371,90 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.match(out, /last optimize run/);
   });
 
+  it('/broke summarize now pre-warms the cache; the next real run reuses it free', async () => {
+    // Tiny threshold: the REAL pipeline gate is "input > maxContextChars" -
+    // the manual warm bypasses it, the pipeline must not.
+    writeConfig({ maxContextChars: 100 });
+    const ext = new Broke();
+    const { context, state } = makeHost('task-warm', () => 'Stub summary of the compressed region.');
+    attachContext(ext, context);
+    // Deterministic layout: brief + non-merging alternating steps + ONE final
+    // user turn - the compressible region ends between stable message ids,
+    // so the warmed cache key (throughId) survives the structural pass.
+    const bigToolOutput = ('line-of-output '.repeat(120)).trim();
+    const messages = [
+      { id: 'u-brief', role: 'user', content: 'Brief: fix the failing tests.' },
+      { id: 'a-1', role: 'assistant', content: 'Step 1: collecting failures.' },
+      { id: 't-1', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'power---bash', output: { type: 'text', value: bigToolOutput } }] },
+      { id: 'a-2', role: 'assistant', content: 'Step 2: patching module A.' },
+      { id: 't-2', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c2', toolName: 'power---bash', output: { type: 'text', value: bigToolOutput } }] },
+      { id: 'a-3', role: 'assistant', content: 'Step 3: re-running the suite.' },
+      { id: 'u-wrap', role: 'user', content: 'Wrap up this iteration.' },
+    ] as unknown as ContextMessage[];
+    (context as unknown as { getTaskContext(): { getContextMessages(): Promise<unknown[]> } }).getTaskContext().getContextMessages = async () => messages;
+
+    const runsBefore = loadRunRecords().length;
+    const cmd = ext.getCommands(context)[0];
+
+    // 1st call: generates a summary and caches it - no history rewrite.
+    await cmd.execute(['summarize', 'now'], context);
+    let out = state.logLines.map((l) => l.line).join('\n');
+    assert.match(out, /summary generated.*and cached/, `unexpected report: ${out}`);
+    assert.equal(state.summarizeCalls, 1, 'exactly one summarizer LLM call');
+    assert.equal(JSON.stringify(messages).includes('broke-compacted'), false, 'the manual run must never rewrite the live history');
+    assert.equal(loadTaskStats('task-warm'), null, 'a manual warm is not a compression pass - no stats');
+    assert.equal(loadRunRecords().length, runsBefore, 'and no measure record either');
+
+    // 2nd call: region unchanged -> cache hit, no new LLM call.
+    await cmd.execute(['summarize', 'now'], context);
+    out = state.logLines.map((l) => l.line).join('\n');
+    assert.match(out, /already cached/);
+    assert.equal(state.summarizeCalls, 1, 'the cache must answer the repeat request');
+
+    // 3rd: the next REAL pipeline run takes the free reuse path.
+    const result = (await ext.onOptimizeMessages(
+      { originalMessages: messages, optimizedMessages: messages },
+      context,
+    )) as { optimizedMessages: ContextMessage[] } | undefined;
+    assert.ok(result, 'the pipeline must return optimized messages');
+    assert.equal(state.summarizeCalls, 1, 'the warmed cache must prevent a fresh summarizer call');
+    const json = JSON.stringify(result.optimizedMessages);
+    assert.ok(json.includes('broke-compacted'), 'the summarized input must contain the broke summary marker');
+    assert.ok(json.length < JSON.stringify(messages).length, 'and be smaller than the original input');
+  });
+
+  it('/broke summarize now refuses cleanly below summarize.minChars without an LLM call', async () => {
+    writeConfig();
+    const ext = new Broke();
+    const tiny = [
+      { id: 'm1', role: 'user', content: 'first short question' },
+      { id: 'a1', role: 'assistant', content: 'first short answer' },
+      { id: 'm2', role: 'user', content: 'second short question' },
+      { id: 'a2', role: 'assistant', content: 'second short answer' },
+    ] as unknown as ContextMessage[];
+    const { context, state } = makeHost('task-now-tiny', () => 'stub', tiny);
+    attachContext(ext, context);
+
+    const cmd = ext.getCommands(context)[0];
+    await cmd.execute(['summarize', 'now'], context);
+    const out = state.logLines.map((l) => l.line).join('\n');
+    assert.match(out, /nothing summarized/);
+    assert.equal(state.summarizeCalls, 0, 'the gates must decide before any summarizer traffic');
+  });
+
+  it('/broke summarize now refuses when the level is not summarize', async () => {
+    writeConfig({ level: 'truncate' });
+    const ext = new Broke();
+    const { context, state } = makeHost('task-now-level', () => 'stub');
+    attachContext(ext, context);
+
+    const cmd = ext.getCommands(context)[0];
+    await cmd.execute(['summarize', 'now'], context);
+    const out = state.logLines.map((l) => l.line).join('\n');
+    assert.match(out, /level is not summarize/);
+    assert.equal(state.summarizeCalls, 0);
+  });
+
   it('flushes in-memory stats on unload so a restart loses nothing', async () => {
     writeConfig();
     const ext = new Broke();

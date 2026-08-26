@@ -18,6 +18,7 @@ import {
   compressMessages,
   createCompressState,
   maskSecrets,
+  summarizePass,
   type CompressReport,
   type CompressState,
   type SummarizeDeps,
@@ -265,36 +266,7 @@ export default class Broke implements Extension {
     const config = getConfig();
     if (!config.enabled) return;
 
-    const deps: SummarizeDeps = {
-      generateLocal: async (model, prompt) => {
-        // Trust gate (review R3): a non-loopback Ollama host means
-        // conversation content leaves this machine. Without explicit consent
-        // the summarizer refuses - graceful failure, the model call proceeds
-        // uncompressed. Repeated refusals trip the existing auto-disable,
-        // which keeps this warning from spamming every model call.
-        if (isRemoteOllamaHost(config.summarize.ollamaUrl) && !config.summarize.allowRemoteHost) {
-          context.log(
-            `Broke: local summarizer refused - ${config.summarize.ollamaUrl} is a remote host and conversation content (incl. tool outputs) would be sent to another machine. Consent with /broke summarize allow-remote on (or use a loopback URL).`,
-            'warn',
-          );
-          return undefined;
-        }
-        const result = await ollamaGenerate(config.summarize.ollamaUrl, model, prompt, 800);
-        return result.ok ? result.text : undefined;
-      },
-      generateCloud: async (systemPrompt, prompt) => {
-        const fallbackModel = task.data.model ?? task.data.mainModel;
-        // No usable model id: fail this pass gracefully instead of calling
-        // generateText with a literal "provider/undefined".
-        if (!fallbackModel) return undefined;
-        const modelId = config.summarize.cloudModelId || `${task.data.provider}/${fallbackModel}`;
-        // Cost guards: the summarizer input is capped in summarizePass
-        // (MAX_SUMMARIZER_INPUT_CHARS) and the result is truncated to
-        // maxSummaryChars afterwards. generateText offers no max-output
-        // token option, so those two caps are the whole budget.
-        return task.generateText(modelId, systemPrompt, prompt);
-      },
-    };
+    const deps = this.buildSummarizeDeps(config, task, context);
 
     this.optimizingTasks.add(taskId);
     try {
@@ -317,6 +289,133 @@ export default class Broke implements Extension {
     } catch (err) {
       // Never break the model call - compression is best effort.
       context.log(`Broke: compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      this.optimizingTasks.delete(taskId);
+    }
+  }
+
+  /**
+   * Summarizer backends shared by the pipeline (onOptimizeMessages) and the
+   * manual /broke summarize now command, so both run through the SAME trust
+   * gate and model resolution - a fix here covers every caller.
+   *
+   * explainFailures: the pipeline relies on the auto-disable counter to keep
+   * failure noise down; the manual command surfaces failures to the user in
+   * the chat instead, so it enables per-failure warnings.
+   */
+  private buildSummarizeDeps(
+    config: Config,
+    task: NonNullable<ReturnType<ExtensionContext['getTaskContext']>>,
+    context: ExtensionContext,
+    opts: { explainFailures?: boolean } = {},
+  ): SummarizeDeps {
+    return {
+      generateLocal: async (model, prompt) => {
+        // Trust gate (review R3): a non-loopback Ollama host means
+        // conversation content leaves this machine. Without explicit consent
+        // the summarizer refuses - graceful failure, the model call proceeds
+        // uncompressed. Repeated refusals trip the existing auto-disable,
+        // which keeps this warning from spamming every model call.
+        if (isRemoteOllamaHost(config.summarize.ollamaUrl) && !config.summarize.allowRemoteHost) {
+          context.log(
+            `Broke: local summarizer refused - ${config.summarize.ollamaUrl} is a remote host and conversation content (incl. tool outputs) would be sent to another machine. Consent with /broke summarize allow-remote on (or use a loopback URL).`,
+            'warn',
+          );
+          return undefined;
+        }
+        const result = await ollamaGenerate(config.summarize.ollamaUrl, model, prompt, 800);
+        if (!result.ok && opts.explainFailures) {
+          context.log(`Broke: local summarizer error - ${result.error ?? 'unknown Ollama error'}`, 'warn');
+        }
+        return result.ok ? result.text : undefined;
+      },
+      generateCloud: async (systemPrompt, prompt) => {
+        const fallbackModel = task.data.model ?? task.data.mainModel;
+        // No usable model id: fail this pass gracefully instead of calling
+        // generateText with a literal "provider/undefined".
+        if (!fallbackModel) return undefined;
+        const modelId = config.summarize.cloudModelId || `${task.data.provider}/${fallbackModel}`;
+        // Cost guards: the summarizer input is capped in summarizePass
+        // (MAX_SUMMARIZER_INPUT_CHARS) and the result is truncated to
+        // maxSummaryChars afterwards. generateText offers no max-output
+        // token option, so those two caps are the whole budget.
+        return task.generateText(modelId, systemPrompt, prompt);
+      },
+    };
+  }
+
+  /**
+   * /broke summarize now - run the summarize pass ON DEMAND against the live
+   * task context and cache its result. This never rewrites anything the user
+   * can see: the replacement list returned by summarizePass is discarded,
+   * only cachedSummaryByTask is written - the next real model call then takes
+   * the free cache-reuse path (the XF6 grow-guard still protects that swap).
+   *
+   * Use cases: pre-warming BEFORE a long autonomous run (summarizer latency
+   * moves out of the hot path), testing a newly configured summarizer backend
+   * on real context instead of the synthetic selftest input, and recovering
+   * from the auto-disable gate without waiting for another threshold cross.
+   *
+   * Deliberately NOT routed through recordReport: stats.passes counts real
+   * pipeline compression runs and the saved chars are realized (and counted)
+   * later by the reuse path. Manual failures surface here instead of feeding
+   * the auto-disable counter - but a MANUAL SUCCESS clears the auto-disable
+   * state for this task (same "explicit retry intent" semantics as the
+   * /broke summarize via/model/cloud reconfiguration commands).
+   */
+  private async summarizeNow(context: ExtensionContext): Promise<string> {
+    const task = context.getTaskContext();
+    if (!task) return 'broke: summarize now - run this inside a task';
+    const taskId = task.data.id;
+    const config = getConfig();
+    if (!config.enabled) return 'broke: summarize now - the pipeline is disabled (/broke on)';
+    if (config.level !== 'summarize') return 'broke: summarize now - level is not summarize (/broke level summarize)';
+    // Same reentry guard as the pipeline: the cloud summarizer's
+    // task.generateText can fire onOptimizeMessages while we wait.
+    if (this.optimizingTasks.has(taskId)) {
+      return 'broke: summarize now - a model call is being compressed right now; try again in a moment';
+    }
+
+    let messages: ContextMessage[];
+    try {
+      messages = (await task.getContextMessages()) ?? [];
+    } catch (err) {
+      return `broke: summarize now - could not read context messages (${err instanceof Error ? err.message : String(err)})`;
+    }
+    const { start, end } = compressibleRange(messages, config.protectedTurns);
+    const regionChars = start < end ? messagesChars(messages.slice(start, end)) : 0;
+    if (messages.length < 4 || regionChars <= 0) {
+      return 'broke: summarize now - nothing compressible yet (no old messages outside the protected turns)';
+    }
+
+    this.optimizingTasks.add(taskId);
+    try {
+      const deps = this.buildSummarizeDeps(config, task, context, { explainFailures: true });
+      const result = await summarizePass(messages, config.protectedTurns, config, deps, this.state, taskId);
+      if (result.failed) {
+        return 'broke: summarize now FAILED - check /broke status (Ollama reachable? model installed?) and the extension log for details';
+      }
+      if (result.summarizedRanges > 0) {
+        // A real summary was produced or served from cache: explicit success,
+        // so clearing the auto-disable state matches recordReport's rule for
+        // successful runs.
+        this.summarizeDisabled.delete(taskId);
+        this.summarizeFailures.delete(taskId);
+        const estTokens = estimateTokens(Math.max(result.removedChars, 0)).toLocaleString('en-US');
+        if (result.summarizeCalls === 0) {
+          return `broke: summary for the current region is already cached - nothing regenerated (≈ ${estTokens} tokens ready for reuse)`;
+        }
+        return `broke: summary generated (≈ ${estTokens} tokens smaller than the old region) and cached - it will be applied automatically on the next model call`;
+      }
+      if (result.summarizeCalls > 0) {
+        // XF6: the produced summary would GROW the context - nothing cached.
+        return 'broke: summary produced but NOT smaller than the region it replaces - nothing was cached or changed';
+      }
+      return 'broke: nothing summarized - the old region is below summarize.minChars or holds image/file/reasoning parts that must be preserved verbatim';
+    } catch (err) {
+      // Never let the command break - same contract as every hook.
+      context.log(`Broke: summarize now failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+      return 'broke: summarize now FAILED with an unexpected error - see the extension log';
     } finally {
       this.optimizingTasks.delete(taskId);
     }
@@ -749,6 +848,8 @@ export default class Broke implements Extension {
                 `broke slice status: slicing ${configNow.enabled ? '' : '(pipeline OFF) '}${configNow.slice.enabled ? 'on' : 'off'} | parser: ${configNow.slice.parser} | min ${configNow.slice.minChars.toLocaleString('en-US')} chars | view cap ${configNow.slice.maxChars.toLocaleString('en-US')} chars | focusAuto: ${configNow.slice.focusAuto ? 'on' : 'off'} | current focus: ${focus}`,
               );
             }
+            case 'summarize-now':
+              return log(await ext.summarizeNow(context));
             case 'measure': {
               const summary = summarizeRunRecords(loadRunRecords());
               return log(formatMeasure(summary));

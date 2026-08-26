@@ -37,6 +37,8 @@ Usage: /broke <subcommand>
   summarize cloud <provider/model>
                                 AiderDesk model for cloud summaries ('' = task model)
   summarize after <turns>       summarize only turns older than n user turns (default ${d.summarize.afterTurns})
+  summarize now                 build + cache a summary of the current old context NOW
+                                (manual pre-warm - applied automatically on the next model call)
   summarize allow-remote <on|off>
                                 allow NON-loopback Ollama hosts (default: ${d.summarize.allowRemoteHost ? 'on' : 'off'} - conversation content stays on this machine)
   stats                         per-pass saved chars/tokens for this task
@@ -76,6 +78,7 @@ export type BrokeCommand =
   | { kind: 'summarize-via'; via: 'local' | 'cloud' }
   | { kind: 'summarize-model'; model: string }
   | { kind: 'summarize-cloud'; modelId: string }
+  | { kind: 'summarize-now' }
   | { kind: 'summarize-after'; turns: number }
   | { kind: 'summarize-allow-remote'; enabled: boolean }
   | { kind: 'stats' }
@@ -173,6 +176,7 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
     case 'summarize': {
       const opt = rest[0];
       const value = rest[1];
+      if (opt === 'now' && rest.length === 1) return { kind: 'summarize-now' };
       if (opt === 'via' && (value === 'local' || value === 'cloud')) return { kind: 'summarize-via', via: value };
       if (opt === 'model' && value) return { kind: 'summarize-model', model: value };
       if (opt === 'cloud' && value) return { kind: 'summarize-cloud', modelId: value };
@@ -275,6 +279,9 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
     case 'slice-focus-clear':
     case 'slice-status':
       // Side effects handled in index.ts (task-scoped focus state / live status).
+      return { config, message: '' };
+    case 'summarize-now':
+      // Side effect handled in index.ts (LLM call + task-scoped summary cache).
       return { config, message: '' };
     case 'summarize-via':
       return { config: updateConfigPath('summarize.via', cmd.via, filePath), message: `summarizer → ${cmd.via}` };
