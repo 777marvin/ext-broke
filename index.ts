@@ -152,7 +152,9 @@ export default class Broke implements Extension {
   private readonly lastEditPath = new Map<string, { path: string; at: number }>();
   private readonly explicitFocus = new Map<string, string>();
   private readonly updatedFilesCache = new Map<string, { paths: string[]; at: number }>();
-  private readonly unknownReadToolsLogged = new Set<string>();
+  private readonly unknownReadToolsLogged = new Map<string, true>();
+  /** Review R12: dynamic tool names must not grow state unboundedly. */
+  private static readonly MAX_UNKNOWN_READ_TOOLS = 1000;
   private static readonly UPDATED_FILES_TTL_MS = 30_000;
 
   onLoad(context: ExtensionContext): void {
@@ -460,7 +462,7 @@ export default class Broke implements Extension {
   /** Diagnose read-tool candidates without a path field once per session. */
   private logUnknownReadToolOnce(toolName: string, context: ExtensionContext): void {
     if (this.unknownReadToolsLogged.has(toolName)) return;
-    this.unknownReadToolsLogged.add(toolName);
+    boundedMapSet(this.unknownReadToolsLogged, toolName, true, Broke.MAX_UNKNOWN_READ_TOOLS);
     context.log(
       `Broke: read tool '${toolName}' carries no path field - slicing skipped for it (S4 feature-detect). Report this if slicing should apply.`,
       'info',
