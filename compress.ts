@@ -4,6 +4,7 @@ import type { Config } from './config';
 import { extractErrorSummary, formatErrorSummary, isCommandTool } from './errors';
 import { extractOutputText, partText } from './output';
 import { estimateTokens, messageChars, messagesChars } from './tokens';
+import { formatValidationFailures, validateContext, type ValidationFailure } from './validate';
 
 /**
  * The compression pipeline. Runs on the messages that are about to be sent
@@ -911,6 +912,14 @@ export interface CompressOptions {
    * testable at the pipeline level.
    */
   summarizeDisabled?: boolean;
+  /**
+   * ContextValidator seam (ContextValidator, review P0): checks the pipeline
+   * OUTPUT before it is returned. Defaults to validateContext; tests inject
+   * stubs to exercise the revert path deterministically.
+   */
+  validate?: (messages: ContextMessage[]) => ValidationFailure[];
+  /** Called when validation failed and the run was reverted (for logging). */
+  onValidationFailure?: (line: string) => void;
 }
 
 export async function compressMessages(
@@ -973,6 +982,28 @@ export async function compressMessages(
   }
 
   report.totalCharsAfter = messagesChars(work);
+
+  // ContextValidator (review P0): the pipeline must never INTRODUCE a broken
+  // context. Revert happens only when the OUTPUT violates pairing/identity
+  // invariants while the INPUT was sound - i.e. a pass broke it. When the
+  // input was already corrupt, the provider call fails either way (that is a
+  // pre-existing host/history condition, not something compression caused),
+  // and reverting would silently disable broke for every subsequent call on
+  // that task - so the compressed output ships unchanged. Fail-safe over
+  // fail-broken, without turning the guard into a compression kill-switch.
+  const validate = opts.validate ?? validateContext;
+  const outputFailures = validate(work);
+  if (outputFailures.length > 0 && validate(messages).length === 0) {
+    opts.onValidationFailure?.(
+      `broke: context validation failed (${formatValidationFailures(outputFailures)}) - reverting to the uncompressed context`,
+    );
+    const reverted = emptyReport(totalCharsBefore);
+    reverted.summarizeCalls = report.summarizeCalls;
+    reverted.summarizeFailed = report.summarizeFailed;
+    if (report.summarizer !== 'none') reverted.summarizer = report.summarizer;
+    return { messages, report: reverted };
+  }
+
   report.touched =
     report.structuralChars + report.errorChars + report.truncateChars + report.summarizeChars > 0 ||
     report.summarizedRanges > 0 ||
