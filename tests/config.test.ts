@@ -170,3 +170,23 @@ describe('errors.archive default (review R7)', () => {
     assert.equal(DEFAULT_CONFIG.errors.archive, false);
   });
 });
+
+describe('snapshot config block (F3)', () => {
+  it('records milestones on commit by default, test-green heuristics off', () => {
+    assert.equal(DEFAULT_CONFIG.snapshot.onCommit, true, 'snapshot writing is additive - nothing in the task history changes');
+    assert.equal(DEFAULT_CONFIG.snapshot.onTestPass, false, 'exit-0/passed heuristics misfire on flaky suites');
+    assert.equal(DEFAULT_CONFIG.snapshot.keepHistory, true, 'without history files /broke flush --undo is impossible');
+  });
+
+  it('flush.confirm defaults ON - flush is the only destructive operation', () => {
+    assert.equal(DEFAULT_CONFIG.flush.confirm, true);
+  });
+
+  it('supports dotted-path updates for snapshot/flush keys', () => {
+    const updated = applyConfigUpdates(DEFAULT_CONFIG, [['snapshot.onTestPass', true], ['flush.confirm', false]]);
+    assert.equal(updated.snapshot.onTestPass, true);
+    assert.equal(updated.flush.confirm, false);
+    // partial nested merge must not wipe sibling keys
+    assert.equal(updated.snapshot.onCommit, DEFAULT_CONFIG.snapshot.onCommit);
+  });
+});
