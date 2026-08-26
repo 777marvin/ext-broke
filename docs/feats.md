@@ -16,7 +16,7 @@ be resolved during the corresponding feature's development.
 |---|---------|----------------|--------|--------|
 | F1 | Active Log & Stack-Trace Compressor | 0.2.0 | S | shipped |
 | F2 | ST-Slicing (Semantic Context Thinning) | 0.7.0 | M | shipped |
-| F3 | State Snapshotting & Memory Flushing | 0.9.0 | M | implemented on feat/f3-snapshot-flush - release pending the S2 manual verification run |
+| F3 | State Snapshotting & Memory Flushing | 0.9.0 | M | shipped |
 | F4 | Local Keyword/Vector Index with snippet summaries | TBD | L | planned |
 
 **Version reality check (2026-08-26):** v0.3.0 to v0.8.0 are released
@@ -93,14 +93,19 @@ by F1–F3.
     sub-case: a task with an explicitly added context file (drop / read-only
     add) could not be tested from the extension side - if `file` parts
     appear in that case, the input pass could cover them.
-- **S2 (F3):** What happens to `{project}/.aider-desk/tasks/{id}/.aider.chat.history.md`
-  (written by the Python connector) when `TaskContext.removeMessagesUpTo` +
-  `addContextMessage` are used? Does the next prompt re-hydrate from that
-  file? If yes, flushing must also document/accept the desync or be blocked.
-- **S3 (F3/F4):** Does `scripts/deploy.ps1` preserve extension subfolders
-  (`snapshots/`, `index/`)? `config.json` is preserved. Resolved for
-  `errors/`: the preserve list covers it since F12 (with a size cap on
-  copy). `snapshots/`/`index/` still need the same treatment.
+- **S2 (F3) - partially resolved 2026-08-26 (live smoke test).** First real
+  session after the F3 implementation: snapshot -> list -> flush ->
+  follow-up prompt answered correctly from brief + [broke-state] -> undo
+  restored history byte-exact; no rehydration artifacts observed and no
+  errors. VERDICT STILL OPEN: the session was trivial (fresh repo, single
+  short task), so `.aider.chat.history.md` re-hydration over LONG sessions
+  remains unobserved. README documents the caveat and asks users to report
+  flushed content returning. Execution uses loadContextMessages() (not
+  removeMessagesUpTo) so header messages and the task brief survive - see
+  index.ts handleFlushCommand.
+- **S3 (F3/F4):** resolved for snapshots/ in v0.9.0: deploy.ps1 preserve
+  list AND update.ts preserveRuntimeState carry snapshots/ across installs
+  (no size cap needed - rotation bounds records).
 - **S4 (F2) - partially resolved 2026-08-18.** Real `toolName` strings
   observed via the tool-call/tool-result parts in `onOptimizeMessages` of a
   power-tools session: `power---file_read` (read), `power---file_edit`
