@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`/broke summarize now` - manual summary pre-warm.** Runs the summarize
+  pass ON DEMAND against the live task context and caches the result. The
+  stored history is never rewritten: the compressed view enters only when
+  the next model call takes the free cache-reuse path. Use cases:
+  pre-warming BEFORE a long autonomous run (summarizer latency moves out of
+  the hot path), testing a newly configured backend on real context,
+  recovering from the auto-disable gate (a manual success re-enables
+  summarization for that task). Shares the pipeline's trust gate and model
+  resolution; failures are reported in the chat instead of feeding the
+  auto-disable counter, and a warm cache answers repeats without an LLM call.
+
+### Changed
+
+- **Autonomous sessions now get summarization.** The `summarize.afterTurns`
+  gate required user turns in the compressible region - but autonomous
+  single-prompt tool loops contain NONE after the task brief, leaving the
+  summarizer permanently idle there for exactly those sessions (the schema's
+  `afterTurns >= 2` floor made it impossible to configure around). Regions
+  with zero user turns are now exempt from the turn gate; cost/size guards
+  (`minChars`, unsummarizable-parts skip, XF6 grow-guard) are unchanged.
+
 ## [0.8.0] - 2026-08-26
 
 Hardening release driven by the external architecture/security review of

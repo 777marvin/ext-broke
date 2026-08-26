@@ -30,6 +30,8 @@ venv/
 # Broke runtime data (per-task stats log, measurement ledger)
 stats.jsonl
 measure.jsonl
+# Runtime settings next to index.ts (deploy.ps1 keeps it in the install dir)
+config.json
 
 .aider*
 

@@ -212,6 +212,8 @@ commands) or from the gear icon on the extension card:
 /broke summarize after <turns>     compress only turns older than n
 /broke summarize allow-remote <on|off>
                                    allow non-loopback Ollama hosts (default: off)
+/broke summarize now               build + cache a summary of the old context NOW
+                                   (manual pre-warm, applied on the next model call)
 /broke stats                       per-pass saved chars/tokens
 /broke why                         live gate-by-gate verdict: why 0 (or not)?
 /broke measure                     summarize the per-run measurement ledger
@@ -326,7 +328,7 @@ it only changes which model sees the untrusted text first.
 | summarize.ollamaUrl | `http://127.0.0.1:11434` | Ollama base URL |
 | summarize.allowRemoteHost | off | explicit consent for non-loopback Ollama hosts |
 | summarize.cloudModelId | `` | `provider/model`; empty = task model |
-| summarize.afterTurns | 8 | only summarize turns older than N |
+| summarize.afterTurns | 8 | only summarize turns older than N (regions with zero user turns - autonomous single-prompt loops - are exempt) |
 | summarize.minChars | 8000 | min region size for summarization |
 | ui.showStatusBadge | on | 💸 badge in the task status bar |
 | stats.measure | on | one record per compression run in `measure.jsonl` |

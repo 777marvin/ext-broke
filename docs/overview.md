@@ -76,7 +76,9 @@ everything older than the protected region:
 3. **truncate**: old tool outputs → head+tail with marker under combined
    hard limits (≤ 200 lines AND ≤ 20 KB after the cut, XF5); tool-call
    inputs over 2000 chars → `__broke` preview.
-4. **summarize**: region ≥ `afterTurns` (8) user turns and input above
+4. **summarize**: region ≥ `afterTurns` (8) user turns (or a region with
+   NO user turn at all - autonomous single-prompt tool loops - which would
+   otherwise never qualify) and input above
    `maxContextChars` (60000 ≈ 15k tokens) → one `[broke-compacted]`
    summary message, cached per task + summarizer-config fingerprint
    (backend/model changes invalidate the cache; tool-loop steps append to
