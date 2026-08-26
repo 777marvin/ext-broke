@@ -251,7 +251,7 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
     case 'errors-lines':
       return { config: updateConfigPath('errors.contextLines', cmd.value, filePath), message: `errors contextLines → ${cmd.value}` };
     case 'errors-toollevel':
-      return { config: updateConfigPath('errors.toolLevel', cmd.enabled, filePath), message: `error tool-level rewriting ${cmd.enabled ? 'enabled' : 'disabled'} - rewrites stored history` };
+      return { config: updateConfigPath('errors.toolLevel', cmd.enabled, filePath), message: `error tool-level rewriting ${cmd.enabled ? 'enabled' : 'disabled'} - rewrites STORED history irreversibly` };
     case 'errors-archive':
       return {
         config: updateConfigPath('errors.archive', cmd.enabled, filePath),
@@ -268,8 +268,8 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
       return {
         config: updateConfigPath('slice.enabled', cmd.enabled, filePath),
         message: cmd.enabled
-          ? 'ST-slicing enabled - file reads return interface views (focus file stays full)'
-          : 'ST-slicing disabled - file reads pass through untouched',
+          ? 'ST-slicing enabled - file reads return interface views (focus file stays full). NOTE: rewrites land in STORED task history and cannot be undone by disabling slicing later.'
+          : 'ST-slicing disabled - file reads pass through untouched (already-stored views stay sliced)',
       };
     case 'slice-focus':
     case 'slice-focus-clear':

@@ -99,7 +99,7 @@
           1, 30)}
         </div>
         <Checkbox
-          label="Tool-level rewrite (rewrites stored history, archives full output)"
+          label="Tool-level rewrite (rewrites stored history irreversibly)"
           checked={errors.toolLevel ?? false}
           onChange={(checked) => updateConfig({ ...config, errors: { ...errors, toolLevel: checked } })}
         />
