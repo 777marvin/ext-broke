@@ -407,6 +407,22 @@ function sliceTs(lines: string[], opts: SliceOptions): string[] {
       continue;
     }
 
+    // Fail-safe pass-through (review R6): any UNRECOGNIZED statement that
+    // opens an export or ambient declaration is part of the module's API
+    // surface - dropping it could hide a valid export from the model and
+    // leave it with a wrong idea of the file's API (`export default class`,
+    // `export =`, `declare module`, ...). A bigger view is recoverable via
+    // the maxChars fallback; a hidden export is not detectable afterwards.
+    // False negative beats false positive: keep the whole statement.
+    if (/^(?:export|declare)\b/.test(t)) {
+      const st = readBalanced(lines, i);
+      pendingDecorators.forEach(push);
+      pendingDecorators = [];
+      st.text.forEach(push);
+      i = st.end + 1;
+      continue;
+    }
+
     // Everything else is implementation detail - skipped in v1.
     i++;
   }

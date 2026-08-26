@@ -243,6 +243,89 @@ describe('sliceMarker', () => {
   });
 });
 
+describe('fail-safe export pass-through (review R6)', () => {
+  /** The view must carry the statement's FIRST line verbatim. */
+  const keeps = (src: string, needle: string): void => {
+    const view = sliceInterfaces(src, 'ts');
+    assert.ok(
+      view.text.includes(needle),
+      `expected the API surface to survive:\n---\n${view.text}\n---\nmissing: ${needle}`,
+    );
+  };
+
+  it('keeps `export default class` (previously dropped entirely)', () => {
+    keeps('export default class Foo {}\nconst x = 1;\n', 'export default class Foo {}');
+  });
+
+  it('keeps a multi-line `export default class` with members', () => {
+    const src = ['export default class Widget {', '  render(): void {', '    return this.state;', '  }', '}', ''].join('\n');
+    keeps(src, 'export default class Widget {');
+    // Body elision is NOT applied to pass-through statements - full text stays.
+    const view = sliceInterfaces(src, 'ts');
+    assert.ok(view.text.includes('return this.state;'));
+  });
+
+  it('keeps `export default function` (elided via the function path)', () => {
+    // The named-function pattern already matches default functions - the
+    // view shows the signature with an elided body, consistent with every
+    // other function declaration.
+    const view = sliceInterfaces('export default function main(): void {}\n', 'ts');
+    assert.ok(view.text.includes('export default function main(): void { /* … */ }'));
+  });
+
+  it('keeps a multiline `export default { ... }` object export', () => {
+    keeps('export default {\n  foo: 1,\n  bar: 2,\n};\n', 'bar: 2,');
+  });
+
+  it('keeps `export =` assignments', () => {
+    keeps('export = Foo;\n', 'export = Foo;');
+  });
+
+  it('keeps `declare module` ambient blocks', () => {
+    const src = 'declare module "left-pad" {\n  export function pad(s: string): string;\n}\n';
+    keeps(src, 'declare module "left-pad" {');
+    keeps(src, 'export function pad(s: string): string;');
+  });
+
+  it('keeps `declare global` blocks', () => {
+    keeps('declare global {\n  interface Window { broke?: boolean; }\n}\n', 'interface Window {');
+  });
+
+  it('does not crash on JSX, regex literals or brace-heavy template literals', () => {
+    const src = [
+      'import React from "react";',
+      'export function App(): JSX.Element {',
+      '  const re = /[{}]/g;',
+      '  const s = `${a.b} { }`;',
+      '  return <div className={re ? "x" : "y"}>{s}</div>;',
+      '}',
+      'export default App;',
+    ].join('\n');
+    const view = sliceInterfaces(src, 'ts');
+    assert.ok(view.text.includes('export function App'));
+    assert.ok(!view.text.includes('className='), 'body must be elided');
+  });
+
+  it('still elides plain implementation code (no false positives)', () => {
+    // Short const lines survive by design; the point is that statements NOT
+    // starting with export/declare never take the pass-through path.
+    const view = sliceInterfaces('const a = 1;\nrunInternal(a);\ncleanup(a, b, c);\n', 'ts');
+    assert.ok(!view.text.includes('runInternal'));
+    assert.ok(!view.text.includes('cleanup'));
+  });
+
+  it('does not treat CJS `exports.x = ...` as an ESM export block', () => {
+    // 'exports' does not match /^export\b/ - stays an implementation detail.
+    const view = sliceInterfaces('exports.helper = helper;\n', 'ts');
+    assert.ok(!view.text.includes('exports.helper'));
+  });
+
+  it('keeps generic and abstract declarations through their normal paths', () => {
+    keeps('export class Repo<T> { find(id: string): T | undefined { return undefined; } }\n', 'export class Repo<T>');
+    keeps('abstract class Base { abstract run(): void; }\n', 'abstract class Base');
+  });
+});
+
 describe('tool detection', () => {
   it('detects known read tools carrying a path field', () => {
     assert.equal(isReadTool('power---file_read', { filePath: 'src/a.ts' }), true);
