@@ -54,6 +54,8 @@ function fakeInstall(version: string): string {
   writeFileSync(join(dir, 'measure.jsonl'), '{"runs":1}\n');
   mkdirSync(join(dir, 'errors'));
   writeFileSync(join(dir, 'errors', 'out.txt'), 'full tool output');
+  mkdirSync(join(dir, 'snapshots'));
+  writeFileSync(join(dir, 'snapshots', 't1.json'), '{"goal":"g"}');
   mkdirSync(join(dir, 'node_modules'));
   writeFileSync(join(dir, 'node_modules', 'dep.js'), '// old dep');
   return dir;
@@ -220,6 +222,7 @@ describe('runUpdate (install)', () => {
     assert.equal(existsSync(join(install, 'stats.jsonl.1')), true);
     assert.equal(existsSync(join(install, 'measure.jsonl')), true);
     assert.equal(readFileSync(join(install, 'errors', 'out.txt'), 'utf-8'), 'full tool output');
+      assert.equal(readFileSync(join(install, 'snapshots', 't1.json'), 'utf-8'), '{"goal":"g"}');
     // Dependencies were refreshed inside the staged payload (lockfile changed).
     assert.equal(calls.npmCiDirs.length, 1);
     assert.equal(existsSync(join(install, 'node_modules', 'fresh.js')), true);
