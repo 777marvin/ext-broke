@@ -206,6 +206,12 @@ commands) or from the gear icon on the extension card:
 /broke slice focus <path>        always return this file in full (per task)
 /broke slice focus clear         drop the explicit focus
 /broke slice status              slicing mode and current focus for this task
+/broke snapshot [label]          record a milestone snapshot of this task now
+/broke snapshot list             list this task's snapshots (newest first)
+/broke snapshot show <n>         print snapshot #n
+/broke flush [--yes]             DANGEROUS: replace everything after the task brief
+                                 with one [broke-state] summary (asks by default)
+/broke flush --undo <n>          restore the exact history stored with snapshot #n
 /broke summarize via <local|cloud> summarizer backend
 /broke summarize model <name>      Ollama model tag
 /broke summarize cloud <provider/model>
@@ -286,6 +292,34 @@ repo map, `/add`, connector-read content - bypass tool hooks entirely and
 are never sliced. Slicing only covers what flows through file-read tools.
 Savings appear as an estimate under `slice:` in `/broke stats`.
 
+### Snapshots & flush (F3)
+
+Long sessions pile up intermediate steps the agent no longer needs. Broke's
+F3 records **milestone snapshots** - compact, human-inspectable JSON files
+(`goal`, `achieved`, changed `files`, optional commit hash, a masked text
+summary) under `snapshots/<taskId>/` next to the extension. They are written
+automatically after every successful commit (`snapshot.onCommit`, default
+on), optionally on detected test-green tool results (`snapshot.onTestPass`,
+default off), and manually via `/broke snapshot [label]`.
+
+The *flush* is the only destructive operation in broke. `/broke flush`
+replaces everything after the original task brief with ONE `[broke-state]`
+message carrying that state record - so long-running tasks can restart each
+step from brief + current state instead of the full scrollback. It is manual,
+asks for confirmation (`flush.confirm`), writes BOTH the snapshot record and
+a raw-history undo file BEFORE touching any message, aborts untouched if
+those writes fail, and `/broke flush --undo <n>` restores the byte-identical
+history afterwards. Keep `snapshot.keepHistory` on or undo becomes
+impossible.
+
+Known limitation (spike S2): AiderDesk also maintains
+`.aider.chat.history.md` in the task folder as its own connector artifact.
+Replacing the context messages does not rewrite that file; depending on the
+AiderDesk version it may re-hydrate old content on the next prompt. If you
+observe flushed content returning, prefer AiderDesk's native
+handoffConversation-style flows or report back to the broke issue tracker -
+the acceptance docs track this gap explicitly.
+
 ## Security notes
 
 The summarize pass condenses conversation content (tool outputs, web
@@ -301,6 +335,13 @@ web/file content any tool fetches: broke itself never executes the
 summarizer's output, it only stores it as history. Switching
 `summarize.via` to the task's own cloud model does not remove the risk,
 it only changes which model sees the untrusted text first.
+
+Snapshots (F3) persist small JSON records and optional raw-history undo
+files **locally** under the extension directory. Every record field derived
+from conversation content passes through the same secret masking as all
+broke artifacts; rotation caps them at 50 records per task. If your
+conversation contains long-lived credentials that none of the masking
+patterns catch, disable snapshots or move them off shared machines.
 
 ## Configuration
 
@@ -332,6 +373,10 @@ it only changes which model sees the untrusted text first.
 | summarize.minChars | 8000 | min region size for summarization |
 | ui.showStatusBadge | on | 💸 badge in the task status bar |
 | stats.measure | on | one record per compression run in `measure.jsonl` |
+| snapshot.onCommit | on | milestone snapshot after every successful commit |
+| snapshot.onTestPass | off | test-green detection as milestones (heuristic misfires) |
+| snapshot.keepHistory | on | write raw-history undo files (required for `flush --undo`) |
+| flush.confirm | on | ask before the destructive `/broke flush` |
 
 ## Status
 

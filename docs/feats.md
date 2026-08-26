@@ -16,10 +16,10 @@ be resolved during the corresponding feature's development.
 |---|---------|----------------|--------|--------|
 | F1 | Active Log & Stack-Trace Compressor | 0.2.0 | S | shipped |
 | F2 | ST-Slicing (Semantic Context Thinning) | 0.7.0 | M | shipped |
-| F3 | State Snapshotting & Memory Flushing | TBD | M | planned |
+| F3 | State Snapshotting & Memory Flushing | 0.9.0 | M | implemented on feat/f3-snapshot-flush - release pending the S2 manual verification run |
 | F4 | Local Keyword/Vector Index with snippet summaries | TBD | L | planned |
 
-**Version reality check (2026-08-26):** v0.3.0 to v0.6.3 are released
+**Version reality check (2026-08-26):** v0.3.0 to v0.8.0 are released
 and shipped F1 improvements, the reference
 benchmark, the measurement ledger, the error-archive privacy controls,
 the CI security automation, the self-update command (`/broke update`,
@@ -28,8 +28,11 @@ hardening round (rename retries, byte-size payload verification,
 complete rollback), the always-live status badge, the AiderDesk 0.80
 extension-API updates (disposable config-watcher cleanup), the honest-zero
 transparency work (idle badge hint, `/broke why`, stats flush) and F2
-ST-slicing (v0.7.0). F3-F4 are
-**not** implemented in any released version. The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
+ST-slicing (v0.7.0). F3 is implemented on
+`feat/f3-snapshot-flush` (snapshots/, snapshot.ts module, config blocks,
+commands, onAfterCommit/test-green triggers, confirmed+undo-gated flush via
+loadContextMessages) and targets v0.9.0 once spike S2's manual run passed;
+F4 is **not** implemented in any released version. The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
 F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without
 F2/F3, and 0.5.0 shipped the XF-hardening round instead) and stay TBD
 until the features are actually scheduled.
