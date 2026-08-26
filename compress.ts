@@ -11,10 +11,11 @@ import { formatValidationFailures, validateContext, type ValidationFailure } fro
  * to the model (onOptimizeMessages) - before every model call, not only when
  * the built-in emergency compaction fires. Three levels:
  *
- *   structural (lossless) - drop empty messages, dedupe repeated tool
- *     results ONLY when the producing tool-calls are identical too (name +
- *     input, together with their matching tool-call), merge consecutive
- *     assistant texts.
+ *   structural (content-preserving) - drop empty messages, dedupe repeated
+ *     tool results ONLY when the producing tool-calls are identical too
+ *     (name + input, together with their matching tool-call), merge
+ *     consecutive assistant texts. Textual content survives, but message
+ *     framing may change (merged texts become one message).
  *   truncate   (lossy)    - head+tail truncation of old tool outputs,
  *     trimming of oversized tool-call inputs.
  *   summarize  (lossy)    - replace old conversation turns with a dense

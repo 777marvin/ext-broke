@@ -342,7 +342,7 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
       ? `  saved actual:   ${fmtChars(measured)} (measured: per-run input before - after, summed)`
       : `  saved total:    ${fmtChars(passSum)} (pass-sum - records predate size measurement)`,
     ...(money ? [`  estimated cost saved: ${money} (${priceLabel(price)})`] : []),
-    `  structural:    ${fmtChars(stats.savedChars.structural)} (lossless)`,
+    `  structural:    ${fmtChars(stats.savedChars.structural)} (content-preserving)`,
     `  error:         ${fmtChars(stats.savedChars.error)} (stack-trace/log compression)`,
     `  truncate:      ${fmtChars(stats.savedChars.truncate)}`,
     `  summarize:     ${fmtChars(stats.savedChars.summarize)} (${stats.summarizedRanges} range(s), ${stats.summarizeFailures} failure(s))`,

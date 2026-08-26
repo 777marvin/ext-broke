@@ -55,7 +55,7 @@
           value={cfg.level ?? 'truncate'}
           onChange={(value) => updateConfig({ ...config, level: value })}
           options={[
-            { value: 'structural', label: 'Structural - lossless only (empty/dedup/merge)' },
+            { value: 'structural', label: 'Structural - content-preserving only (empty/dedup/merge)' },
             { value: 'truncate', label: 'Truncate - + head/tail truncation of old tool outputs (recommended)' },
             { value: 'summarize', label: 'Summarize - + LLM summary of old turns (most aggressive)' },
           ]}

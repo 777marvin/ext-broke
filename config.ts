@@ -121,7 +121,8 @@ export const ConfigSchema = z.object({
   enabled: z.boolean().default(true),
   /**
    * Compression depth:
-   * - 'structural': lossless only (drop empties, dedupe, merge)
+   * - 'structural': content-preserving only (drop empties, dedupe, merge;
+   *   textual content survives but message framing may change)
    * - 'truncate':   + lossy head/tail truncation of old tool outputs
    * - 'summarize':  + LLM summarization of old conversation turns
    */
