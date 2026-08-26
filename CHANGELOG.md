@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Defused three regexes in the slicer flagged by CodeQL as polynomial-ReDoS
+  risks (`js/polynomial-redos`): comment and string-literal stripping now use
+  linear character scans instead of backtracking-prone patterns, and the
+  function-declaration matcher no longer overlaps whitespace quantifiers.
+  Behavior for real-world code is unchanged.
+
 ## [0.7.0] - 2026-08-26
 
 ### Added

@@ -65,11 +65,34 @@ const MAX_STATEMENT_LINES = 50;
 
 /** Blank string literals and line comments so brackets inside them do not count. */
 function stripStrings(line: string): string {
-  let s = line.replace(/\/\/.*$/, '');
-  s = s.replace(/'(?:[^'\\]|\\.)*'/g, "''");
-  s = s.replace(/"(?:[^"\\]|\\.)*"/g, '""');
-  s = s.replace(/`(?:[^`\\]|\\.)*`/g, '``');
-  return s;
+  // Linear character scans, no regexes: pathological lines must not be able
+  // to trigger quadratic backtracking (CodeQL js/polynomial-redos).
+  const cut = line.indexOf('//');
+  let s = cut === -1 ? line : line.slice(0, cut);
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    const q = s[i];
+    if (q === "'" || q === '"' || q === '`') {
+      let j = i + 1;
+      while (j < s.length) {
+        if (s[j] === '\\') j += 2;
+        else if (s[j] === q) break;
+        else j++;
+      }
+      if (j < s.length) {
+        out += q + q; // complete literal -> collapse to an empty one
+        i = j + 1;
+      } else {
+        out += s[i]; // unterminated literal passes through untouched
+        i++;
+      }
+    } else {
+      out += s[i];
+      i++;
+    }
+  }
+  return out;
 }
 
 /** Net bracket depth delta of one line (heuristic: regex literals can skew it). */
@@ -178,7 +201,7 @@ interface SliceOptions {
 const TS_CLASS_RE = /^(?:(?:export|declare|abstract)\s+)*class\s+([\w$]+)/;
 const TS_INTERFACE_RE = /^(?:(?:export|declare)\s+)*(?:abstract\s+)?(?:interface\s+[\w$]+|enum\s+[\w$]+|namespace\s+[\w$.]+)/;
 const TS_TYPE_RE = /^(?:export\s+)?type\s+[\w$]+/;
-const TS_FUNC_RE = /^(?:(?:export\s+)?(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([\w$]+)/;
+const TS_FUNC_RE = /^(?:(?:export\s+)?(?:default\s+)?)?(?:async\s+)?function[*\s]*([\w$]+)/;
 const TS_CONST_FUNC_RE = /^(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*(?::[^=]*)?=\s*(?:async\s*)?[<(]/;
 const TS_CONST_RE = /^(?:export\s+)?(?:const|let|var)\s+/;
 
