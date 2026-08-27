@@ -364,9 +364,12 @@ replacing it (snapshots are inspectable JSON; flush is only one of its uses).
   (`SummarizeDeps`, `maskSecrets` applied) or a template when unavailable.
 - Persistence: `join(__dirname, 'snapshots', taskId, '<iso>_<label>.json')`
   (extension dir, like `stats.jsonl`, survives deploys; S3 verifies
-  `deploy.ps1`). `snapshot.keepHistory` (default `true`) additionally writes
-  the raw message array to `<iso>_<label>.history.json` **before any flush**,
-  this is the undo file. Rotation: keep last 50 per task.
+  `deploy.ps1`). `snapshot.keepHistory` (default `false` since the external
+  review F-01/D1: raw histories may contain secrets - opt-in) additionally
+  writes the raw message array to `<iso>_<label>.history.json`; the
+  destructive flush keeps its undo file via `flush.undo` (default `true`).
+  Rotation: keep last 50 per task AND an aggregate byte budget per task
+  (review F-14).
 - Triggers:
   - `onAfterCommit` (read-only event, but writing our own files is allowed):
     record from commit message + `getUpdatedFiles` + current summary.
@@ -390,8 +393,10 @@ dangerous: removed message ids may be referenced by the running step):**
 - `/broke flush --undo <n>`: restore from the history file via
   `loadContextMessages` (only when the task is idle; S2 gates this).
 - Config: `snapshot.onCommit` (true), `snapshot.onTestPass` (false),
-  `snapshot.keepHistory` (true), `flush.confirm` (true, uses
-  `askQuestion` or `--yes`).
+  `snapshot.keepHistory` (false, opt-in), `flush.confirm` (true),
+  `flush.undo` (true - flush aborts untouched when its undo file would
+  exceed the size cap), uses
+  `askQuestion` or `--yes`.
 
 **Commands (commands.ts):** `/broke snapshot [label]`, `/broke snapshot list`,
 `/broke snapshot show <n>`, `/broke flush [--yes]`, `/broke flush --undo <n>`.
@@ -406,8 +411,9 @@ dangerous: removed message ids may be referenced by the running step):**
 - [x] After flush, the task context = task brief + `[broke-state]` message;
       the agent answers a follow-up prompt correctly (manual check).
 - [x] `--undo` restores the exact prior message array from the history file.
-- [x] History files are capped/rotated; `snapshot.keepHistory: false` skips
-      them and disables `--undo` (documented).
+- [x] History files are capped/rotated (count + aggregate byte budget per
+      task, F-14); `snapshot.keepHistory: false` skips them for
+      auto/manual snapshots while `flush.undo` keeps `--undo` working.
 - [x] README documents the `.aider.chat.history.md` desync per S2.
 
 ### Verification
