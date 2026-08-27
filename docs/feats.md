@@ -17,7 +17,7 @@ be resolved during the corresponding feature's development.
 | F1 | Active Log & Stack-Trace Compressor | 0.2.0 | S | shipped |
 | F2 | ST-Slicing (Semantic Context Thinning) | 0.7.0 | M | shipped |
 | F3 | State Snapshotting & Memory Flushing | 0.9.0 | M | shipped |
-| F4 | Local Keyword/Vector Index with snippet summaries | 0.10.0 | L | implemented on `feat/f4-index` |
+| F4 | Local Keyword/Vector Index with snippet summaries | 0.10.0 | L | shipped |
 
 **Version reality check (2026-08-26):** v0.3.0 to v0.8.0 are released
 and shipped F1 improvements, the reference
@@ -32,7 +32,7 @@ ST-slicing (v0.7.0). F3 is implemented on
 `feat/f3-snapshot-flush` (snapshots/, snapshot.ts module, config blocks,
 commands, onAfterCommit/test-green triggers, confirmed+undo-gated flush via
 loadContextMessages) and targets v0.9.0 once spike S2's manual run passed;
-F4 is implemented on `feat/f4-index` and ships as 0.10.0.
+F4 shipped in v0.10.0 (2026-08-27).
 The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
 F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without
 F2/F3, and 0.5.0 shipped the XF-hardening round instead) and stay TBD

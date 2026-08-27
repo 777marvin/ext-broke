@@ -36,7 +36,7 @@ pipeline, compression applies to the input of each model call only.
 | `scripts/sign-release.mjs` | 78 | Release artifact signing: sha256sum manifest + Ed25519 signature (`BROKE_RELEASE_SIGNING_KEY`, CI-only) |
 | `.github/workflows/release.yml` | 55 | Tag-push release pipeline: byte-stable `git archive` artifact -> signed manifest -> GitHub release assets (the ONLY supported release path since 0.8.0) |
 | `pricing.ts` | 91 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
-| `selftest.ts` | 194 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
+| `selftest.ts` | 249 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
 | `scripts/measure.ts` | 25 | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
 | `ConfigComponent.jsx` | 210 | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
 | `StatusBadge.jsx` | 75 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state; always renders and polls every 10 s so a missed push refresh cannot hide it |
