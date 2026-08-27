@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path';
 import {
   compareSemver,
   MAX_PRESERVED_ERRORS_BYTES,
+  MAX_PRESERVED_INDEX_BYTES,
   normalizeTag,
   releaseAssetName,
   replaceInstallationInPlace,
@@ -624,5 +625,30 @@ describe('errors/ archive preserve cap', () => {
     // The oversized archive stays untouched in the OLD folder... which was
     // swapped away, so verify via the message instead: update succeeded.
     assert.match(res.message, /updated: v0\.5\.1 → v0\.6\.0/);
+  });
+});
+
+describe('index/ preserve cap (F4, plan decision E2)', () => {
+  it('carries built indexes across an update so paid indexing work survives', async () => {
+    const install = fakeInstall('0.5.1');
+    mkdirSync(join(install, 'index', 'deadbeef'), { recursive: true });
+    writeFileSync(join(install, 'index', 'deadbeef', 'index.json'), '{"version":1,"postings":{}}', 'utf-8');
+    const res = await runUpdate({ mode: 'install' }, {}, makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD), install);
+    assert.ok(res.ok, res.message);
+    assert.deepEqual(res.warnings ?? [], []);
+    assert.equal(readFileSync(join(install, 'index', 'deadbeef', 'index.json'), 'utf-8'), '{"version":1,"postings":{}}');
+  });
+
+  it('warns and skips index/ when it exceeds the cap (rebuildable cache)', async () => {
+    const install = fakeInstall('0.5.1');
+    mkdirSync(join(install, 'index', 'bloated'), { recursive: true });
+    const fh = openSync(join(install, 'index', 'bloated', 'huge.bin'), 'w');
+    ftruncateSync(fh, MAX_PRESERVED_INDEX_BYTES + 1);
+    closeSync(fh);
+    const res = await runUpdate({ mode: 'install' }, {}, makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD), install);
+    assert.ok(res.ok, res.message);
+    assert.equal(res.warnings?.length, 1);
+    assert.match(res.warnings?.[0] ?? '', /64 MB/);
+    assert.equal(existsSync(join(install, 'index', 'bloated')), false); // skipped entirely
   });
 });

@@ -206,6 +206,10 @@ commands) or from the gear icon on the extension card:
 /broke slice focus <path>        always return this file in full (per task)
 /broke slice focus clear         drop the explicit focus
 /broke slice status              slicing mode and current focus for this task
+/broke index [rebuild]           build/rebuild the local project keyword index (persisted)
+/broke index status              indexed files, terms, disk size, built age
+/broke search <query>            broke-search snippet summary (top-k under char budget)
+/broke search on | off           register / unregister the broke-search agent tool (default: on)
 /broke snapshot [label]          record a milestone snapshot of this task now
 /broke snapshot list             list this task's snapshots (newest first)
 /broke snapshot show <n>         print snapshot #n
@@ -409,6 +413,40 @@ observe flushed content returning, prefer AiderDesk's native
 handoffConversation-style flows or report back to the broke issue tracker -
 the acceptance docs track this gap explicitly.
 
+### Local project search (broke-search tool)
+
+`search.enabled` (default **on**) registers a `broke-search` agent tool
+backed by a per-project keyword index: identifier-aware tokenizer, BM25
+ranking, top-k results with `path:line` plus ±6 context lines around each
+best match - and the snippet summary *is* the token control. Every result
+set stays under `search.maxChars` (default 6000 chars ≈ 1.5k tokens)
+including a one-line footer stating how many results and indexed files it
+came from.
+
+Honest positioning against what AiderDesk already ships: Broke's index is
+**offline** (no embedding model needed), persisted per project under
+`<extension>/index/`, re-indexed incrementally by mtime/size diffing
+(triggered on commits and lazily before queries), and strictly budgeted.
+It complements rather than replaces `power---semantic_search` or the repo
+map.
+
+Privacy by construction: the on-disk index contains term postings and file
+metadata ONLY - never file contents or snippets; snippets are read live
+from disk at query time and behave exactly like any normal file read in
+stored history. Skipped from indexing: `node_modules`, `.git`, `dist`,
+`build`, `vendor`, `.aider-desk`, non-code extensions and files above
+`search.maxFileKB`. Indexes survive deploys and `/broke update` (preserve
+lists) up to 64 MB.
+
+No savings are claimed for this feature anywhere in the badge or stats:
+value comes from the agent choosing budgeted snippets over bulk file reads,
+which is behavior - not pipeline compression. One honest tradeoff to know:
+every registered tool ships its JSON schema with every model call, so
+agents that never search pay a small constant cost; `/broke search off`
+(and the settings dialog) unregisters the tool while leaving the built
+index on disk for later re-enabling. `/broke index [rebuild] | status` and
+`/broke search <query>` cover control and manual use without an agent.
+
 ## Security notes
 
 The summarize pass condenses conversation content (tool outputs, web
@@ -432,6 +470,13 @@ broke artifacts; rotation caps them at 50 records per task. If your
 conversation contains long-lived credentials that none of the masking
 patterns catch, disable snapshots or move them off shared machines.
 
+broke-search (F4) returns raw code/file snippets - the same content class
+as any file-read tool result. The persisted index contains no file text
+(only term postings + metadata), so removing an indexed secret means
+editing/removing the FILE itself; nothing searchable lingers in
+`index/`. Queries run live against disk, honoring the same skip rules in
+every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
+
 ## Configuration
 
 | Setting | Default | Description |
@@ -453,6 +498,11 @@ patterns catch, disable snapshots or move them off shared machines.
 | slice.minChars | 4000 | files smaller pass through untouched |
 | slice.maxChars | 20000 | view cap; larger views fall back to full content |
 | slice.focusAuto | on | derive focus from edit-tool calls / updated files |
+| search.enabled | on | register the broke-search agent tool (offline keyword index) |
+| search.backend | `keyword` | v1 ships keyword BM25 only; vector/hybrid reserved for v2 |
+| search.maxResults / maxChars | 8 / 6000 | top-k results and TOTAL char budget per query |
+| search.contextLines | 6 | context lines kept around each best match |
+| search.maxFileKB | 512 | files larger than this never enter the index |
 | summarize.via | `local` | local (Ollama) / cloud |
 | summarize.localModel | `qwen2.5-coder:3b` | Ollama model tag |
 | summarize.ollamaUrl | `http://127.0.0.1:11434` | Ollama base URL |
@@ -470,10 +520,9 @@ patterns catch, disable snapshots or move them off shared machines.
 ## Status
 
 broke is in active development. The roadmap
-([docs/feats.md](docs/feats.md)) covers the remaining planned features:
-state snapshotting & memory flushing, a local keyword/vector index, with
-implementation specs (ST-slicing shipped in v0.7.0). Suggestions and bug
-reports are very welcome: just open an
+([docs/feats.md](docs/feats.md)) documents all four planned features with
+implementation specs (F1-F3 shipped; F4 local keyword search implemented,
+targeting v0.10.0). Suggestions and bug reports are very welcome: just open an
 [issue](https://github.com/777marvin/ext-broke/issues).
 
 broke targets AiderDesk's extension API. The compression logic itself is

@@ -1,4 +1,4 @@
-import { readFileSync, watch, type FSWatcher } from 'node:fs';
+import { readFileSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type {
   AfterCommitEvent,
@@ -9,6 +9,7 @@ import type {
   OptimizeMessagesEvent,
   TaskInitializedEvent,
   ToolCalledEvent,
+  ToolDefinition,
   ToolFinishedEvent,
   UIComponentDefinition,
 } from '@aiderdesk/extensions';
@@ -26,6 +27,20 @@ import {
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, saveConfig, type Config } from './config';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
+import {
+  createEmptyState,
+  ensureFresh,
+  formatSearchFooter,
+  indexDirFor,
+  loadIndex,
+  mergeIntoState,
+  projectHash,
+  resolveSearchOptions,
+  runSearch,
+  saveIndex,
+  scanProject,
+  type IndexState,
+} from './indexer';
 import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
 import { extractOutputText } from './output';
 import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from './pricing';
@@ -72,6 +87,7 @@ import {
 } from './tokens';
 import { boundedMapSet } from './compress';
 import { runUpdate } from './update';
+import { z } from 'zod';
 
 // Load the JSX templates once at module level (official template pattern).
 // A missing template must not prevent the extension from loading at all.
@@ -127,7 +143,7 @@ export default class Broke implements Extension {
     description:
       'Token budget extension: progressive input compression (structural + truncate + summarize) with local-model (Ollama) summarization offload',
     author: '777marvin',
-    capabilities: ['commands', 'ui-elements'],
+    capabilities: ['commands', 'ui-elements', 'tools'],
   };
 
   private context: ExtensionContext | null = null;
@@ -172,6 +188,13 @@ export default class Broke implements Extension {
   /** Review R12: dynamic tool names must not grow state unboundedly. */
   private static readonly MAX_UNKNOWN_READ_TOOLS = 1000;
   private static readonly UPDATED_FILES_TTL_MS = 30_000;
+  /**
+   * F4 state: one keyword index per open project (hash-keyed, bounded like
+   * every other map here). `at` also throttles the commit-signal refresh -
+   * a rebuild storm must never follow a rapid commit series.
+   */
+  private readonly indexByProject = new Map<string, { state: IndexState; at: number }>();
+  private static readonly INDEX_REFRESH_TTL_MS = 60_000;
 
   onLoad(context: ExtensionContext): void {
     this.context = context;
@@ -489,6 +512,9 @@ export default class Broke implements Extension {
       const config = getConfig();
       if (!config.enabled || !config.snapshot.onCommit || !event.message) return;
       await this.snapshotMilestone(context, 'commit', event.message.split('\n')[0].slice(0, 200));
+      // F4 trigger (throttled inside): keep the keyword index warm so the
+      // next broke-search call does not pay the whole incremental walk.
+      void this.refreshIndexFromSignal(context);
     } catch (err) {
       try {
         context.log(`Broke: commit snapshot failed - ${err instanceof Error ? err.message : String(err)}`, 'warn');
@@ -893,6 +919,12 @@ export default class Broke implements Extension {
                 `broke slice status: slicing ${configNow.enabled ? '' : '(pipeline OFF) '}${configNow.slice.enabled ? 'on' : 'off'} | parser: ${configNow.slice.parser} | min ${configNow.slice.minChars.toLocaleString('en-US')} chars | view cap ${configNow.slice.maxChars.toLocaleString('en-US')} chars | focusAuto: ${configNow.slice.focusAuto ? 'on' : 'off'} | current focus: ${focus}`,
               );
             }
+            case 'index-rebuild':
+              return log(ext.rebuildProjectIndex());
+            case 'index-status':
+              return log(ext.indexStatusText());
+            case 'search':
+              return log(ext.searchViaTool({ query: cmd.query }));
             case 'summarize-now':
               return log(await ext.summarizeNow(context));
             case 'snapshot':
@@ -926,6 +958,135 @@ export default class Broke implements Extension {
         },
       },
     ];
+  }
+
+  // -------------------------------------------------------------------------
+  // F4 - local project keyword index & broke-search tool
+  // -------------------------------------------------------------------------
+
+  /**
+   * Host-side ToolDefinition mirror (app main `packages/common/src/extensions.ts`).
+   * The published types package we compile against (@aiderdesk/extensions
+   * 0.31) does not export ToolDefinition/getTools yet - the classic "types
+   * lag runtime" pattern. A structural local type keeps typecheck green;
+   * at runtime the host reads plain properties from this JS object.
+   */
+  private static readonly BROKE_SEARCH_SCHEMA = z.object({
+    query: z.string().min(1),
+    k: z.number().int().min(1).max(50).optional(),
+    files: z.array(z.string()).optional(),
+  });
+
+  getTools(_context: ExtensionContext, _mode: string, _agentProfile: unknown): ToolDefinition[] {
+    const config = getConfig();
+    if (!config.enabled || !config.search.enabled) return [];
+    return [
+      {
+        name: 'broke-search',
+        description:
+          'Search this project locally (keyword index). Returns a token-budgeted snippet summary: path:line plus context lines around each best match, ALL results together under a strict char budget. Prefer this over reading whole files when locating definitions or usages.',
+        inputSchema: Broke.BROKE_SEARCH_SCHEMA,
+        execute: async (input) => {
+          const parsed = Broke.BROKE_SEARCH_SCHEMA.safeParse(input);
+          if (!parsed.success) return 'broke-search: invalid arguments';
+          return this.searchViaTool(parsed.data);
+        },
+      },
+    ];
+  }
+
+  /** Tool entry point: freshness sweep + budgeted search, never throwing. */
+  private searchViaTool(input: { query: string; k?: number; files?: string[] }): string {
+    const config = getConfig();
+    if (!config.search.enabled) return 'broke-search is disabled (/broke help for config paths)';
+    const root = this.context?.getProjectDir?.() ?? '';
+    if (!root) return 'broke-search: no open project - indexing is project-scoped';
+    try {
+      const fresh = ensureFresh(root, { maxFileKB: config.search.maxFileKB });
+      boundedMapSet(this.indexByProject, projectHash(root), { state: fresh.state, at: Date.now() });
+      const resolved = resolveSearchOptions(config.search);
+      const result = runSearch(fresh.state, root, input.query, { ...resolved.options, k: input.k ?? resolved.options.k }, input.files);
+      const builtMs = Date.parse(fresh.state.builtAt);
+      const ageMs = Number.isFinite(builtMs) ? Math.max(0, Date.now() - builtMs) : 0;
+      const footer =
+        formatSearchFooter(result.hits.length, Object.keys(fresh.state.files).length, resolved.options, ageMs) +
+        (result.truncated ? ' | INDEX TRUNCATED at cap' : '');
+      if (result.hits.length === 0) return `no matches for "${input.query}"\n${footer}`;
+      return `${result.hits.map((h) => h.text).join('\n\n')}\n\n${footer}`;
+    } catch (err) {
+      return `broke-search failed - ${err instanceof Error ? err.message : String(err)} - the agent loop was not affected`;
+    }
+  }
+
+  /** /broke index|index rebuild: full re-index from scratch, persisted atomically. */
+  private rebuildProjectIndex(): string {
+    const config = getConfig();
+    if (!config.search.enabled) return 'broke: search is disabled - nothing to build';
+    const root = this.context?.getProjectDir?.() ?? '';
+    if (!root) return 'broke: no open project - indexing is project-scoped';
+    try {
+      const scan = scanProject(root, config.search.maxFileKB);
+      const state = createEmptyState(root);
+      const delta = mergeIntoState(state, root, scan.entries, scan.truncated);
+      saveIndex(indexDirFor(root), state);
+      boundedMapSet(this.indexByProject, projectHash(root), { state, at: Date.now() });
+      return (
+        `broke: index rebuilt - ${Object.keys(state.files).length.toLocaleString('en-US')} file(s), ` +
+        `${Object.keys(state.postings).length.toLocaleString('en-US')} term(s), ` +
+        `(+${delta.added} new/0 unchanged/-${delta.removed})` +
+        (scan.truncated ? ' [TRUNCATED: entries exceed the hard cap]' : '')
+      );
+    } catch (err) {
+      return `broke: index rebuild failed - ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  /** /broke index status: honest numbers without forcing a rescan. */
+  private indexStatusText(): string {
+    const config = getConfig();
+    if (!config.search.enabled) return 'broke: local search disabled (search.enabled=false)';
+    const root = this.context?.getProjectDir?.() ?? '';
+    if (!root) return 'broke: no open project - nothing indexed';
+    let state: IndexState | null | undefined = this.indexByProject.get(projectHash(root))?.state;
+    if (!state) {
+      try {
+        state = loadIndex(indexDirFor(root));
+      } catch {
+        state = null;
+      }
+    }
+    if (!state) return 'broke: no index yet on disk - run "/broke index" to build one';
+    let bytes = 0;
+    try {
+      bytes = statSync(join(indexDirFor(root), 'index.json')).size;
+    } catch {
+      bytes = 0;
+    }
+    const builtMs = Date.parse(state.builtAt);
+    const age = Number.isFinite(builtMs) && builtMs > 0 ? Math.max(1, Math.round((Date.now() - builtMs) / 1000)) : null;
+    return [
+      `broke index status: backend ${config.search.backend} | top-k ${config.search.maxResults} | budget ${config.search.maxChars.toLocaleString('en-US')} chars/context ±${config.search.contextLines} line(s)`,
+      `files: ${Object.keys(state.files).length.toLocaleString('en-US')} | terms: ${Object.keys(state.postings).length.toLocaleString('en-US')} | index.json: ${(bytes / 1024).toFixed(1)} KB`,
+      `built: ${state.builtAt || '(unknown)'}${age !== null ? ` (${age}s ago)` : ''}${state.truncated ? ' | TRUNCATED' : ''}`,
+      `location: <extension>/index/${projectHash(root)}`,
+    ].join('\n');
+  }
+
+  /** Fire-and-forget freshness sweep off the commit signal (throttled by TTL). */
+  private refreshIndexFromSignal(context: ExtensionContext): void {
+    try {
+      const config = getConfig();
+      if (!config.enabled || !config.search.enabled) return;
+      const root = context.getProjectDir?.() ?? '';
+      if (!root) return;
+      const hash = projectHash(root);
+      const cached = this.indexByProject.get(hash);
+      if (cached && Date.now() - cached.at < Broke.INDEX_REFRESH_TTL_MS) return;
+      const fresh = ensureFresh(root, { maxFileKB: config.search.maxFileKB });
+      boundedMapSet(this.indexByProject, hash, { state: fresh.state, at: Date.now() });
+    } catch {
+      // best effort - never propagate into the commit loop
+    }
   }
 
   // -------------------------------------------------------------------------

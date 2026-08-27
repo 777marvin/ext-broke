@@ -5,6 +5,51 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **F4 - Local Keyword/Vector Index with snippet summaries** (0.10.0,
+  keyword backend only; vector/hybrid reserved for v2). New `indexer.ts`
+  module: identifier-aware tokenizer, per-project inverted index persisted
+  atomically under `index/<projectHash>/` holding ONLY term postings +
+  file metadata (never file contents or snippets), incremental mtime/size
+  re-indexing with a hard entry cap and honest TRUNCATED flag, BM25
+  ranking, live `path:line ± contextLines` snippet windows merged around
+  best matches, and a TOTAL char budget per query (`search.maxChars`,
+  default 6000 ≈ 1.5k tokens) that the footer states up front.
+- **`broke-search` agent tool** via the extension API's `getTools`
+  (first registered tool in broke): agents can query the local index and
+  receive budgeted snippets instead of reading whole files. Registered by
+  default (`search.enabled: on`) - one documented tradeoff is that every
+  registered tool ships its JSON schema with each model call, so
+  `/broke search on | off` unregisters it without touching the built
+  index.
+- **Commands:** `/broke index [rebuild]`, `/broke index status` (indexed
+  files, terms, disk size, built age), `/broke search <query>` (same
+  engine without an agent), `/broke search on | off`; help text carries
+  schema-derived defaults.
+- **Settings UI:** new "Local project search" block in the config dialog
+  (toggle, max results, total budget, context lines, file-size skip).
+- **Durability:** `deploy.ps1` preserve list AND `/broke update`'s
+  runtime-state carry both keep built indexes across installs/deployments
+  (64 MB cap, mirroring errors/) so paid indexing work survives updates.
+
+### Changed
+
+- `applyConfigUpdates` now clones EVERY nested block before applying
+  dotted-path updates. Previously blocks added after the helper existed
+  (`snapshot`, `flush`, and now `search`) shared their sub-object with the
+  caller's previous config instance, letting updates mutate it silently
+  (regression-tested).
+
+### Notes
+
+- F4 claims NO savedChars/badge numbers anywhere: value comes from agents
+  choosing budgeted snippets over bulk reads. README documents the
+  positioning against AiderDesk's app-level semantic search and repo map,
+  plus the privacy model (nothing but postings/metadata on disk).
+
 ## [0.9.0] - 2026-08-26
 
 ### Added

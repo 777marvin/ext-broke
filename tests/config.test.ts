@@ -189,4 +189,34 @@ describe('snapshot config block (F3)', () => {
     // partial nested merge must not wipe sibling keys
     assert.equal(updated.snapshot.onCommit, DEFAULT_CONFIG.snapshot.onCommit);
   });
+
+  // Regression (found while wiring the F4 search block): without a per-block
+  // clone, the dotted-path traversal mutated the CALLER's nested object.
+  it('never leaks dotted updates into the previous config instance', () => {
+    const before: Config = DEFAULT_CONFIG;
+    const snapshotOnCommit = before.snapshot.onCommit;
+    const updated = applyConfigUpdates(before, [['snapshot.onCommit', false]]);
+    assert.equal(updated.snapshot.onCommit, false);
+    assert.equal(before.snapshot.onCommit, snapshotOnCommit, 'previous config was mutated');
+  });
+});
+
+describe('search config block (F4)', () => {
+  it('defaults to keyword backend with honest budget numbers', () => {
+    const cfg = mergeConfig({});
+    assert.equal(cfg.search.enabled, true); // additive pass - default on
+    assert.equal(cfg.search.backend, 'keyword'); // vector/hybrid only when they EXIST
+    assert.equal(cfg.search.maxResults, 8);
+    assert.equal(cfg.search.maxChars, 6000);
+    assert.equal(cfg.search.contextLines, 6);
+    assert.equal(cfg.search.maxFileKB, 512);
+  });
+
+  it('deep-merges partial search overrides without losing sibling blocks', () => {
+    const updated = applyConfigUpdates(DEFAULT_CONFIG, [['search.maxChars', 4000], ['slice.minChars', 5000]]);
+    assert.equal(updated.search.maxChars, 4000);
+    assert.equal(updated.search.maxResults, DEFAULT_CONFIG.search.maxResults);
+    assert.equal(updated.slice.minChars, 5000);
+    assert.equal(updated.search.enabled, DEFAULT_CONFIG.search.enabled);
+  });
 });

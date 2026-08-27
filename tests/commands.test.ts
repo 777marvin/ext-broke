@@ -488,3 +488,37 @@ describe('parseBrokeCommand: snapshot & flush (F3)', () => {
   });
 });
 
+describe('/broke index & search (F4)', () => {
+  it('parses bare, rebuild and status forms of index', () => {
+    assert.equal(kind(['index']), 'index-rebuild');
+    assert.deepEqual(parseBrokeCommand(['index']), { kind: 'index-rebuild' });
+    assert.deepEqual(parseBrokeCommand(['index', 'rebuild']), { kind: 'index-rebuild' });
+    assert.deepEqual(parseBrokeCommand(['index', 'status']), { kind: 'index-status' });
+    expectUnknown(['index', 'bogus']);
+    expectUnknown(['index', 'status', 'extra']);
+  });
+
+  it('treats the whole search tail as one query (spaces legal)', () => {
+    assert.deepEqual(parseBrokeCommand(['search', 'find', 'the invoice handler']), {
+      kind: 'search',
+      query: 'find the invoice handler',
+    });
+    expectUnknown(['search']);
+    expectUnknown(['search', '   ']);
+  });
+
+  it('leaves config untouched - side-effect commands are handled in index.ts', () => {
+    for (const args of [['index'], ['index', 'rebuild'], ['index', 'status'], ['search', 'x']]) {
+      const { config } = applyBrokeCommand(parseBrokeCommand(args) as BrokeCommand, DEFAULT_CONFIG);
+      assert.equal(config, DEFAULT_CONFIG);
+    }
+  });
+
+  it('lists index/search usage in the help text with schema-derived defaults', () => {
+    assert.match(HELP_TEXT, /^  index \| index rebuild/m);
+    assert.match(HELP_TEXT, /^  index status/m);
+    assert.match(HELP_TEXT, /^  search <query>/m);
+    assert.match(HELP_TEXT, new RegExp(String.raw`defaults: ${DEFAULT_CONFIG.search.maxResults} hits`));
+  });
+});
+
