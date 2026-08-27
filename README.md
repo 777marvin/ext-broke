@@ -280,6 +280,7 @@ The three levels are strictly additive; `truncate` includes `structural`,
 | Long or milestone-heavy tasks | `level summarize` with the **local** Ollama summarizer; snapshots come free via `snapshot.onCommit` | The reference benchmark removes ~90% of the input at this level, with near-zero recurring cost since the summarizer runs locally |
 | Very long scrollback you want slimmed for good | Snapshot first, then `/broke flush` between milestones | Flush is the one destructive operation - manual, confirmed, and reversible through the history file |
 | Read-heavy agents exploring a big codebase | `/broke slice on`, clear the focus afterwards | Interface views instead of full bodies; the focus file (last edited) always comes back complete |
+| Finding where something lives without filling the context | Leave `search.enabled` on (default); combine with `/broke slice on` | The agent gets a `broke-search` tool and can pull path:line snippets under a char budget instead of bulk-reading files; sliced views keep the reads it still makes cheap |
 
 Rule of thumb for the summarizer backend: a **cloud** summarizer only pays
 off when the old region is large (roughly > 37k chars); below that its own
@@ -309,6 +310,8 @@ Shorthand used below: **SHORT** = the conversation never crosses
 | `snapshot.onCommit` (on) | Cheap, harmless | Free milestone trail after each commit | Your inspection-and-undo backbone; keep `keepHistory` on or `flush --undo` becomes impossible |
 | `snapshot.onTestPass` (off) | - | False positives on flaky suites made this opt-in | Enable only if your test runner prints a clean `passed`/exit-0 pattern reliably |
 | `stats.measure` (on) | Negligible overhead, records every compression run | These ledger records are your provable numbers (`/broke measure`) | Keep it on; 5 MB rotation bounds the file |
+| `search.enabled` (on) | Dormant cost only: the registered tool ships its JSON schema with every model call even if never used - `/broke search off` drops that for agents that never search | First real payoff: snippets replace whole-file reads when locating code | Compounds: smaller read results flow into every later call; commits trigger a throttled refresh, queries re-scan lazily before returning stale hits |
+| `search.maxChars` (6000) / `contextLines` (6) | Irrelevant while dormant | Tighten toward 4000 chars if result sets feel bloated | Lower budgets buy extra headroom below `maxContextChars`; snippets land there once, then get compressed like any other tool output |
 
 ### Running autonomous agents
 
@@ -329,9 +332,11 @@ deliberate:
 A practical playbook:
 
 - **Before:** check Ollama reaches the extension (`/broke status` shows it),
-  keep `measure on`. Decide consciously whether to enable
-  `snapshot.onTestPass` - commit-based snapshots alone are usually enough.
-  Never wire `flush` into the loop itself.
+  keep `measure on`. Leave `search.enabled` on unless the run will not touch
+  code at all - locating definitions via budgeted snippets is exactly what
+  keeps an autonomous loop's context from ballooning early. Decide
+  consciously whether to enable `snapshot.onTestPass` - commit-based
+  snapshots alone are usually enough. Never wire `flush` into the loop itself.
 - **During:** let it run. Compression happens inside every model call;
   expect the badge to stay at an honest zero until the input crosses
   `maxContextChars`, then move. Do not run `/broke flush` while an agent
