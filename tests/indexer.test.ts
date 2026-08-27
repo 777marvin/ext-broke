@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -9,6 +9,7 @@ import {
   estimateBulkReadAvoided,
   findBestLine,
   formatSearchFooter,
+  isConfinedRelPath,
   loadIndex,
   mergeIntoState,
   mergeWindows,
@@ -262,16 +263,24 @@ describe('ensureFresh with dir override (isolation pattern)', () => {
 });
 
 describe('footer and hash helpers', () => {
-  it('hashes roots deterministically into filesystem-safe fragments', () => {
+  it('hashes roots deterministically into filesystem-safe fragments (64-bit, review F-09)', () => {
     const h1 = projectHash('C:\\dev\\some\\project');
     assert.equal(h1, projectHash('C:\\dev\\some\\project'));
-    assert.match(h1, /^[0-9a-f]{8}$/);
+    assert.match(h1, /^[0-9a-f]{16}$/, 'SHA-256 truncated to 64 bits - no 32-bit collisions across projects');
     assert.notEqual(projectHash('C:\\other'), h1);
   });
 
+  it('isConfinedRelPath rejects traversal, absolutes and backslashes', () => {
+    for (const bad of ['../../secret', 'a/../b', 'C:/abs/path.txt', '\\\\server\\share', 'a\\b.ts', '/etc/passwd', 'a//b.ts', 'a/', '.', '..']) {
+      assert.equal(isConfinedRelPath(bad), false, bad);
+    }
+    for (const good of ['src/app.ts', 'deep/nested/file.test.tsx', 'README.md']) {
+      assert.equal(isConfinedRelPath(good), true, good);
+    }
+  });
+
   it('footer carries result count, file count and the budget numbers', () => {
-    const footer = formatSearchFooter(3, 1200, { k: 8, maxChars: 6000, contextLines: 6 }, 42);
-    assert.match(footer, /^broke-search: 3 result\(s\) \| .* files indexed \| budget 8 hits\/.* chars \| index refreshed 42ms ago$/);
+    const footer = formatSearchFooter(3, 1200, { k: 8, maxChars: 6000, contextLines: 6 }, 42);    assert.match(footer, /^broke-search: 3 result\(s\) \| .* files indexed \| budget 8 hits\/.* chars \| index refreshed 42ms ago$/);
     assert.match(footer, /1[,.\u2009]?200/); // thousand separator is locale-flavored - stay lenient
   });
 });
@@ -304,5 +313,70 @@ describe('estimateBulkReadAvoided', () => {
     const raw = estimateBulkReadAvoided(hits, files);
     assert.equal(raw, 900 - 950);
     assert.ok(raw < 0);
+  });
+});
+
+describe('index hardening: persisted-state trust boundary (review F-09)', () => {
+  it('rejects persisted indexes with non-confined relPaths', () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'broke-tamper-')), 'store');
+    tmpRoots.push(dir);
+    const s = emptyState();
+    s.files['../../secret.txt'] = { mtimeMs: 1, sizeBytes: 1, tokenCount: 1 };
+    s.postings['kappa'] = { '../../secret.txt': 1 };
+    saveIndex(dir, s);
+    assert.equal(loadIndex(dir), null, 'a traversal key invalidates the whole file');
+
+    const s2 = emptyState();
+    s2.files['C:/abs.ts'] = { mtimeMs: 1, sizeBytes: 1, tokenCount: 1 };
+    saveIndex(dir, s2);
+    assert.equal(loadIndex(dir), null, 'an absolute-path key invalidates the file');
+
+    const s3 = emptyState();
+    s3.files['src/ok.ts'] = { mtimeMs: 1, sizeBytes: 1, tokenCount: 1 };
+    saveIndex(dir, s3);
+    assert.ok(loadIndex(dir), 'confined keys load fine');
+  });
+
+  it('discards persisted state built for a foreign project root', () => {
+    const root = makeProject();
+    const dir = join(mkdtempSync(join(tmpdir(), 'broke-foreign-')), 'store');
+    tmpRoots.push(dir);
+    const s = emptyState();
+    s.projectRoot = 'C:/elsewhere/project';
+    s.files['ghost.ts'] = { mtimeMs: 1, sizeBytes: 10, tokenCount: 3 };
+    s.postings['ghost'] = { 'ghost.ts': 3 };
+    saveIndex(dir, s);
+    const { state, delta } = ensureFresh(root, { maxFileKB: 512 }, dir);
+    assert.equal(state.projectRoot, root, 'state is re-attributed to the real root');
+    assert.equal('ghost.ts' in state.files, false, 'ghost entries from the foreign root are gone');
+    assert.ok(delta.added >= 2, 'rebuilt from the real scan');
+  });
+
+  it('never reads outside the root, even from a hand-built state', () => {
+    const root = makeProject();
+    const state = emptyState();
+    state.projectRoot = root;
+    state.files['../evil.txt'] = { mtimeMs: 1, sizeBytes: 10, tokenCount: 3 };
+    state.postings['alphafind'] = { '../evil.txt': 5 };
+    const result = runSearch(state, root, 'alphafind', { k: 5, maxChars: 6000, contextLines: 4 });
+    assert.deepEqual(result.hits, [], 'unconfined candidates are skipped at the read boundary');
+  });
+
+  it('cleans up legacy 8-hex index dirs along the default path (hash upgrade)', () => {
+    const base = mkdtempSync(join(tmpdir(), 'broke-idxbase-'));
+    tmpRoots.push(base);
+    const prev = process.env.BROKE_INDEX_DIR;
+    process.env.BROKE_INDEX_DIR = base;
+    try {
+      mkdirSync(join(base, 'index', 'deadbeef'), { recursive: true });
+      writeFileSync(join(base, 'index', 'deadbeef', 'index.json'), '{"version":1}');
+      const root = makeProject();
+      ensureFresh(root, { maxFileKB: 512 });
+      assert.equal(existsSync(join(base, 'index', 'deadbeef')), false, 'legacy dir removed');
+      assert.ok(existsSync(join(base, 'index', projectHash(root), 'index.json')), 'current index lives under the new hash');
+    } finally {
+      if (prev === undefined) delete process.env.BROKE_INDEX_DIR;
+      else process.env.BROKE_INDEX_DIR = prev;
+    }
   });
 });

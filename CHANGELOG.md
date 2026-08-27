@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Search-index persistence is hardened against path escape** (review F-09):
+  every relPath loaded from the persisted `index.json` is now validated
+  against a confinement invariant (forward slashes, no `..`/`.`/empty
+  segments, no absolute paths or backslashes) - one bad key invalidates the
+  whole file and triggers a rebuild. The search read boundary re-checks
+  confinement before touching the filesystem. `ensureFresh` discards
+  persisted state that was built for a different project root instead of
+  merging it blindly. `projectHash` moves from 32-bit FNV to a 64-bit
+  SHA-256 prefix, and legacy 8-hex index dirs are cleaned up along the
+  default index path. (Note: the on-disk scanner never followed symlinks -
+  Node `Dirent` semantics skip them - so symlink escapes were already
+  impossible; the new validation closes the tampered-file vector.)
 - **Oversized regions are summarized hierarchically instead of truncated**
   (review F-07): regions larger than the summarizer input cap used to be
   cut to head (8k) + tail (22k) for a single call, silently discarding the
