@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Slice focus resolves updated files through the LIVE execution context
+  instead of the context captured at extension load (review F-12): in
+  multi-task scenarios the focus decision could have consulted another
+  task's `getUpdatedFiles()` list. The captured context is no longer
+  consulted; a regression test pins that only the live context is used.
 - **Search-index persistence is hardened against path escape** (review F-09):
   every relPath loaded from the persisted `index.json` is now validated
   against a confinement invariant (forward slashes, no `..`/`.`/empty

@@ -238,6 +238,55 @@ describe('host contract: hooks never throw on hostile surfaces', () => {
   });
 });
 
+describe('host contract: slice focus context isolation', () => {
+  it('resolves updated files through the LIVE execution context (review F-12)', async () => {
+    writeConfig();
+    const ext = new Broke();
+    // A decoy context captured at extension level (e.g. from a DIFFERENT
+    // task/project): if the focus path resolved through it, the wrong task's
+    // updated-file list would leak into the decision.
+    const decoyCalls: string[] = [];
+    const { context: decoy } = makeHost('decoy-task');
+    (decoy as unknown as { getTaskContext: () => unknown }).getTaskContext = () => ({
+      data: { id: 'decoy-task' },
+      getUpdatedFiles: async () => {
+        decoyCalls.push('decoy');
+        return [{ path: 'decoy-only.ts' }];
+      },
+    });
+    (ext as unknown as { context: ExtensionContext }).context = decoy;
+
+    // The LIVE context knows the actually updated file (absolute path - the
+    // fixture has no project base, so focus keys are absolute too).
+    const liveUpdatedAbs = join(tmp, 'live-updated.ts');
+    const { context: live } = makeHost('live-task');
+    const liveTask = live.getTaskContext() as unknown as {
+      data: { id: string };
+      getUpdatedFiles?: () => Promise<Array<{ path: string }>>;
+    };
+    let liveCalls = 0;
+    liveTask.getUpdatedFiles = async () => {
+      liveCalls++;
+      return [{ path: liveUpdatedAbs }];
+    };
+
+    // The focus cache fills ASYNCHRONOUSLY (TTL design): the first read
+    // warms it, the second read must hit.
+    const readEvent = {
+      toolName: 'power---file_read',
+      input: { filePath: liveUpdatedAbs },
+      agentProfile: {},
+      output: { content: [{ type: 'text', text: `${'line of code\n'.repeat(200)}` }] },
+    };
+    await ext.onToolFinished({ ...readEvent, toolCallId: 'f12a' } as never, live);
+    const res = await ext.onToolFinished({ ...readEvent, toolCallId: 'f12b' } as never, live);
+    assert.ok(res && typeof res === 'object', 'focus read is rewritten with the marker');
+    assert.ok(JSON.stringify((res as { output?: unknown }).output).includes('[broke: focus file'), 'live updated file counts as focus');
+    assert.ok(liveCalls > 0, 'getUpdatedFiles came from the LIVE context');
+    assert.equal(decoyCalls.length, 0, 'the decoy/captured context was never consulted');
+  });
+});
+
 describe('host contract: F3 snapshots & flush', () => {
   const parse = parseBrokeCommand;
 

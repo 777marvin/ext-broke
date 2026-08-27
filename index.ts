@@ -602,24 +602,30 @@ export default class Broke implements Extension {
   }
 
   /** True when the target key matches this task's focus (explicit > edit > updated files). */
-  private isFocus(taskId: string, targetKey: string, base: string | null, config: Config): boolean {
+  private isFocus(taskId: string, targetKey: string, base: string | null, config: Config, context: ExtensionContext): boolean {
     const explicit = this.explicitFocus.get(taskId);
     if (explicit && slicePathKey(explicit, base) === targetKey) return true;
     if (!config.slice.focusAuto) return false;
     const edit = this.lastEditPath.get(taskId);
     if (edit && slicePathKey(edit.path, base) === targetKey) return true;
-    for (const updated of this.cachedUpdatedFiles(taskId)) {
+    for (const updated of this.cachedUpdatedFiles(taskId, context)) {
       if (slicePathKey(updated, base) === targetKey) return true;
     }
     return false;
   }
 
-  /** TTL-cached getUpdatedFiles() - a git diff must not fire per file read. */
-  private cachedUpdatedFiles(taskId: string): string[] {
+  /**
+   * TTL-cached getUpdatedFiles() - a git diff must not fire per file read.
+   * Resolves through the LIVE execution context (review F-12): the captured
+   * extension-level `this.context` can belong to a different task/project
+   * in multi-task scenarios, which would leak another task's updated-file
+   * list into this task's focus decision.
+   */
+  private cachedUpdatedFiles(taskId: string, context: ExtensionContext): string[] {
     const cached = this.updatedFilesCache.get(taskId);
     if (cached && Date.now() - cached.at < Broke.UPDATED_FILES_TTL_MS) return cached.paths;
-    void this.context
-      ?.getTaskContext()
+    void context
+      .getTaskContext()
       ?.getUpdatedFiles?.()
       .then((files) => {
         boundedMapSet(
@@ -673,7 +679,7 @@ export default class Broke implements Extension {
       }
       const targetKey = slicePathKey(path, base);
 
-      if (taskId && this.isFocus(taskId, targetKey, base, config)) {
+      if (taskId && this.isFocus(taskId, targetKey, base, config, context)) {
         return { output: wrap(`${FOCUS_MARKER}\n${text}`) };
       }
 
