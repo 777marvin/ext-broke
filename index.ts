@@ -364,6 +364,28 @@ export default class Broke implements Extension {
    * failure noise down; the manual command surfaces failures to the user in
    * the chat instead, so it enables per-failure warnings.
    */
+  /**
+   * Disclosure telemetry (review F-13): every time conversation content
+   * leaves this machine for summarization, the user gets ONE clear log line
+   * per target - repeats would be noise, silence would hide the disclosure.
+   * Regex redaction stays best-effort; the trust boundary is this log plus
+   * the consent gates, never a "secret-free" claim.
+   */
+  private readonly disclosureNotified = new Set<string>();
+  private notifyDisclosure(context: ExtensionContext, backend: 'ollama' | 'cloud', target: string): void {
+    const key = `${backend}:${target}`;
+    if (this.disclosureNotified.has(key)) return;
+    this.disclosureNotified.add(key);
+    try {
+      context.log(
+        `Broke: DISCLOSURE - conversation content (best-effort secret-masked) is sent to the ${backend} summarization target "${target}".`,
+        'warn',
+      );
+    } catch {
+      // logging must never break the pipeline
+    }
+  }
+
   private buildSummarizeDeps(
     config: Config,
     task: NonNullable<ReturnType<ExtensionContext['getTaskContext']>>,
@@ -384,6 +406,9 @@ export default class Broke implements Extension {
           );
           return undefined;
         }
+        if (isRemoteOllamaHost(config.summarize.ollamaUrl)) {
+          this.notifyDisclosure(context, 'ollama', config.summarize.ollamaUrl);
+        }
         const result = await ollamaGenerate(config.summarize.ollamaUrl, model, prompt, 800);
         if (!result.ok && opts.explainFailures) {
           context.log(`Broke: local summarizer error - ${result.error ?? 'unknown Ollama error'}`, 'warn');
@@ -396,6 +421,9 @@ export default class Broke implements Extension {
         // generateText with a literal "provider/undefined".
         if (!fallbackModel) return undefined;
         const modelId = config.summarize.cloudModelId || `${task.data.provider}/${fallbackModel}`;
+        // Cloud targets are remote by definition (review F-13): one clear
+        // disclosure line per target, then silence.
+        this.notifyDisclosure(context, 'cloud', modelId);
         // Cost guards: the summarizer input is capped in summarizePass
         // (MAX_SUMMARIZER_INPUT_CHARS) and the result is truncated to
         // maxSummaryChars afterwards. generateText offers no max-output

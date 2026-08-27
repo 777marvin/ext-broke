@@ -46,6 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anything is signed - signing is the last privileged transformation.
 - Release workflow actions are pinned to the same immutable commit SHAs as
   CI (review F-04) - the release pipeline previously floated `@v4` tags.
+- **Remote summarization is framed as an explicit disclosure** (review F-13):
+  the first time conversation content leaves the machine for a summarization
+  target (a non-loopback Ollama host with consent, or a cloud model), broke
+  writes one clear `DISCLOSURE` warning line naming the target. Regex
+  redaction gained patterns for Google (`AIza…`), npm granular tokens,
+  GitLab PATs and Groq keys - and stays explicitly best-effort: the trust
+  boundary is the consent gate plus this log line, never a "secret-free"
+  claim.
 - Slice focus resolves updated files through the LIVE execution context
   instead of the context captured at extension load (review F-12): in
   multi-task scenarios the focus decision could have consulted another

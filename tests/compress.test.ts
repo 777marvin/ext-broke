@@ -583,6 +583,25 @@ describe('truncatePass', () => {
   });
 });
 
+describe('maskSecrets vendor coverage (review F-13)', () => {
+  it('maskSecrets covers additional vendor token shapes (review F-13)', () => {
+    const text = [
+      'key=AIza0123456789abcdefghijklmnopqrstuvwxy', // Google API key (35 chars after AIza)
+      'token npm_000000000000000000000000000000000000 end', // npm granular token (npm_ + 36)
+      'glpat-gPAT000000000000000000000', // GitLab PAT
+      'gsk_00000000000000000000000000000000', // Groq key
+      'xoxb-FAKE-TOKEN-PLACEHOLDER', // Slack bot token (obviously fake - push-protection safe)
+      'plain text stays',
+    ].join('\n');
+    const out = maskSecrets(text);
+    assert.equal(out.includes('AIza0123456789'), false, 'Google API key redacted');
+    assert.equal(out.includes('npm_000000000000000000000000000000000000'), false, 'npm token redacted');    assert.equal(out.includes('glpat-gPAT000000000000000000000'), false, 'GitLab PAT redacted');
+    assert.equal(out.includes('gsk_00000000000000000000000000000000'), false, 'Groq key redacted');
+    assert.ok(out.includes('[REDACTED]'));
+    assert.ok(out.includes('plain text stays'));
+  });
+});
+
 describe('shouldCompress gate (review F-10)', () => {
   const baseConfig = { ...DEFAULT_CONFIG, enabled: true };
 
