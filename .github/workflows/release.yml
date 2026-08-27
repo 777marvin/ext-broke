@@ -9,8 +9,13 @@
 # - SHA256SUMS is signed with Ed25519; the private key lives only in the
 #   BROKE_RELEASE_SIGNING_KEY repository secret. The updater embeds the
 #   matching public key and verifies signature + checksum before extracting.
-# - CI gate (review F-03): the release REUSES the CI workflow against the
-#   exact tagged commit and only signs/publishes when every check passed.
+# - CI gate (review F-03): typecheck, tests, dependency audit and the
+#   version/tag consistency check run INLINE on the exact tagged commit
+#   BEFORE anything is signed or published; the full CI suite (CodeQL, UI
+#   validation, deploy smokes, deps-current) runs in parallel on the same
+#   commit via the main-push CI run. (A reusable `uses: ci.yml` gate was
+#   attempted first - GitHub refused to even start the workflow on tag
+#   pushes, startup_failure with zero jobs - so the gate lives inline.)
 #   Signing is the last privileged transformation.
 # - Dependency-free by design: the only third-party actions are checkout /
 #   setup-node, pinned to the SAME immutable commit SHAs as ci.yml
@@ -25,13 +30,8 @@ permissions:
   contents: write
 
 jobs:
-  verify:
-    name: Full CI gate on the tagged commit
-    uses: ./.github/workflows/ci.yml
-
   release:
-    name: Build, sign and publish
-    needs: verify
+    name: Verify, build, sign and publish
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the tagged commit (with tags)
@@ -43,9 +43,22 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+          cache: npm
 
       - name: Verify tag == package version (F-05/F-16 invariant)
         run: node scripts/check-version.mjs
+
+      - name: CI gate - install
+        run: npm ci
+
+      - name: CI gate - typecheck
+        run: npm run typecheck
+
+      - name: CI gate - tests
+        run: npm test
+
+      - name: CI gate - dependency audit
+        run: npm audit --audit-level=high
 
       - name: Build the source artifact (byte-stable git archive)
         run: git archive --format=tar.gz --output="broke-${{ github.ref_name }}.tar.gz" "${{ github.ref_name }}"
