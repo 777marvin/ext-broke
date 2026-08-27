@@ -73,6 +73,15 @@ directory - summarizes them: runs, tasks, per-run mean/median/max and
 per-task breakdowns, explicitly labeled as a sum over individual runs,
 not a cumulative context claim.
 
+And for slice / flush / broke-search - features whose effect cannot be
+measured like compression passes - there is `/broke estimate`. Flush shows
+the measured net bytes freed per flush (`/broke flush --undo` takes them
+back), slice reuses its existing per-read estimate, and broke-search shows
+an explicitly counterfactual figure: what reading every result file whole
+would have cost, minus what the snippets actually sent. None of these
+figures enter the measured totals above - they answer a different,
+rougher question.
+
 For a reproducible reference there is a deterministic benchmark
 (`npm run bench`): a 351,403-char synthetic session (67 messages, long
 tool loops, a compiler-error dump, duplicated test runs) runs through the
@@ -84,6 +93,11 @@ LLM, no randomness, byte-reproducible:
 - maximum level (`summarize`): **315,263 chars removed**
   (~78,816 tokens, 89.7% of the input; the old turns collapse into one
   ~400-char summary while the last 2 turns stay untouched).
+
+The same benchmark also runs an **F4 keyword-index scenario** on a
+deterministic fixture (in-memory index over a temp project). Its numbers
+(`snippets sent` vs. `whole-file alternative`) document the counterfactual
+model behind `/broke estimate`; they make no claim about real sessions.
 
 **Honest caveats:** these are *synthetic* reference numbers, not a real
 session, and the token conversion is the `chars / 4` estimate. The badge
@@ -225,6 +239,8 @@ commands) or from the gear icon on the extension card:
 /broke summarize now               build + cache a summary of the old context NOW
                                    (manual pre-warm, applied on the next model call)
 /broke stats                       per-pass saved chars/tokens
+/broke estimate                    counterfactual view: slice / flush / broke-search
+                                   (NOT part of the stats totals)
 /broke why                         live gate-by-gate verdict: why 0 (or not)?
 /broke measure                     summarize the per-run measurement ledger
 /broke measure on | off            record every run to measure.jsonl (default: on)

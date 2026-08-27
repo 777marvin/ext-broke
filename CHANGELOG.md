@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`/broke estimate`** - a separate, honest view for effects that cannot be
+  measured like compression passes. `slice` reuses its existing per-read
+  estimate, `flush` records the measured net context bytes freed per flush
+  (an `--undo` takes its number back via the snapshot record's new optional
+  `reduction` field), and `broke-search` records an explicitly COUNTERFACTUAL
+  figure: index-time whole-file sizes of every result minus what the snippets
+  sent (`estimateBulkReadAvoided`; files missing from index meta are skipped).
+  These figures live in `TaskStats.estimates`, are rendered with their source
+  labels, and never enter `totalSavedChars` or `measure.jsonl`.
+- Status badge tooltip gains one labeled estimates line (slice marked as
+  part of pass totals; flush/search marked counterfactual - not counted).
+- Bench: deterministic F4 scenario (in-memory keyword index over a fixed
+  temp fixture; no persistence side effects) with `snippets sent` vs.
+  `whole-file alternative` figures, exported as `benchF4Scenario`.
+
+### Fixed
+
+- docs/feats.md: stale fragments aligned with shipped status (F1-F4
+  acceptance checkboxes, version headers, roadmap/status prose).
+
 ## [0.10.0] - 2026-08-27
 
 ### Added
