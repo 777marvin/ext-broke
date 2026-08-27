@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Snapshots no longer write raw conversation history by default** (review
+  F-01, CRITICAL). `snapshot.keepHistory` now defaults to `false`: automatic
+  commit snapshots and manual `/broke snapshot` records are summary-only.
+  Raw histories can contain secrets and unmasked tool output - durable
+  plaintext copies are an explicit opt-in. The destructive `/broke flush`
+  is governed separately by the new `flush.undo` (default `true`): it still
+  writes its pre-flush undo file so `/broke flush --undo` keeps working, and
+  a flush now aborts BEFORE removing anything when its undo file would
+  exceed the new size cap. Undo-file bytes stay on disk owner-readable only
+  (0600 on POSIX).
+- New storage quotas for snapshots (review F-14): a per-task byte budget
+  (`MAX_SNAPSHOT_BYTES_PER_TASK`, 25 MB) and a per-history-file cap
+  (`MAX_HISTORY_FILE_BYTES`, 10 MB) complement the existing count-based
+  rotation with size-aware eviction of the oldest record+history pairs.
+  `/broke update` caps the `snapshots/` carry-over at 64 MB (like the
+  errors/ and index/ archives) instead of copying it unbounded.
 - **Versioning policy adopted ("Option B")**: `main` carries a development
   version (`X.Y.Z-dev`) between releases; the release commit itself pins the
   exact version and is the only commit a `vX.Y.Z` tag may point at. `main`

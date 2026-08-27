@@ -175,11 +175,16 @@ describe('snapshot config block (F3)', () => {
   it('records milestones on commit by default, test-green heuristics off', () => {
     assert.equal(DEFAULT_CONFIG.snapshot.onCommit, true, 'snapshot writing is additive - nothing in the task history changes');
     assert.equal(DEFAULT_CONFIG.snapshot.onTestPass, false, 'exit-0/passed heuristics misfire on flaky suites');
-    assert.equal(DEFAULT_CONFIG.snapshot.keepHistory, true, 'without history files /broke flush --undo is impossible');
+    assert.equal(
+      DEFAULT_CONFIG.snapshot.keepHistory,
+      false,
+      'raw histories can contain secrets - durable plaintext copies are opt-in (review F-01/D1)',
+    );
   });
 
-  it('flush.confirm defaults ON - flush is the only destructive operation', () => {
+  it('flush.confirm defaults ON, flush.undo defaults ON - the destructive op keeps its safety net', () => {
     assert.equal(DEFAULT_CONFIG.flush.confirm, true);
+    assert.equal(DEFAULT_CONFIG.flush.undo, true, 'restoring a flush needs its raw pre-flush history');
   });
 
   it('supports dotted-path updates for snapshot/flush keys', () => {

@@ -330,6 +330,13 @@ export const MAX_PRESERVED_ERRORS_BYTES = 100 * 1024 * 1024;
  * errors/: a runaway index is a bug signal, not a treasure to preserve.
  */
 export const MAX_PRESERVED_INDEX_BYTES = 64 * 1024 * 1024;
+/**
+ * F3 snapshot records + raw undo histories are user session data - carried
+ * over like ledgers, but CAPPED (review F-14): raw histories make a single
+ * snapshot arbitrarily large. Oversized archives are left behind; the new
+ * installation's own size-aware rotation bounds them going forward.
+ */
+export const MAX_PRESERVED_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 
 function dirSizeBytes(dir: string): number {
   let total = 0;
@@ -386,10 +393,17 @@ function preserveRuntimeState(oldInstall: string, stagedPayload: string, warning
       warnings.push('errors/ archive exceeded 100 MB and was not carried over');
     }
   }
-  // F3 snapshot history is user session data - carried over like ledgers.
-  // Rotation bounds its size (a few JSON records per task), so no cap here.
+  // F3 snapshot records + raw undo histories: user session data, carried
+  // over like ledgers but CAPPED like the other archives (review F-14) -
+  // see MAX_PRESERVED_SNAPSHOT_BYTES above.
   const snapDir = join(oldInstall, 'snapshots');
-  if (existsSync(snapDir)) cpSync(snapDir, join(stagedPayload, 'snapshots'), { recursive: true });
+  if (existsSync(snapDir)) {
+    if (dirSizeBytes(snapDir) <= MAX_PRESERVED_SNAPSHOT_BYTES) {
+      cpSync(snapDir, join(stagedPayload, 'snapshots'), { recursive: true });
+    } else {
+      warnings.push('snapshots/ exceeded 64 MB and was not carried over');
+    }
+  }
   // F4 keyword index (plan decision E2): derived cache, but skipping this
   // would wipe every built index on /broke update. Rebuildable, hence capped.
   const idxDir = join(oldInstall, 'index');

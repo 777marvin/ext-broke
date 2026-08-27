@@ -112,11 +112,14 @@ const SnapshotSchema = z.object({
    *  heuristics misfire regularly on flaky suites. */
   onTestPass: z.boolean().default(false),
   /**
-   * Also write the raw message array next to each record (the undo file).
-   * Disabling this skips history files AND makes `/broke flush --undo`
-   * impossible - documented behavior.
+   * Also write the raw message array next to each auto/manual snapshot
+   * record (the undo file). Default OFF (external review F-01): raw
+   * histories can contain secrets and unmasked tool output - durable
+   * plaintext copies are an explicit opt-in, not a side effect. The
+   * destructive flush is governed separately by `flush.undo` (default ON),
+   * since restoring a flush needs its raw history.
    */
-  keepHistory: z.boolean().default(true),
+  keepHistory: z.boolean().default(false),
 });
 const snapshotDefault = SnapshotSchema.parse({});
 
@@ -126,6 +129,13 @@ const FlushSchema = z.object({
    * removing anything. --yes skips the question - deliberate foot-gun.
    */
   confirm: z.boolean().default(true),
+  /**
+   * Write the raw pre-flush message array as the undo file (enables
+   * `/broke flush --undo`). Default ON: a destructive operation keeps its
+   * safety net. Independent of `snapshot.keepHistory`, which only governs
+   * the non-destructive auto/manual snapshots (review F-01).
+   */
+  undo: z.boolean().default(true),
 });
 const flushDefault = FlushSchema.parse({});
 

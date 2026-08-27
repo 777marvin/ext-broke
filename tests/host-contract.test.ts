@@ -236,11 +236,14 @@ describe('host contract: F3 snapshots & flush', () => {
     writeConfig();
     const ext = new Broke();
     const { context } = makeHost('f3-commit', { contextMessages: [user1(), assistantMsg()] });
-    // Success path: the record + undo file exist on disk.
+    // Success path: the record exists; NO raw undo file by default
+    // (review F-01 / decision D1: auto-commit snapshots stay summary-only,
+    // raw history is opt-in via snapshot.keepHistory; the destructive flush
+    // writes its undo file via flush.undo - covered below).
     await assert.doesNotReject(ext.onAfterCommit({ message: 'feat: billing discount\n\nbody text', amend: false }, context));
     const files = readdirSync(join(tmp, 'snapshots', 'f3-commit'));
     assert.ok(files.some((f) => f.endsWith('.json')), 'record written');
-    assert.ok(files.some((f) => f.endsWith('.history.json')), 'undo file written');
+    assert.ok(!files.some((f) => f.endsWith('.history.json')), 'no raw history by default (F-01/D1)');
 
     // Hostile path: getContextMessages throws -> hook resolves anyway.
     const hostile = makeHost('f3-hostile', { failGetContextMessages: new Error('context exploded') });

@@ -1223,10 +1223,11 @@ export default class Broke implements Extension {
 
   /**
    * The ONLY destructive operation in broke. Order of guarantees:
-   * 1. plan + confirm gate, 2. write snapshot AND undo file (abort on any IO
-   * failure BEFORE touching the conversation), 3. one loadContextMessages()
-   * replacement to task brief + [broke-state]. removeMessagesUpTo cannot keep
-   * the brief (inclusive-of-self), hence the documented loadContext alternative.
+   * 1. plan + confirm gate, 2. write snapshot AND (when flush.undo is on)
+   * the undo file - abort on any IO failure or an oversized undo file BEFORE
+   * touching the conversation, 3. one loadContextMessages() replacement to
+   * task brief + [broke-state]. removeMessagesUpTo cannot keep the brief
+   * (inclusive-of-self), hence the documented loadContext alternative.
    */
   private async handleFlushCommand(context: ExtensionContext, cmd: BrokeCommand): Promise<string> {
     if (cmd.kind !== 'flush') return '';
@@ -1246,7 +1247,7 @@ export default class Broke implements Extension {
         if (!history || history.length === 0) {
           return record.historyFile
             ? 'broke: the undo file is missing or unreadable - refusing to half-restore'
-            : 'broke: no undo file for this snapshot (snapshot.keepHistory was off when it was taken)';
+            : 'broke: no undo file for this snapshot (raw history was not written - snapshot.keepHistory/flush.undo was off, or the history exceeded the size cap)';
         }
         if (typeof task.loadContextMessages !== 'function') {
           return 'broke: this AiderDesk build does not expose loadContextMessages - undo unavailable (feature-detect)';
@@ -1275,7 +1276,7 @@ export default class Broke implements Extension {
           return `broke: host confirmation is unavailable here - rerun with explicit "/broke flush --yes" to remove ${plan.removedCount} message(s)`;
         }
         const answer = await task.askQuestion(
-          `broke flush removes ${plan.removedCount} message(s) between the task brief and now and replaces them with ONE [broke-state] summary. A history file enables /broke flush --undo. Proceed?`,
+          `broke flush removes ${plan.removedCount} message(s) between the task brief and now and replaces them with ONE [broke-state] summary. With flush.undo on (default), a history file enables /broke flush --undo. Proceed?`,
           { answers: [{ text: 'Flush', shortkey: 'y' }, { text: 'Cancel', shortkey: 'n' }], defaultAnswer: 'n' },
         );
         if (!/^y(es)?$/i.test(String(answer ?? '').trim())) return 'broke: flush cancelled - nothing changed';
@@ -1293,7 +1294,14 @@ export default class Broke implements Extension {
           summary: cachedText || `${plan.removedCount} message(s) were flushed right after this state was recorded`,
         });
         stateText = buildStateMessage(record);
-        const persisted = persistSnapshot(record, messages, { label: 'flush', keepHistory: config.snapshot.keepHistory });
+        const persisted = persistSnapshot(record, messages, { label: 'flush', keepHistory: config.flush.undo });
+        if (config.flush.undo && persisted.historySkipped === 'oversized') {
+          // Abort-safe contract: a flush that could never be undone (undo
+          // file over the size cap) must not remove anything.
+          throw new Error(
+            `pre-flush history exceeds the undo-file cap (MAX_HISTORY_FILE_BYTES) - flush aborted, nothing removed`,
+          );
+        }
         recordPath = persisted.recordPath;
         persistedName = basename(recordPath);
       } catch (err) {

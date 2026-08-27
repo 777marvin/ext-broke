@@ -220,6 +220,19 @@ export function buildFlushPlan(messages: ReadonlyArray<{ role?: unknown; id?: un
 const SNAPSHOT_DIR_NAME = 'snapshots';
 /** Rotation ceiling per task - oldest record+history pair deleted first. */
 export const MAX_SNAPSHOTS_PER_TASK = 50;
+/**
+ * Aggregate ceiling per task across records AND history files (review F-14):
+ * raw histories make a single snapshot arbitrarily large, so a count-only
+ * cap cannot bound storage. Oldest pairs are evicted until both limits hold.
+ */
+export const MAX_SNAPSHOT_BYTES_PER_TASK = 25 * 1024 * 1024;
+/**
+ * A single undo file larger than this is refused (review F-01/F-14):
+ * non-destructive snapshot callers skip the history (the record still
+ * persists), the destructive flush caller aborts instead of deleting
+ * context it could never restore.
+ */
+export const MAX_HISTORY_FILE_BYTES = 10 * 1024 * 1024;
 
 /** Root for snapshots: explicit override > env var (tests/host contract) >
  * default next to the extension entry module (like stats.jsonl). */
@@ -233,7 +246,11 @@ export function safeLabel(label: string): string {
   return cleaned || 'snapshot';
 }
 
-function isoFilename(iso: string): string {
+/**
+ * 2026-08-26T12:34:56.789Z -> 20260826T123456789Z (sortable, unique enough).
+ * Exported for tests that need to seed/locate history files by their names.
+ */
+export function isoFilename(iso: string): string {
   // 2026-08-26T12:34:56.789Z -> 20260826T123456789Z (sortable, unique enough)
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/.exec(iso);
   if (!m) return Date.now().toString();
@@ -280,37 +297,47 @@ export function writeFlushReduction(
 /**
  * Write snapshot + (optionally) history sidecar. History goes to disk FIRST -
  * if it fails, no record claims an undo file that does not exist.
+ * History files larger than `opts.historyBytesCap` (default
+ * MAX_HISTORY_FILE_BYTES) are refused: no historyFile is recorded and
+ * `historySkipped: 'oversized'` is reported - callers decide whether that
+ * is fatal (flush) or acceptable (snapshot).
  * Returns the record path and, when written, the history path.
  */
 export function persistSnapshot(
   record: SnapshotRecord,
   history: unknown[],
-  opts?: { dir?: string; label?: string; keepHistory?: boolean },
-): { recordPath: string; historyPath?: string } {
+  opts?: { dir?: string; label?: string; keepHistory?: boolean; historyBytesCap?: number },
+): { recordPath: string; historyPath?: string; historySkipped?: 'oversized' } {
   const paths: IoPaths = { root: snapshotsRoot(opts) };
   const dir = taskDir(paths, record.taskId);
   mkdirSync(dir, { recursive: true });
 
   let historyFile: string | undefined;
   let historyPath: string | undefined;
+  let historySkipped: 'oversized' | undefined;
+  const base = `${isoFilename(record.createdAt)}_${safeLabel(opts?.label ?? 'manual')}`;
   if (opts?.keepHistory !== false && history.length > 0) {
-    const base = `${isoFilename(record.createdAt)}_${safeLabel(opts?.label ?? 'manual')}`;
-    historyFile = `${base}.history.json`;
-    historyPath = join(dir, historyFile);
-    try {
-      writeFileSync(historyPath, JSON.stringify(history));
-    } catch (err) {
-      // Principle: abort rather than create a record whose undo file is gone.
-      throw err instanceof Error ? err : new Error(String(err));
+    const serialized = JSON.stringify(history);
+    if (Buffer.byteLength(serialized, 'utf-8') > (opts?.historyBytesCap ?? MAX_HISTORY_FILE_BYTES)) {
+      historySkipped = 'oversized';
+    } else {
+      historyFile = `${base}.history.json`;
+      historyPath = join(dir, historyFile);
+      try {
+        writeFileSync(historyPath, serialized, { encoding: 'utf-8', mode: 0o600 });
+      } catch (err) {
+        // Principle: abort rather than create a record whose undo file is gone.
+        throw err instanceof Error ? err : new Error(String(err));
+      }
     }
   }
 
   const stamped: SnapshotRecord = historyFile ? { ...record, historyFile } : record;
-  const recordPath = join(dir, `${isoFilename(stamped.createdAt)}_${safeLabel(opts?.label ?? 'manual')}.json`);
-  writeFileSync(recordPath, JSON.stringify(stamped, null, 2));
+  const recordPath = join(dir, `${base}.json`);
+  writeFileSync(recordPath, JSON.stringify(stamped, null, 2), { encoding: 'utf-8', mode: 0o600 });
 
   rotateTaskDir(dir);
-  return { recordPath, historyPath };
+  return { recordPath, historyPath, historySkipped };
 }
 
 /** List a task's snapshots, newest first. Unreadable records surface as null. */
@@ -379,23 +406,57 @@ export function readHistory(recordPath: string, record: SnapshotRecord): unknown
 
 /**
  * Rotation: keep the newest `maxRecords` snapshot records per task, deleting
- * each dropped record together with its history file. Returns removed count.
+ * each dropped record together with its history file, AND evict oldest pairs
+ * until the aggregate byte budget `maxBytes` holds (review F-14: raw
+ * histories make count-only rotation unbounded). Returns removed count.
  */
-export function rotateTaskDir(dir: string, maxRecords: number = MAX_SNAPSHOTS_PER_TASK): number {
+export function rotateTaskDir(
+  dir: string,
+  maxRecords: number = MAX_SNAPSHOTS_PER_TASK,
+  maxBytes: number = MAX_SNAPSHOT_BYTES_PER_TASK,
+): number {
   if (!existsSync(dir)) return 0;
   const records = readdirSync(dir).filter((n) => n.endsWith('.json') && !n.endsWith('.history.json')).sort();
-  const excess = records.length - maxRecords;
-  if (excess <= 0) return 0;
   const histories = new Set(readdirSync(dir).filter((n) => n.endsWith('.history.json')));
-  for (const name of records.slice(0, excess)) {
+  const pairBytes = (name: string): number => {
+    let total = 0;
+    try {
+      total += statSync(join(dir, name)).size;
+    } catch {
+      // raced/unreadable - count as 0 rather than failing rotation
+    }
+    const hist = `${name.slice(0, -'.json'.length)}.history.json`;
+    if (histories.has(hist)) {
+      try {
+        total += statSync(join(dir, hist)).size;
+      } catch {
+        // raced file
+      }
+    }
+    return total;
+  };
+  let total = 0;
+  const sizes = new Map<string, number>();
+  for (const name of records) {
+    const bytes = pairBytes(name);
+    sizes.set(name, bytes);
+    total += bytes;
+  }
+  // records[] is sorted oldest-first (isoFilename prefixes), so eviction
+  // walks from the oldest end until both limits hold.
+  let removed = 0;
+  for (const name of records) {
+    if (records.length - removed <= maxRecords && total <= maxBytes) break;
     try {
       rmSync(join(dir, name), { force: true });
-      const stem = name.slice(0, -'.json'.length);
-      const hist = `${stem}.history.json`;
+      const hist = `${name.slice(0, -'.json'.length)}.history.json`;
       if (histories.has(hist)) rmSync(join(dir, hist), { force: true });
     } catch {
       // raced delete - leave the rest consistent
+      continue;
     }
+    total -= sizes.get(name) ?? 0;
+    removed++;
   }
-  return excess;
+  return removed;
 }
