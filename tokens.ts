@@ -47,6 +47,19 @@ export interface SavedTokens {
   slice: number;
 }
 
+/**
+ * Counterfactual/one-shot estimates that are deliberately KEPT OUT of
+ * totalSavedChars and every official headline (E5 honesty): they answer
+ * "roughly what did slice/flush/search avoid" without pretending to be
+ * measured compression runs. Slice numbers live in savedChars.slice; this
+ * object carries only flush (measured once per flush, reverted on undo)
+ * and search (whole-file-read alternative avoided - a counterfactual).
+ */
+export interface EstimateExtras {
+  flush: number;
+  search: number;
+}
+
 /** Fill missing counters with 0 - legacy stats.jsonl records predate some passes. */
 export function normalizeSavedTokens(saved: Partial<SavedTokens> | undefined): SavedTokens {
   return {
@@ -76,6 +89,12 @@ export interface TaskStats {
   summarizeFailures: number;
   lastSummarizer: 'local' | 'cloud' | 'none';
   lastRunAt: number;
+  /**
+   * Optional counterfactual/one-shot estimates (see EstimateExtras). Absent
+   * on legacy lines and on tasks that never flushed or ran broke-search;
+   * normalization fills missing keys when the object exists.
+   */
+  estimates?: EstimateExtras;
 }
 
 export function emptyStats(taskId: string): TaskStats {
@@ -215,6 +234,15 @@ export function loadTaskStats(taskId: string, filePath: string = STATS_PATH): Ta
               // Legacy lines predate the measured-size fields (XF14).
               totalCharsBefore: typeof parsed.totalCharsBefore === 'number' ? parsed.totalCharsBefore : 0,
               totalCharsAfter: typeof parsed.totalCharsAfter === 'number' ? parsed.totalCharsAfter : 0,
+              // Legacy lines predate the estimates object entirely - keep it
+              // absent instead of forcing zeros onto every old record.
+              estimates:
+                parsed.estimates && typeof parsed.estimates === 'object'
+                  ? {
+                      flush: typeof parsed.estimates.flush === 'number' ? parsed.estimates.flush : 0,
+                      search: typeof parsed.estimates.search === 'number' ? parsed.estimates.search : 0,
+                    }
+                  : undefined,
             };
           }
         } catch {

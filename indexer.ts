@@ -448,6 +448,35 @@ export function formatSearchFooter(hits: number, filesIndexed: number, opts: Sea
   return `${SEARCH_MARKER_FOOTER_PREFIX} ${hits} result(s) | ${filesIndexed.toLocaleString('en-US')} files indexed | budget ${opts.k} hits/${opts.maxChars.toLocaleString('en-US')} chars | index refreshed ${Math.round(ageMs)}ms ago`;
 }
 
+/**
+ * Counterfactual estimate for the E5-adjacent honesty layer: how many chars
+ * would a naive "read every hit's whole file" approach have cost, minus what
+ * the snippet summary actually sent? Per unique file, the index-time size is
+ * the baseline; files missing from meta (changed since indexing) are skipped
+ * honestly rather than guessed. Can go negative on pathological inputs
+ * (many hits in tiny files) - callers clamp for display, never for storage.
+ * This number backs /broke estimate and the badge tooltip ONLY - it must
+ * never feed savedChars or the measure ledger.
+ */
+export function estimateBulkReadAvoided(
+  hits: ReadonlyArray<SearchResultHit>,
+  files: Readonly<Record<string, IndexedFile>>,
+): number {
+  const sentByPath = new Map<string, number>();
+  let sent = 0;
+  for (const h of hits) {
+    sent += h.text.length;
+    if (!sentByPath.has(h.path)) sentByPath.set(h.path, h.text.length);
+  }
+  let baseline = 0;
+  for (const path of sentByPath.keys()) {
+    const meta = files[path];
+    if (!meta || typeof meta.sizeBytes !== 'number') continue;
+    baseline += meta.sizeBytes;
+  }
+  return baseline - sent;
+}
+
 // ---------------------------------------------------------------------------
 // Persistence (atomic, bounded, corruption-tolerant)
 // ---------------------------------------------------------------------------

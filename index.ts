@@ -13,7 +13,7 @@ import type {
   ToolFinishedEvent,
   UIComponentDefinition,
 } from '@aiderdesk/extensions';
-import { applyBrokeCommand, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand, type BrokeCommand } from './commands';
+import { applyBrokeCommand, formatEstimate, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand, type BrokeCommand } from './commands';
 import {
   ACTIVE_TURN_TAIL,
   compressibleRange,
@@ -30,6 +30,7 @@ import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, s
 import {
   createEmptyState,
   ensureFresh,
+  estimateBulkReadAvoided,
   formatSearchFooter,
   indexDirFor,
   loadIndex,
@@ -69,6 +70,7 @@ import {
   readSnapshot,
   resolveSnapshot,
   summaryTextOf,
+  writeFlushReduction,
 } from './snapshot';
 import {
   buildRunRecord,
@@ -706,6 +708,29 @@ export default class Broke implements Extension {
     }
   }
 
+  /**
+   * Add to one of the counterfactual/one-shot estimate counters (flush,
+   * search). Estimates stay OUT of totalSavedChars by design - they are
+   * displayed only via /broke estimate and the badge tooltip, always with
+   * an explicit "counterfactual / not counted" label. Negative deltas are
+   * legitimate: a flush --undo subtracts exactly what its flush added.
+   * Throttled persistence mirrors recordSliceStats.
+   */
+  private bumpEstimate(taskId: string, kind: 'flush' | 'search', delta: number): void {
+    if (!Number.isFinite(delta) || delta === 0) return;
+    const stats = this.statsByTask.get(taskId) ?? this.statsLoader.get(taskId) ?? emptyStats(taskId);
+    const estimates = stats.estimates ?? { flush: 0, search: 0 };
+    estimates[kind] += Math.round(delta);
+    stats.estimates = estimates;
+    stats.lastRunAt = Date.now();
+    boundedMapSet(this.statsByTask, taskId, stats);
+    const lastPersist = this.lastPersistAt.get(taskId) ?? 0;
+    if (Date.now() - lastPersist >= STATS_PERSIST_MIN_MS) {
+      boundedMapSet(this.lastPersistAt, taskId, Date.now());
+      persistStats(stats);
+    }
+  }
+
   private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null): void {
     // No-op runs (nothing compressed, nothing attempted) are not compression
     // runs: counting them inflates `passes` and appends a stats line on
@@ -875,6 +900,8 @@ export default class Broke implements Extension {
               const price = await resolveTaskModelPrice(context);
               return log(formatStats(config, ext.statsFor(context), price));
             }
+            case 'estimate':
+              return log(formatEstimate(ext.statsFor(context)));
             case 'why': {
               return log(await ext.explainWhy(context));
             }
@@ -1032,6 +1059,15 @@ export default class Broke implements Extension {
         formatSearchFooter(result.hits.length, Object.keys(fresh.state.files).length, resolved.options, ageMs) +
         (result.truncated ? ' | INDEX TRUNCATED at cap' : '');
       if (result.hits.length === 0) return `no matches for "${input.query}"\n${footer}`;
+      // Counterfactual estimate only (E5 honesty): never shown to the agent
+      // and never added to savedChars - /broke estimate + badge tooltip use
+      // it with an explicit "counterfactual" label. Files that changed since
+      // indexing are skipped by the estimator itself.
+      const taskId = this.context?.getTaskContext?.()?.data.id;
+      if (taskId) {
+        const avoided = estimateBulkReadAvoided(result.hits, fresh.state.files);
+        if (avoided > 0) this.bumpEstimate(taskId, 'search', avoided);
+      }
       return `${result.hits.map((h) => h.text).join('\n\n')}\n\n${footer}`;
     } catch (err) {
       return `broke-search failed - ${err instanceof Error ? err.message : String(err)} - the agent loop was not affected`;
@@ -1206,6 +1242,11 @@ export default class Broke implements Extension {
           return 'broke: this AiderDesk build does not expose loadContextMessages - undo unavailable (feature-detect)';
         }
         await task.loadContextMessages(history as ContextMessage[]);
+        // Undo takes the flush estimate back - exactly what the flushed
+        // snapshot recorded, so undoing never leaves inflated numbers.
+        if (record.reduction) {
+          this.bumpEstimate(taskId, 'flush', -(record.reduction.regionChars - record.reduction.stateMessageChars));
+        }
         return `broke: restored ${history.length} message(s) from snapshot #${cmd.undoIndex}`;
       } catch (err) {
         return `broke: undo failed - ${err instanceof Error ? err.message : String(err)}`;
@@ -1231,6 +1272,7 @@ export default class Broke implements Extension {
       }
       let persistedName = '';
       let stateText = '';
+      let recordPath = '';
       try {
         const cachedText = summaryTextOf(this.state.cachedSummaryByTask.get(taskId));
         const record = makeSnapshotRecord({
@@ -1241,7 +1283,8 @@ export default class Broke implements Extension {
           summary: cachedText || `${plan.removedCount} message(s) were flushed right after this state was recorded`,
         });
         stateText = buildStateMessage(record);
-        const { recordPath } = persistSnapshot(record, messages, { label: 'flush', keepHistory: config.snapshot.keepHistory });
+        const persisted = persistSnapshot(record, messages, { label: 'flush', keepHistory: config.snapshot.keepHistory });
+        recordPath = persisted.recordPath;
         persistedName = basename(recordPath);
       } catch (err) {
         return `broke: flush ABORTED before removing anything - could not write snapshot/history (${err instanceof Error ? err.message : String(err)})`;
@@ -1255,6 +1298,18 @@ export default class Broke implements Extension {
         { id: `broke-state-${Date.now()}`, role: 'user', content: stateText } as unknown as ContextMessage,
       ];
       await task.loadContextMessages(replacement);
+      // Estimate bookkeeping (only AFTER the replacement succeeded): the
+      // measured net reduction is the chars removed from context minus the
+      // replacement [broke-state] message's own chars - both real numbers,
+      // but this is a one-shot freed-bytes figure, NOT a compression pass.
+      // Best effort on every line below: estimates never break a flush.
+      try {
+        const regionChars = messagesChars(messages.slice(plan.briefIndex + 1));
+        writeFlushReduction(recordPath, { regionChars, stateMessageChars: stateText.length });
+        this.bumpEstimate(taskId, 'flush', Math.max(0, regionChars - stateText.length));
+      } catch {
+        // estimates are best effort
+      }
       return `broke: flushed ${plan.removedCount} message(s) - context is now the task brief plus one [broke-state] summary (snapshot ${persistedName}). Undo with /broke flush --undo <n>.`;
     } catch (err) {
       return `broke: flush failed - ${err instanceof Error ? err.message : String(err)}. If a replacement already happened, restore via /broke flush --undo.`;
@@ -1408,6 +1463,15 @@ export default class Broke implements Extension {
         summarize: stats ? estimateTokens(stats.savedChars.summarize) : 0,
         slice: stats ? estimateTokens(stats.savedChars.slice) : 0,
       },
+      // Counterfactual/one-shot estimates - the badge tooltip labels them
+      // explicitly as NOT counted in totalSavedTokens above (E5 honesty).
+      estimates: stats
+        ? {
+            slice: estimateTokens(stats.savedChars.slice),
+            flush: estimateTokens(stats.estimates?.flush ?? 0),
+            search: estimateTokens(stats.estimates?.search ?? 0),
+          }
+        : null,
       totalSavedTokens: totalTokens,
       summarizeFailures: stats?.summarizeFailures ?? 0,
       summarizeDisabled: this.summarizeDisabled.get(taskId) === true,

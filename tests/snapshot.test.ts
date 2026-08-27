@@ -24,6 +24,7 @@ import {
   resolveSnapshot,
   rotateTaskDir,
   safeLabel,
+  writeFlushReduction,
 } from '../snapshot';
 
 const user = (id: string, content: unknown) => ({ id, role: 'user', content });
@@ -231,5 +232,50 @@ describe('looksLikeGreenTests (snapshot.onTestPass heuristic)', () => {
     assert.equal(looksLikeGreenTests('3 failed, 21 passed'), false);
     assert.equal(looksLikeGreenTests('hello world'), false);
     assert.equal(looksLikeGreenTests(`2 failed of ${'x'.repeat(30_000)} 100 passed`), false, 'failure anywhere in window vetoes');
+  });
+});
+
+describe('flush reduction bookkeeping', () => {
+  it('makeSnapshotRecord carries an explicit reduction - or omits the key entirely', () => {
+    const withReduction = makeSnapshotRecord({
+      taskId: 'task-red',
+      goal: 'ship it',
+      summary: 'done',
+      reduction: { regionChars: 12_345, stateMessageChars: 400 },
+    });
+    assert.deepEqual(withReduction.reduction, { regionChars: 12_345, stateMessageChars: 400 });
+
+    const plain = makeSnapshotRecord({ taskId: 'task-plain', goal: 'g', summary: 's' });
+    assert.equal('reduction' in plain, false, 'manual/milestone records must not claim a flush saving');
+  });
+
+  it('negative/garbage reductions are clamped to non-negative ints at build time', () => {
+    const record = makeSnapshotRecord({
+      taskId: 'task-clamp',
+      goal: 'g',
+      summary: 's',
+      reduction: { regionChars: -5.7, stateMessageChars: 2 ** 33 },
+    });
+    assert.equal(record.reduction?.regionChars, 0);
+    assert.equal(typeof record.reduction?.stateMessageChars, 'number');
+  });
+
+  it('writeFlushReduction fills a persisted record exactly once (undo reverts this value)', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const record = makeSnapshotRecord({ taskId: 'task-wfr', goal: 'g', summary: 's' });
+      const { recordPath } = persistSnapshot(record, [], { dir, label: 'flush' });
+      assert.equal(readSnapshot(recordPath)?.reduction, undefined);
+
+      writeFlushReduction(recordPath, { regionChars: 9_000, stateMessageChars: 350 });
+      const first = readSnapshot(recordPath);
+      assert.deepEqual(first?.reduction, { regionChars: 9_000, stateMessageChars: 350 });
+
+      // Exactly-once: a second write can never double-credit the estimate.
+      writeFlushReduction(recordPath, { regionChars: 99_999, stateMessageChars: 1 });
+      assert.deepEqual(readSnapshot(recordPath)?.reduction, { regionChars: 9_000, stateMessageChars: 350 });
+    } finally {
+      cleanup();
+    }
   });
 });

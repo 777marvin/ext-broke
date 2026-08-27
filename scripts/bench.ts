@@ -11,9 +11,20 @@
  * it is labeled as what it is: a synthetic reference, not a real session.
  */
 
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { ContextMessage } from '@aiderdesk/extensions';
 import { compressMessages, createCompressState, type SummarizeDeps } from '../compress';
 import { DEFAULT_CONFIG, type Config } from '../config';
+import {
+  createEmptyState,
+  estimateBulkReadAvoided,
+  mergeIntoState,
+  runSearch,
+  scanProject,
+} from '../indexer';
 import { estimateTokens, messagesChars } from '../tokens';
 
 let seq = 0;
@@ -153,6 +164,118 @@ export async function runScenario(label: string, config: Config, workload: Conte
   ];
 }
 
+/**
+ * F4 reference scenario (deterministic, no persistence side effects):
+ * a synthetic on-disk project is indexed IN MEMORY (scanProject +
+ * mergeIntoState - never saveIndex) and queried with a fixed set of terms.
+ * Like every bench line this is labeled as what it is: the counterfactual
+ * "whole-file-read alternative" model behind /broke estimate - not a claim
+ * about any real session.
+ */
+export interface BenchF4Result {
+  filesIndexed: number;
+  terms: number;
+  queryHits: number[];
+  snippetsSentChars: number;
+  bulkReadBaselineChars: number;
+  /** baseline - sent, clamped at 0 per aggregate. */
+  avoidedChars: number;
+}
+
+const F4_THEMES = ['invoice', 'ledger', 'discount', 'export', 'audit', 'cache'] as const;
+export const F4_QUERIES = ['invoice tax rules', 'cache retry backoff', 'csv export validation'];
+
+function cap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** One deterministic TS fixture file (~120 lines) around its theme term. */
+function f4FixtureModule(i: number): string {
+  const theme = F4_THEMES[i % F4_THEMES.length];
+  const head = [
+    `// bench fixture module ${String(i).padStart(2, '0')} - ${theme} handling`,
+    `import type { ${cap(theme)}Record } from './types';`,
+    ``,
+    `export interface ${cap(theme)}Options {`,
+    `  budget: number;`,
+    `  retries: number;`,
+    `  strictValidation: boolean;`,
+    `}`,
+    ``,
+    `const MAX_${theme.toUpperCase()}_RETRIES = ${3 + (i % 5)};`,
+    ``,
+    `/** Processes one ${theme} record end to end (validation, ${theme} rules, retries). */`,
+    `export function process${cap(theme)}(record: ${cap(theme)}Record, options: ${cap(theme)}Options): ${cap(theme)}Record {`,
+  ];
+  const body = Array.from({ length: 90 }, (_, k) => `  // step ${k}: ${theme} pipeline stage - validation and retry bookkeeping`);
+  const tail = [
+    `  return { ...record, processedAt: Date.now(), attempts: MAX_${theme.toUpperCase()}_RETRIES };`,
+    `}`,
+    ``,
+    `export default process${cap(theme)};`,
+    ``,
+  ];
+  return [...head, ...body, ...tail].join('\n');
+}
+
+function f4Readme(): string {
+  const rows = Array.from({ length: 30 }, (_, i) => `- module ${i}: implements the ${F4_THEMES[i % F4_THEMES.length]} workflow incl. csv export and retry rules`);
+  return ['# bench fixture project', '', 'Synthetic modules used by the deterministic F4 benchmark.', '', ...rows, ''].join('\n');
+}
+
+export async function benchF4Scenario(): Promise<{ result: BenchF4Result; lines: string[] }> {
+  const fmt = (n: number): string => n.toLocaleString('en-US');
+  // Fixed directory name: deterministic on repeat runs of npm run bench.
+  const root = join(tmpdir(), 'broke-bench-f4-fixture');
+  rmSync(root, { recursive: true, force: true });
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'README.md'), f4Readme());
+    for (let i = 0; i < 12; i++) writeFileSync(join(root, 'src', `module${String(i).padStart(2, '0')}.ts`), f4FixtureModule(i));
+
+    const scan = scanProject(root, DEFAULT_CONFIG.search.maxFileKB);
+    // Defensive sort: fs walk order must never leak into printed numbers.
+    const entries = [...scan.entries].sort((a, b) => a.relPath.localeCompare(b.relPath));
+    const state = createEmptyState(root);
+    mergeIntoState(state, root, entries, false);
+
+    const queryHits: number[] = [];
+    let sent = 0;
+    let avoidedRaw = 0;
+    for (const q of F4_QUERIES) {
+      const run = runSearch(state, root, q, {
+        k: 3,
+        maxChars: DEFAULT_CONFIG.search.maxChars,
+        contextLines: DEFAULT_CONFIG.search.contextLines,
+      });
+      queryHits.push(run.hits.length);
+      sent += run.hits.reduce((sum, h) => sum + h.text.length, 0);
+      // Per-query counterfactual (baseline - sent); summed across queries
+      // first, clamped once at the aggregate like /broke estimate does.
+      avoidedRaw += estimateBulkReadAvoided(run.hits, state.files);
+    }
+    // With raw := baseline - sent per query: baseline = sent + avoidedRaw.
+    const result: BenchF4Result = {
+      filesIndexed: Object.keys(state.files).length,
+      terms: Object.keys(state.postings).length,
+      queryHits,
+      snippetsSentChars: sent,
+      bulkReadBaselineChars: sent + avoidedRaw,
+      avoidedChars: Math.max(0, avoidedRaw),
+    };
+    const lines = [
+      `scenario: F4 local keyword index (deterministic fixture, in-memory index)`,
+      `  files indexed ${fmt(result.filesIndexed)} | terms ${fmt(result.terms)} | budget 3 hits/${fmt(DEFAULT_CONFIG.search.maxChars)} chars/query`,
+      `  queries (${JSON.stringify(F4_QUERIES)}) returned ${result.queryHits.join('/')} hits`,
+      `  snippets sent   ${fmt(result.snippetsSentChars)} chars (~ ${fmt(estimateTokens(result.snippetsSentChars))} tokens est.)`,
+      `  whole-file alternative ${fmt(result.bulkReadBaselineChars)} chars -> counterfactual avoided ≈ ${fmt(result.avoidedChars)} chars`,
+    ];
+    return { result, lines };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   const workload = buildBenchWorkload();
   const lines: string[] = [];
@@ -163,6 +286,8 @@ async function main(): Promise<void> {
   lines.push(...(await runScenario('level=truncate (shipped default)', { ...DEFAULT_CONFIG }, workload)));
   lines.push('');
   lines.push(...(await runScenario('level=summarize (maximum)', { ...DEFAULT_CONFIG, level: 'summarize' }, workload)));
+  lines.push('');
+  lines.push(...(await benchF4Scenario()).lines);
   console.log(lines.join('\n'));
 }
 

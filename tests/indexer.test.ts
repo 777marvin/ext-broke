@@ -6,6 +6,7 @@ import { after, describe, it } from 'node:test';
 import {
   createEmptyState,
   ensureFresh,
+  estimateBulkReadAvoided,
   findBestLine,
   formatSearchFooter,
   loadIndex,
@@ -272,5 +273,36 @@ describe('footer and hash helpers', () => {
     const footer = formatSearchFooter(3, 1200, { k: 8, maxChars: 6000, contextLines: 6 }, 42);
     assert.match(footer, /^broke-search: 3 result\(s\) \| .* files indexed \| budget 8 hits\/.* chars \| index refreshed 42ms ago$/);
     assert.match(footer, /1[,.\u2009]?200/); // thousand separator is locale-flavored - stay lenient
+  });
+});
+
+describe('estimateBulkReadAvoided', () => {
+  const files = {
+    'src/big.ts': { mtimeMs: 1, sizeBytes: 20_000, tokenCount: 5_000 },
+    'src/small.ts': { mtimeMs: 2, sizeBytes: 900, tokenCount: 250 },
+  };
+
+  it('counts each unique result file once at index-time size minus what was sent', () => {
+    const hits = [
+      { path: 'src/big.ts', line: 10, matches: 2, text: 'header\nsnippet'.padEnd(600) },
+      { path: 'src/big.ts', line: 90, matches: 1, text: 'second window'.padEnd(300) },
+      { path: 'src/small.ts', line: 4, matches: 1, text: 'x'.repeat(120) },
+    ];
+    const avoided = estimateBulkReadAvoided(hits, files);
+    assert.equal(avoided, 20_000 + 900 - (600 + 300 + 120));
+  });
+
+  it('skips files that vanished from the index meta instead of guessing', () => {
+    const hits = [{ path: 'src/gone.ts', line: 1, matches: 1, text: 'abc' }];
+    // No baseline contribution for unknown files - sent chars still count,
+    // mirroring "honest skip": the estimate errs on the low side.
+    assert.equal(estimateBulkReadAvoided(hits, files), -3);
+  });
+
+  it('can go negative on pathological input - callers clamp for display', () => {
+    const hits = [{ path: 'src/small.ts', line: 1, matches: 1, text: 'y'.repeat(950) }];
+    const raw = estimateBulkReadAvoided(hits, files);
+    assert.equal(raw, 900 - 950);
+    assert.ok(raw < 0);
   });
 });

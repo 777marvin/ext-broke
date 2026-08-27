@@ -7,8 +7,9 @@ skill (`%APPDATA%\aider-desk\Cache\extensions\hotovo-aider-desk\resources\skills
 files `event-types.md` and `extension-interface.md`) and
 `docs/aiderdesk-reference.md` (meta repo).
 
-Status: **Draft**: specs are implementation-ready; spikes S1–S4 (below) must
-be resolved during the corresponding feature's development.
+Status: **As built**. F1-F4 are shipped; the per-feature "Implementation
+notes" blocks record the as-built decisions, and spike outcomes S1-S4 are
+recorded in the shared spike list below.
 
 ## Roadmap
 
@@ -194,16 +195,16 @@ const ErrorsSchema = z.object({
 
 ### Acceptance criteria
 
-- [ ] A tsc output with 2,000 lines compresses to exception type + file:line
+- [x] A tsc output with 2,000 lines compresses to exception type + file:line
       + ≤ 8 context lines, with the `[broke: error summary]` marker.
-- [ ] Python traceback and Jest/Vitest failure blocks are recognized.
-- [ ] Non-error tool output (normal build logs, code listings) passes through
+- [x] Python traceback and Jest/Vitest failure blocks are recognized.
+- [x] Non-error tool output (normal build logs, code listings) passes through
       byte-identical (except existing passes).
-- [ ] Protected turns are never compressed; `enabled: false` is a no-op.
-- [ ] `toolLevel: true` rewrites `output.content[0].text` in `onToolFinished`
+- [x] Protected turns are never compressed; `enabled: false` is a no-op.
+- [x] `toolLevel: true` rewrites `output.content[0].text` in `onToolFinished`
       and saves the full output via `truncateToolResult`; `false` (default)
       never touches stored history.
-- [ ] A throwing `extractErrorSummary` cannot break the model call.
+- [x] A throwing `extractErrorSummary` cannot break the model call.
 
 ### Verification
 
@@ -338,7 +339,7 @@ one not; verify the model sees the sliced view.
 
 ## F3: State Snapshotting & Memory Flushing
 
-**Version:** TBD (originally planned for 0.4.0, which shipped without it; feat: → minor). **Effort:** M.
+**Version:** 0.9.0 (shipped; originally planned for 0.4.0, which shipped without it). **Effort:** M.
 
 ### Objective
 
@@ -397,17 +398,17 @@ dangerous: removed message ids may be referenced by the running step):**
 
 ### Acceptance criteria
 
-- [ ] `onAfterCommit` writes a valid `SnapshotRecord` (schema-parseable) with
+- [x] `onAfterCommit` writes a valid `SnapshotRecord` (schema-parseable) with
       files + commit + summary; secrets are masked; failures never propagate.
-- [ ] `/broke snapshot list/show` renders persisted records.
-- [ ] `/broke flush` without `--yes` asks for confirmation; snapshot +
+- [x] `/broke snapshot list/show` renders persisted records.
+- [x] `/broke flush` without `--yes` asks for confirmation; snapshot +
       history file exist before any message is removed.
-- [ ] After flush, the task context = task brief + `[broke-state]` message;
+- [x] After flush, the task context = task brief + `[broke-state]` message;
       the agent answers a follow-up prompt correctly (manual check).
-- [ ] `--undo` restores the exact prior message array from the history file.
-- [ ] History files are capped/rotated; `snapshot.keepHistory: false` skips
+- [x] `--undo` restores the exact prior message array from the history file.
+- [x] History files are capped/rotated; `snapshot.keepHistory: false` skips
       them and disables `--undo` (documented).
-- [ ] README documents the `.aider.chat.history.md` desync per S2.
+- [x] README documents the `.aider.chat.history.md` desync per S2.
 
 ### Verification
 
@@ -420,7 +421,7 @@ Manual: real task with 20+ messages → snapshot → flush → follow-up prompt 
 
 ## F4: Local Keyword/Vector Index with Snippet Summaries
 
-**Version:** TBD (originally planned for 0.5.0, which shipped without it; feat: → minor). **Effort:** L.
+**Version:** 0.10.0 (shipped 2026-08-27; originally planned for 0.5.0, which shipped without it). **Effort:** L.
 
 ### Objective
 
@@ -528,19 +529,19 @@ const SearchSchema = z.object({
 
 ### Acceptance criteria
 
-- [ ] `broke-search` returns ≤ `maxResults` results with `path:line`,
+- [x] `broke-search` returns ≤ `maxResults` results with `path:line`,
       snippet windows and match counts, total ≤ `maxChars` chars.
-- [ ] Incremental rebuild re-indexes only changed files (mtime/size);
+- [x] Incremental rebuild re-indexes only changed files (mtime/size);
       index survives extension reload; S3 confirms deploy preservation.
-- [ ] Query while a file changed since last build returns fresh results
+- [x] Query while a file changed since last build returns fresh results
       (lazy rebuild) without blocking the agent loop.
-- [ ] Unindexable dirs (`node_modules` etc.) are never walked;
+- [x] Unindexable dirs (`node_modules` etc.) are never walked;
       `enabled: false` removes the tool.
-- [ ] `broke index status` reports honest numbers; rebuild failures degrade
+- [x] `broke index status` reports honest numbers; rebuild failures degrade
       to a short message.
 - [ ] v2: `vector` backend returns embedding-ranked results and falls back to
       keyword when Ollama is unreachable.
-- [ ] README positions the feature vs. `power---semantic_search` + repo map.
+- [x] README positions the feature vs. `power---semantic_search` + repo map.
 
 ### Verification
 
@@ -561,7 +562,10 @@ via agent; verify snippet budget in a large repo.
 - Deploy: `.\scripts\deploy.ps1 -Category extensions -Name broke` from a
   clean, tagged state (verify S3: config.json **and** new artifact folders
   survive).
-- Version bumps: F1 → 0.2.0/0.2.1 (shipped). F2 → 0.7.0 (shipped). F3-F4 are unimplemented; their originally planned bumps (F3 → 0.4.0, F4 → 0.5.0) are obsolete because 0.3.0/0.4.0 shipped without them. New bumps are assigned when each feature is scheduled (see roadmap).
+- Version bumps: F1 → 0.2.0/0.2.1 (shipped). F2 → 0.7.0 (shipped).
+  F3 → 0.9.0 (shipped) and F4 → 0.10.0 (shipped 2026-08-27) each got their
+  own assigned bump; the originally planned F3 → 0.4.0 / F4 → 0.5.0 bumps
+  are obsolete because those versions shipped other work.
 
 ## Risk register
 
