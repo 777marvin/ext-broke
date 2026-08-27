@@ -11,7 +11,7 @@
  */
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ContextMessage, ExtensionContext, OptimizeMessagesEvent, ToolFinishedEvent } from '@aiderdesk/extensions';
@@ -24,6 +24,9 @@ process.env.BROKE_CONFIG_PATH = join(tmp, 'config.json');
 process.env.BROKE_STATS_PATH = join(tmp, 'stats.jsonl');
 process.env.BROKE_MEASURE_PATH = join(tmp, 'measure.jsonl');
 process.env.BROKE_ERRORS_DIR = join(tmp, 'errors');
+// Index persistence must stay out of the real extension directory (tests run
+// with __dirname == repo root) - same isolation pattern as BROKE_CONFIG_PATH.
+process.env.BROKE_INDEX_DIR = join(tmp, 'indexdir');
 process.env.BROKE_STATS_PERSIST_MIN_MS = '0';
 
 // Project modules load only after the env overrides are in place. The test
@@ -676,5 +679,99 @@ describe('ST-slicing focus path resolution (D5)', () => {
     const out = JSON.stringify(result?.output ?? '');
     assert.ok(out.includes('[broke: focus file'), 'relative read must hit the absolute edit target');
     assert.ok(out.includes('Math.round(cents * rate)'), 'focus file keeps its full body');
+  });
+});
+
+describe('project-scoped indexing via execution contexts (regression: "no open project")', () => {
+  /**
+   * A context shaped like the one the host passes to command execution and
+   * tool invocation - per-project, with a real getProjectDir(). The context
+   * captured by onLoad() is the global variant and returns "" there, which
+   * used to break /broke index + broke-search entirely (GH bug report).
+   */
+  function makeScopedHost(root: string): { context: ExtensionContext; lines: string[] } {
+    const lines: string[] = [];
+    const task = {
+      data: { id: 'task-idx-1', provider: 'openai', model: 'gpt-4o', mainModel: 'gpt-4o' },
+      getTaskAgentProfile: async () => ({ provider: 'openai', model: 'gpt-4o' }),
+      getContextMessages: async () => [],
+      generateText: async () => 'unused',
+      addLogMessage: async (_level: string, line: string) => {
+        lines.push(line);
+      },
+    };
+    const context = {
+      log: () => undefined,
+      getProjectDir: () => root,
+      getTaskContext: () => task,
+      getModelConfigs: async () => [],
+      triggerUIDataRefresh: () => undefined,
+      triggerUIComponentsReload: () => undefined,
+    } as unknown as ExtensionContext;
+    return { context, lines };
+  }
+
+  /** Minimal on-disk project with known search content. */
+  function makeProject(): string {
+    const root = mkdtempSync(join(tmpdir(), 'broke-proj-'));
+    writeFileSync(join(root, 'main.ts'), 'export const needle = 42;\nexport function compute() { return needle; }\n');
+    writeFileSync(join(root, 'other.ts'), 'import { compute } from "./main";\nexport function secondary() { return compute(); }\n');
+    return root;
+  }
+
+  it('/broke index indexes the command context\u0027s project dir and logs a rebuilt summary', async () => {
+    writeConfig({ search: { ...DEFAULT_CONFIG.search, enabled: true } });
+    const ext = new Broke(); // no attachContext: the stored onLoad context stays unset
+    const root = makeProject();
+    const { context, lines } = makeScopedHost(root);
+
+    const [cmd] = ext.getCommands(context);
+    await cmd.execute(['index'], context);
+
+    assert.ok(lines.length > 0, '/broke index must log into the task chat when a task exists');
+    assert.ok(lines[0].startsWith('broke: index rebuilt - '), `unexpected log: ${lines[0]}`);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('/broke index status reports the indexed project instead of "no open project"', async () => {
+    writeConfig({ search: { ...DEFAULT_CONFIG.search, enabled: true } });
+    const ext = new Broke();
+    const root = makeProject();
+    const { context, lines } = makeScopedHost(root);
+    const [cmd] = ext.getCommands(context);
+
+    await cmd.execute(['index'], context);
+    lines.length = 0;
+    await cmd.execute(['index', 'status'], context);
+
+    assert.match(lines[0], /^broke index status:/);
+    assert.doesNotMatch(lines.join('\n'), /no open project/);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('the broke-search tool searches the invoke-time context\u0027s project, not the onLoad context', async () => {
+    writeConfig({ search: { ...DEFAULT_CONFIG.search, enabled: true } });
+    const ext = new Broke();
+    const root = makeProject();
+    const { context } = makeScopedHost(root);
+    const [tool] = ext.getTools(context, 'agent', {}).filter((t) => t.name === 'broke-search');
+
+    const output = String(await tool.execute({ query: 'needle' }, undefined, context, {}));
+    assert.ok(output.includes('broke-search:'), `expected budgeted footer, got: ${output.slice(0, 200)}`);
+    assert.ok(output.includes('needle'), 'must find the seeded symbol in the scoped project');
+    assert.ok(!output.includes('failed'), `tool degradated unexpectedly: ${output.slice(0, 200)}`);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('degrades honestly when no execution context can supply a project dir', async () => {
+    writeConfig({ search: { ...DEFAULT_CONFIG.search, enabled: true } });
+    const ext = new Broke();
+    const { context, lines } = makeScopedHost('');
+    delete (context as unknown as Record<string, unknown>).getProjectDir;
+
+    const [cmd] = ext.getCommands(context);
+    await cmd.execute(['index'], context);
+
+    assert.equal(lines[0], 'broke: no open project - indexing is project-scoped');
   });
 });

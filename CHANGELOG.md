@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `/broke index`, `/broke index status` and `broke-search` no longer fail with
+  "no open project - indexing is project-scoped" inside an open project. The
+  command handler and the tool invocation now receive contexts that know their
+  project directory (`getProjectDir()`); these were previously ignored in favor
+  of the global context captured at extension load, whose `getProjectDir()` is
+  documented to return an empty string. Regression tests cover all three entry
+  points plus the honest degradation when genuinely no project is available.
+
 ## [0.11.0] - 2026-08-27
 
 ### Added

@@ -483,7 +483,10 @@ export function estimateBulkReadAvoided(
 
 /** Extension-directory location: survives deploys/updates via preserve lists. */
 export function indexDirFor(projectRoot: string): string {
-  return join(__dirname, 'index', projectHash(projectRoot));
+  // Env override mirrors the BROKE_CONFIG_PATH isolation pattern - tests must
+  // never write into the real extension directory.
+  const base = process.env.BROKE_INDEX_DIR || __dirname;
+  return join(base, 'index', projectHash(projectRoot));
 }
 
 /**

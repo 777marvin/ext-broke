@@ -967,11 +967,11 @@ export default class Broke implements Extension {
               );
             }
             case 'index-rebuild':
-              return log(ext.rebuildProjectIndex());
+              return log(ext.rebuildProjectIndex(context));
             case 'index-status':
-              return log(ext.indexStatusText());
+              return log(ext.indexStatusText(context));
             case 'search':
-              return log(ext.searchViaTool({ query: cmd.query }));
+              return log(ext.searchViaTool({ query: cmd.query }, context));
             case 'summarize-now':
               return log(await ext.summarizeNow(context));
             case 'snapshot':
@@ -1033,20 +1033,30 @@ export default class Broke implements Extension {
         description:
           'Search this project locally (keyword index). Returns a token-budgeted snippet summary: path:line plus context lines around each best match, ALL results together under a strict char budget. Prefer this over reading whole files when locating definitions or usages.',
         inputSchema: Broke.BROKE_SEARCH_SCHEMA,
-        execute: async (input) => {
+        execute: async (input, _signal, context) => {
           const parsed = Broke.BROKE_SEARCH_SCHEMA.safeParse(input);
           if (!parsed.success) return 'broke-search: invalid arguments';
-          return this.searchViaTool(parsed.data);
+          return this.searchViaTool(parsed.data, context);
         },
       },
     ];
   }
 
+  /**
+   * Project root at call time. The context passed to command execution and
+   * tool invocation is created per project/task and carries a real
+   * getProjectDir(); the context captured in onLoad() is the global one whose
+   * getProjectDir() is documented to return "" - so call-site context wins.
+   */
+  private rootFor(context?: ExtensionContext): string {
+    return context?.getProjectDir?.() || this.context?.getProjectDir?.() || '';
+  }
+
   /** Tool entry point: freshness sweep + budgeted search, never throwing. */
-  private searchViaTool(input: { query: string; k?: number; files?: string[] }): string {
+  private searchViaTool(input: { query: string; k?: number; files?: string[] }, context?: ExtensionContext): string {
     const config = getConfig();
     if (!config.search.enabled) return 'broke-search is disabled (/broke help for config paths)';
-    const root = this.context?.getProjectDir?.() ?? '';
+    const root = this.rootFor(context);
     if (!root) return 'broke-search: no open project - indexing is project-scoped';
     try {
       const fresh = ensureFresh(root, { maxFileKB: config.search.maxFileKB });
@@ -1063,7 +1073,7 @@ export default class Broke implements Extension {
       // and never added to savedChars - /broke estimate + badge tooltip use
       // it with an explicit "counterfactual" label. Files that changed since
       // indexing are skipped by the estimator itself.
-      const taskId = this.context?.getTaskContext?.()?.data.id;
+      const taskId = context?.getTaskContext?.()?.data.id ?? this.context?.getTaskContext?.()?.data.id;
       if (taskId) {
         const avoided = estimateBulkReadAvoided(result.hits, fresh.state.files);
         if (avoided > 0) this.bumpEstimate(taskId, 'search', avoided);
@@ -1075,10 +1085,10 @@ export default class Broke implements Extension {
   }
 
   /** /broke index|index rebuild: full re-index from scratch, persisted atomically. */
-  private rebuildProjectIndex(): string {
+  private rebuildProjectIndex(context?: ExtensionContext): string {
     const config = getConfig();
     if (!config.search.enabled) return 'broke: search is disabled - nothing to build';
-    const root = this.context?.getProjectDir?.() ?? '';
+    const root = this.rootFor(context);
     if (!root) return 'broke: no open project - indexing is project-scoped';
     try {
       const scan = scanProject(root, config.search.maxFileKB);
@@ -1098,10 +1108,10 @@ export default class Broke implements Extension {
   }
 
   /** /broke index status: honest numbers without forcing a rescan. */
-  private indexStatusText(): string {
+  private indexStatusText(context?: ExtensionContext): string {
     const config = getConfig();
     if (!config.search.enabled) return 'broke: local search disabled (search.enabled=false)';
-    const root = this.context?.getProjectDir?.() ?? '';
+    const root = this.rootFor(context);
     if (!root) return 'broke: no open project - nothing indexed';
     let state: IndexState | null | undefined = this.indexByProject.get(projectHash(root))?.state;
     if (!state) {
