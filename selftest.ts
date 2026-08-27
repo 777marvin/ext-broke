@@ -1,6 +1,10 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { Config } from './config';
 import { compressMessages, createCompressState, errorPass, structuralPass, truncatePass, type SummarizeDeps } from './compress';
+import { ensureFresh, formatSearchFooter, loadIndex, runSearch } from './indexer';
 import { buildFlushPlan } from './snapshot';
 import { estimateTokens, messagesChars } from './tokens';
 
@@ -60,6 +64,19 @@ function assistantWithToolCall(toolName: string, input: Record<string, unknown>)
  */
 /** The duplicated bash output: the selftest asserts it appears exactly once after the run. */
 const DUPLICATE_OUTPUT = 'PASS  tests/billing.test.ts (42 tests)';
+
+/** F4 selftest fixtures: two tiny modules with deliberate term overlap. */
+const SYNTHETIC_BILLING_TS = [
+  'export function createInvoice(id: string) {',
+  "  return { id, items: [] };",
+  '}',
+  '',
+  '/** CSV export helper. */',
+  'export function exportCsv(rows: string[]): string {',
+  "  return rows.join('\\n');",
+  '}',
+].join('\n');
+const SYNTHETIC_CSV_TS = 'export function writeFile(path: string, rows: string[]) {\n  return exportCsv(rows); // reuses billing\n}\n';
 
 export function buildSyntheticMessages(): ContextMessage[] {
   const bigOutput = Array.from({ length: 500 }, (_, i) => `line ${i}: const x${i} = ${i * 7}; // padding for a large tool result`).join('\n');
@@ -193,6 +210,40 @@ export async function runSelfTest(config: Config): Promise<SelfTestResult> {
   // F3 sanity: the pure flush planner agrees on a non-empty conversation.
   const flushPlan = buildFlushPlan(messages);
   lines.push(`  F3 flush plan: ${flushPlan.ok ? `would replace ${flushPlan.removedCount} of ${messages.length} message(s)` : `declined - ${flushPlan.reason}`}`);
+
+  // F4 sanity (increment 6): index a synthetic temp project, prove the
+  // incremental merge converges to zero churn, query it and check the
+  // persisted state survives a reload. Entirely hermetic - ensureFresh's
+  // dirOverride keeps every write OUT of the real extension directory -
+  // and degraded to a skip line instead of throwing if the FS misbehaves.
+  try {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'broke-selftest-f4-'));
+    const indexDir = mkdtempSync(join(tmpdir(), 'broke-selftest-idx-'));
+    mkdirSync(join(projectRoot, 'src'), { recursive: true });
+    writeFileSync(join(projectRoot, 'src', 'billing.ts'), SYNTHETIC_BILLING_TS);
+    writeFileSync(join(projectRoot, 'src', 'csv.ts'), SYNTHETIC_CSV_TS);
+    const built = ensureFresh(projectRoot, { maxFileKB: 512 }, indexDir);
+    const fileCount = Object.keys(built.state.files).length;
+    const second = ensureFresh(projectRoot, { maxFileKB: 512 }, indexDir);
+    const churn = second.delta.added + second.delta.updated + second.delta.removed;
+    const f4Opts = { k: 5, maxChars: 2000, contextLines: 6 };
+    const search = runSearch(second.state, projectRoot, 'createInvoice exportCsv', f4Opts);
+    const budgetOk = search.hits.every((h) => h.text.length <= 2000);
+    const coversBilling = search.hits.some((h) => h.path.includes('billing'));
+    const persisted = loadIndex(indexDir);
+    rmSync(projectRoot, { recursive: true, force: true });
+    rmSync(indexDir, { recursive: true, force: true });
+    lines.push(
+      `  F4 index: ${fileCount} synthetic file(s) indexed; re-scan delta +${second.delta.added}/~${second.delta.updated}/-${second.delta.removed}${churn === 0 ? '' : ' - UNEXPECTED churn'}` +
+        `, persisted to disk: ${persisted ? 'yes' : 'NO - persistence broken in this environment'}`,
+    );
+    lines.push(
+      `  F4 search 'createInvoice exportCsv': ${search.hits.length} hit(s), top ${search.hits[0] ? `${search.hits[0].path}:${search.hits[0].line}` : '(none)'}` +
+        `, billing file ranked: ${coversBilling ? 'yes' : 'no'}, every snippet within the 2000-char budget: ${budgetOk ? 'yes' : 'no'} | ${formatSearchFooter(search.hits.length, fileCount, f4Opts, search.elapsedMs).replace(/^broke-search: /, '')}`,
+    );
+  } catch (err) {
+    lines.push(`  F4 index: skipped - ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   return { lines, touched: report.touched };
 }
