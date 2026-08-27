@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: README now describes the hierarchical summarization
+  (review F-07: message-boundary chunking, 8+1 call budget, honest
+  coverage marker), the snapshot byte quotas (F-14) and the updater's
+  transactional crash recovery (F-02); a mermaid pipeline diagram and a
+  short first-five-minutes verification checklist were added.
+  docs/overview.md: snapshot header, module map (refreshed line counts,
+  added snapshot.ts / scripts/bench.ts and the missing test-suite rows)
+  and the summarize/cache description aligned with the 0.12.0 behavior.
+  docs/feats.md: corrected the leftover "F3 targets v0.9.0" wording and
+  the extension-types reference (now ~0.31).
+
 ## [0.12.0] - 2026-08-27
 
 ### Changed

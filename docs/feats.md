@@ -29,10 +29,10 @@ hardening round (rename retries, byte-size payload verification,
 complete rollback), the always-live status badge, the AiderDesk 0.80
 extension-API updates (disposable config-watcher cleanup), the honest-zero
 transparency work (idle badge hint, `/broke why`, stats flush) and F2
-ST-slicing (v0.7.0). F3 is implemented on
-`feat/f3-snapshot-flush` (snapshots/, snapshot.ts module, config blocks,
+ST-slicing (v0.7.0). F3 shipped in v0.9.0
+(snapshots/, snapshot.ts module, config blocks,
 commands, onAfterCommit/test-green triggers, confirmed+undo-gated flush via
-loadContextMessages) and targets v0.9.0 once spike S2's manual run passed;
+loadContextMessages; spike S2's manual run passed before the release);
 F4 shipped in v0.10.0 (2026-08-27).
 The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
 F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without
@@ -56,7 +56,7 @@ by F1–F3.
    change what the agent or the user sees; their config defaults are `off`.
    F1 and F4 are purely additive and default `on`.
 3. **Feature-detect the runtime API.** Published `@aiderdesk/extensions`
-   types (~0.28) lag the runtime. Any hook/TaskContext method used here is
+   types (~0.31) lag the runtime. Any hook/TaskContext method used here is
    checked at runtime before use and degrades gracefully (pattern established
    by savemytoken's `truncateToolResult` detection).
 4. **Failure isolation.** No hook handler may ever throw into the agent loop.

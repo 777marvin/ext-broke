@@ -153,12 +153,22 @@ errors archive and `node_modules`, refreshes dependencies when the
 lockfile changed, and swaps the installation atomically: transient file
 locks are retried, every payload file is verified after the copy before
 the update declares success, and any failure rolls back to the previous
-installation completely.
+installation completely. Interrupted updates recover on the next run: a
+transaction marker records the swap state, so the next `/broke update`
+either discards a completed swap's leftover backup or restores the
+previous installation from it - never a half-installed state.
 Unlike a first install (hot-reloaded above), an update needs an AiderDesk
 restart: the running instance keeps its previously loaded code until then.
 `scripts/deploy.ps1` stays useful for first installs on a fresh machine and
 for testing uncommitted changes during development; inside a git checkout
 `/broke update` refuses to run by design.
+
+**First five minutes:** open any task and check three things - the
+**💸 badge** shows in the status bar, the **activation note** states the
+active level and whether Ollama is reachable, and `/broke selftest` runs
+the whole pipeline on synthetic input. That is the whole setup: broke is
+active by default, every lever is documented under [Usage](#usage) and
+[Onboarding](#onboarding-what-to-use-when).
 
 ## Requirements
 
@@ -372,12 +382,38 @@ passes over everything older than the protected turns:
    replaced by a `__broke` preview.
 4. **summarize**: when the input exceeds the threshold and the old region
    is big enough, it is replaced by one `[broke-compacted]` summary. The
-   summary is cached per task: unchanged regions are reused without extra
-   calls; a regeneration happens only when new turns enter the region.
+   summary is cached per task and re-validated against the region's
+   content fingerprint; a regeneration happens only when new turns enter
+   the region. Regions larger than the summarizer's input cap are chunked
+   at message boundaries and summarized hierarchically - each chunk within
+   the cap, one meta-call combining the parts, a hard budget of 8 part +
+   1 meta calls; messages beyond the budget stay in the context verbatim,
+   and the marker states the coverage ("Summarized X of Y messages").
    Images, file attachments and reasoning parts are never silently
    dropped: regions containing them are skipped (the truncate pass still
    shrinks their text parts). A summary is never applied when it would
    grow the context.
+
+```mermaid
+flowchart TD
+    A[Model call] --> B["onOptimizeMessages<br/>fires before every model call"]
+    B --> G{"Gates pass?<br/>enabled · input exceeds maxContextChars<br/>· outside the protected turns"}
+    G -- "no - nothing to compress" --> K["original input, unchanged"]
+    G -- yes --> P1["1 · structural<br/>drop empty messages, dedupe identical adjacent<br/>tool results, merge consecutive texts"]
+    P1 --> P2["2 · errors<br/>compiler/test dumps → diagnostic essence<br/>(command tools only)"]
+    P2 --> P3["3 · truncate<br/>old tool outputs → head+tail,<br/>oversized tool-call inputs trimmed"]
+    P3 --> Z{"4 · summarize?<br/>input above threshold and<br/>old region large enough"}
+    Z -- no --> V
+    Z -- yes --> SM["hierarchical summary, budget 8+1 calls<br/>via local Ollama (default) or a cloud model"]
+    SM --> V
+    V{"ContextValidator:<br/>tool-call/result invariants intact?"}
+    V -- "violated" --> K
+    V -- ok --> OUT["compressed input goes to the model -<br/>stored history is never touched"]
+    OUT -.-> L[("stats.jsonl · measure.jsonl<br/>💸 badge · /broke stats · /broke measure")]
+
+    B -. "opt-in tool hooks" .-> TH["slice: interface views (default off)<br/>tool-level error rewrite (default off)<br/>both rewrite stored history"]
+    A -. "after every commit" .-> SN["milestone snapshot<br/>summary-only by default"]
+```
 
 After 3 consecutive summarize failures, broke disables summarization for
 that task and tells you why. The badge tooltip shows the disabled state;
@@ -493,7 +529,9 @@ it only changes which model sees the untrusted text first.
 Snapshots (F3) persist small JSON records and optional raw-history undo
 files **locally** under the extension directory. Every record field derived
 from conversation content passes through the same secret masking as all
-broke artifacts; rotation caps them at 50 records per task. If your
+broke artifacts; they are bounded by count (50 records per task) and by
+bytes (25 MB per task, individual undo files capped at 10 MB, oldest
+records evicted when a budget is exceeded). If your
 conversation contains long-lived credentials that none of the masking
 patterns catch, disable snapshots or move them off shared machines.
 

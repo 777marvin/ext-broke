@@ -1,7 +1,7 @@
 # Project Overview
 
-*Snapshot: v0.8.0 (2026-08-26), review rounds F1-F24 + XF1-XF16 closed and
-external review R1-R14 dispositioned, suite 299/299 green*
+*Snapshot: main @ 0.12.1-dev (2026-08-27), review rounds F1-F24, XF1-XF16,
+R1-R14 and remediation F-01..F-16 closed, suite 404/404 green*
 
 ## What broke is
 
@@ -21,39 +21,43 @@ pipeline, compression applies to the input of each model call only.
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `indexer.ts` | 501 | F4 local keyword index (0.10.0): identifier tokenizer, incremental mtime/size merge (bounded scan, INDEX_MAX_ENTRIES cap), BM25 ranking, live snippet windows (mergeWindows/renderSnippet), total char-budget enforcement per query, atomic index/<projectHash>/index.json persistence (postings + metadata ONLY, corruption-tolerant load), dirOverride isolation for tests; never throws upward |
-| `index.ts` | 1414 | Extension entry: class Broke implements Extension, onOptimizeMessages (core pipeline, summarize auto-disable gate, reentry guard), onToolFinished (optional tool-level rewrite + F3 test-green trigger), onAfterCommit (snapshot milestones), onTaskInitialized (activation notice), getCommands (/broke command switch incl. snapshots, flush, update wiring, config-watcher close/reopen for the folder swap), getTools (broke-search tool + throttled index refresh off commit signals), getUIComponents (badge), config API (getConfigComponent/getConfigData/saveConfigData), per-run measurement persistence in recordReport; on AiderDesk >= 0.80 the watcher is additionally registered via context.addDisposable() so disable/uninstall releases the directory handle |
-| `compress.ts` | 936 | Core pipeline: `compressibleRange` (region protection), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + prompt-injection hardening), `compressMessages` (with `CompressOptions` gate) |
+| `indexer.ts` | 558 | F4 local keyword index (0.10.0): identifier tokenizer, incremental mtime/size merge (bounded scan, INDEX_MAX_ENTRIES cap), BM25 ranking, live snippet windows (mergeWindows/renderSnippet), total char-budget enforcement per query, atomic index/<projectHash>/index.json persistence (postings + metadata ONLY, corruption-tolerant load; persisted relPaths are confinement-validated, the project root is re-checked, projectHash is a 64-bit SHA-256 prefix with legacy-dir cleanup, F-09), dirOverride isolation for tests; never throws upward |
+| `index.ts` | 1502 | Extension entry: class Broke implements Extension, onOptimizeMessages (core pipeline, shouldCompress content gate F-10, summarize auto-disable gate, reentry guard), onToolFinished (optional tool-level rewrite + F3 test-green trigger), onAfterCommit (snapshot milestones), onTaskInitialized (activation notice), getCommands (/broke command switch incl. snapshots, flush, update wiring, config-watcher close/reopen for the folder swap), getTools (broke-search tool + throttled index refresh off commit signals), getUIComponents (badge), config API (getConfigComponent/getConfigData/saveConfigData), per-run measurement persistence in recordReport; on AiderDesk >= 0.80 the watcher is additionally registered via context.addDisposable() so disable/uninstall releases the directory handle |
+| `compress.ts` | 1104 | Core pipeline: `compressibleRange` (region protection), `shouldCompress` content gate (F-10), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + disclosure telemetry + extended secret patterns F-13, hierarchical chunked summarization with 8+1 call budget F-07, content-fingerprinted summary cache F-06), `compressMessages` (with `CompressOptions` gate) |
 | `output.ts` | 149 | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
 | `errors.ts` | 434 | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir, retention sweep, archive on/off, XF9/XF10); `isCommandTool` classification |
-| `config.ts` | 337 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` toggle |
-| `commands.ts` | 525 | `/broke` parser + all subcommands (status, stats with measured-reduction headline, measure, reset, selftest, update, help, level/threshold/limit tuning); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
-| `update.ts` | 907 | Self-update (`/broke update`): resolves the latest tagged GitHub release (`releases/latest`, fallback highest-semver tag), strict `vMAJOR.MINOR.PATCH` tag validation before any URL use, tarball download with timeouts + size cap, system-`tar` extraction, runtime-state preservation (config.json, stats/measure ledgers incl. rotation files, errors/ ≤ 100 MB, index/ ≤ 64 MB for F4 keyword indexes, node_modules), automatic `npm ci --omit=dev` on lockfile change, atomic swap with rollback plus in-place replacement when a Windows handle pins the directory; rename retries for transient locks (~4 s staggered), merge-over fallback for persistently locked entries (snapshot by copy, merged over, pruned back to payload contents), byte-size manifest verification of the copied payload before success is declared (.deployed-version is written only then), complete rollback on every failure path, non-fatal leftover-backup cleanup; git-checkout guard, concurrency lock; all I/O injectable for hermetic tests. Since 0.8.0 (R1): installs ONLY release ASSETS - Ed25519-signed SHA256SUMS verified against the embedded public key plus checksum match BEFORE extraction/npm ci; unsigned (pre-0.8.0) releases are refused |
-| `tokens.ts` | 383 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
+| `config.ts` | 324 | Zod schema, defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` toggle |
+| `commands.ts` | 540 | `/broke` parser + all subcommands (status/why, stats with measured-reduction headline, estimate, measure, reset, selftest, update, snapshot/flush, index/search, level/threshold/limit tuning, help); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
+| `update.ts` | 977 | Self-update (`/broke update`): resolves the latest tagged GitHub release (`releases/latest`, fallback highest-semver tag), strict `vMAJOR.MINOR.PATCH` tag validation before any URL use, streaming tarball download with mid-stream cap (F-11), system-`tar` extraction, runtime-state preservation (config.json, stats/measure ledgers incl. rotation files, errors/ ≤ 100 MB, index/ ≤ 64 MB for F4 keyword indexes, node_modules), automatic `npm ci --omit=dev` on lockfile change, atomic swap with rollback plus in-place replacement when a Windows handle pins the directory; rename retries for transient locks (~4 s staggered), merge-over fallback for persistently locked entries (snapshot by copy, merged over, pruned back to payload contents), byte-size manifest verification of the copied payload before success is declared (.deployed-version is written only then), complete rollback on every failure path, transactional .update-state.json marker with stale-backup recovery incl. merge-copy fallback (F-02), non-fatal leftover-backup cleanup; git-checkout guard, concurrency lock; all I/O injectable for hermetic tests. Since 0.8.0 (R1): installs ONLY release ASSETS - Ed25519-signed SHA256SUMS verified against the embedded public key plus checksum match BEFORE extraction/npm ci; unsigned (pre-0.8.0) releases are refused |
+| `tokens.ts` | 410 | Token estimation (chars/4), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
 | `local.ts` | 142 | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
 | `validate.ts` | 75 | ContextValidator (external review P0): pure provider-bound invariant checks - no duplicate tool-call/result ids, no orphaned calls or results; `compressMessages` reverts to the original input when its output violates invariants that the input did not have |
 | `slice.ts` | 730 | ST-slicing (opt-in, 0.7.0): heuristic TS/Python interface-view extraction; unrecognized top-level `export`/`declare` statements pass through in full (R6 fail-safe); focus resolution + tool detection helpers |
-| `scripts/sign-release.mjs` | 78 | Release artifact signing: sha256sum manifest + Ed25519 signature (`BROKE_RELEASE_SIGNING_KEY`, CI-only) |
-| `.github/workflows/release.yml` | 55 | Tag-push release pipeline: byte-stable `git archive` artifact -> signed manifest -> GitHub release assets (the ONLY supported release path since 0.8.0) |
-| `pricing.ts` | 91 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
-| `selftest.ts` | 249 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
-| `scripts/measure.ts` | 25 | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
+| `snapshot.ts` | 425 | F3 milestone snapshots: `snapshot [label]` records + onCommit/onTestPass triggers, summary-only records by default (`snapshot.keepHistory` off; the destructive flush keeps its undo file via `flush.undo`, D1), per-task 25 MB byte budget and 10 MB undo-file cap with size-aware eviction of the oldest record+history pairs (F-14), owner-only permissions (0600/0700), count-based rotation |
+| `scripts/sign-release.mjs` | 60 | Release artifact signing: sha256sum manifest + Ed25519 signature (`BROKE_RELEASE_SIGNING_KEY`, CI-only) |
+| `.github/workflows/release.yml` | 82 | Tag-push release pipeline: byte-stable `git archive` artifact -> signed manifest -> GitHub release assets (the ONLY supported release path since 0.8.0) |
+| `pricing.ts` | 81 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution |
+| `selftest.ts` | 234 | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
+| `scripts/bench.ts` | 273 | Deterministic reference benchmark (npm run bench): a 351,403-char synthetic session through the real pipeline with a stub summarizer, byte-reproducible; F4 keyword-index scenario for the counterfactual estimate model |
+| `scripts/measure.ts` | 22 | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
 | `ConfigComponent.jsx` | 210 | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
 | `StatusBadge.jsx` | 75 | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state; always renders and polls every 10 s so a missed push refresh cannot hide it |
-| `tests/index.test.ts` | 492 | Fake-host integration tests (XF11): real extension against a fake ExtensionContext/task, compression + stats/measure persistence, reentry guard, summarize auto-disable, tool-level archiving on/off, silence when disabled |
-| `tests/commands.test.ts` | 394 | Unit tests: `/broke` parse/apply/format (incl. `update` subcommands), generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
+| `tests/index.test.ts` | 684 | Fake-host integration tests (XF11): real extension against a fake ExtensionContext/task, compression + stats/measure persistence, reentry guard, summarize auto-disable, tool-level archiving on/off, silence when disabled |
+| `tests/commands.test.ts` | 529 | Unit tests: `/broke` parse/apply/format (incl. `update` subcommands), generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
 | `tests/measure.test.ts` | 214 | Unit tests: run-record mapping, ledger append/rotation/malformed-skip, summary math incl. summarizer cost side (mean/median/max/byTask) |
-| `tests/compress.test.ts` | 1017 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
-| `tests/config.test.ts` | 155 | Unit tests: config merge, corrupted-file fallback, pure updates, one-write multi-path persistence |
-| `tests/errors.test.ts` | 540 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap/retention/clear |
+| `tests/compress.test.ts` | 1132 | Unit tests: region computation, structural/truncate/error passes, summary handling, rich-part skip, summarize gate, secret masking |
+| `tests/config.test.ts` | 204 | Unit tests: config merge, corrupted-file fallback, pure updates, one-write multi-path persistence |
+| `tests/errors.test.ts` | 562 | Unit tests: error extraction for plain + structured outputs, command-tool guard, `isCommandTool` classification, archive cap/retention/clear |
 | `tests/local.test.ts` | 145 | HTTP round-trip tests against a local server: success, HTTP errors, body errors, stalled-body timeouts; remote-host classification (`isRemoteOllamaHost`) |
 | `tests/pricing.test.ts` | 191 | Unit tests: cost-savings math (`savedCostUsd`, `priceLabel`), stats persistence privacy, stats loader TTL, task-stats reset |
-| `tests/selftest.test.ts` | 51 | Unit tests: synthetic-call-id linking, dedupe really applied, honest per-pass labels |
-| `tests/update.test.ts` | 574 | Unit tests: self-update flow with injected deps - release ASSET resolution + semver fallback, tag validation, strict signed-release trust model (refuses unsigned/tampered), happy-path swap with state preservation, check mode, explicit downgrade/reinstall, extract/npm failure aborts, git-checkout guard, concurrency lock, stale-backup recovery, in-place fallback, errors-archive size cap (sparse file), mid-staging rename-lock rollback, partial-copy detection via the manifest check, swap manifest-mismatch rollback, merge-over fallback for unmovable directories/files with pruning, merged-entry snapshot rollback |
+| `tests/selftest.test.ts` | 71 | Unit tests: synthetic-call-id linking, dedupe really applied, honest per-pass labels |
+| `tests/update.test.ts` | 744 | Unit tests: self-update flow with injected deps - release ASSET resolution + semver fallback, tag validation, strict signed-release trust model (refuses unsigned/tampered), happy-path swap with state preservation, check mode, explicit downgrade/reinstall, extract/npm failure aborts, git-checkout guard, concurrency lock, stale-backup recovery, in-place fallback, errors-archive size cap (sparse file), mid-staging rename-lock rollback, partial-copy detection via the manifest check, swap manifest-mismatch rollback, merge-over fallback for unmovable directories/files with pruning, merged-entry snapshot rollback |
 | `tests/validate.test.ts` | 186 | Unit tests: ContextValidator invariants (duplicates/orphans/format failures) + compressMessages revert semantics (output-broken reverts, input-corrupt ships) |
-| `tests/host-contract.test.ts` | 199 | Full lifecycle contract with a fake host: TaskInitialized -> ToolCalled -> ToolFinished -> OptimizeMessages state flow + never-break-the-host guarantees under hostile surfaces |
+| `tests/host-contract.test.ts` | 360 | Full lifecycle contract with a fake host: TaskInitialized -> ToolCalled -> ToolFinished -> OptimizeMessages state flow + never-break-the-host guarantees under hostile surfaces |
 | `tests/update-signing.test.ts` | 79 | Signature/checksum primitives against an isolated test keypair (verifySumsSignature, checksumFromSums, defaultVerifyRelease failure paths) |
 | `tests/slice.test.ts` | 325 | Unit tests: TS/Python slicing, focus resolution, tool detection, fail-safe export pass-through regression matrix (R6) |
+| `tests/snapshot.test.ts` | 319 | F3 unit tests: record assembly, masking, persistence/rotation/undo files, the pure flush planner, the conservative test-green heuristic |
+| `tests/bench.test.ts` | 88 | Unit tests: the bench workload builder and F4 scenario pin the documented reference figures |
 
 ## How the pipeline works
 
@@ -81,10 +85,15 @@ everything older than the protected region:
    NO user turn at all - autonomous single-prompt tool loops - which would
    otherwise never qualify) and input above
    `maxContextChars` (60000 ≈ 15k tokens) → one `[broke-compacted]`
-   summary message, cached per task + summarizer-config fingerprint
-   (backend/model changes invalidate the cache; tool-loop steps append to
-   it; regeneration only on new user turns or ≥ `minChars` of new
-   content). Regions carrying images, file attachments or reasoning parts
+   summary message, cached per task and re-validated against the region's
+   content fingerprint (F-06: backend/model changes invalidate the cache,
+   tool-loop steps append to it; regeneration only on new user turns or ≥
+   `minChars` of new content). Regions larger than the summarizer input
+   cap are chunked at message boundaries and summarized hierarchically
+   (F-07): each chunk within the cap, one meta-call combining the parts,
+   hard budget of 8 part + 1 meta calls; messages beyond the budget stay
+   verbatim and the marker states the coverage ("Summarized X of Y
+   messages"). Regions carrying images, file attachments or reasoning parts
    are skipped entirely (never silently dropped); truncate still shrinks
    their text parts. The swap is skipped when the summary would grow the
    context (XF6), and the summary body is framed as untrusted
@@ -150,4 +159,4 @@ real-session numbers.
 - `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
 - `docs/local-models.md`: local-model capabilities on this hardware (RTX 3050, 4 GB VRAM)
 - `docs/feats.md`: specs for F2 ST-slicing, F3 state snapshotting/memory flushing, F4 local keyword/vector index (F1 shipped in v0.2.0)
-- `docs/review-backlog.md`: findings from the 2026-08-16 review, all closed (severity, location, fix approach, commit mapping)
+- `docs/review-backlog.md`: the complete review ledger - self-review F1-F24, external XF1-XF16, external R1-R14 (incl. accepted limitations and the open R15), remediation F-01..F-16 - all dispositioned with severity, location, fix approach, commit mapping
