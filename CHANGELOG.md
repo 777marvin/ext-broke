@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-27
+
+First stable release. What 1.0.0 promises: the four feature pillars -
+input compression, ST-slicing, snapshotting/flush and the local keyword
+search - are shipped and covered by 404 tests; `/broke update` installs
+only Ed25519-signed release assets and recovers from interrupted updates;
+four review rounds (self-review F1-F24, external XF1-XF16, external
+R1-R14, remediation F-01..F-16) are fully dispositioned. Compatibility
+line: `@aiderdesk/extensions` ^0.31.0 (AiderDesk >= 0.77, 0.80+
+recommended), Node >= 22. The dev-version policy keeps `main`, the
+lockfile and release tags provably in sync.
+
 ### Changed
 
 - Documentation: README now describes the hierarchical summarization
