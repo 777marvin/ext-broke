@@ -443,7 +443,10 @@ Implementation notes (v1 as built, plan decisions E1-E7):
   step stays a live agent session invoking the tool (post-deploy check).
 - **E2 persistence:** `index/<projectHash>/index.json` is carried by BOTH
   deploy.ps1's extension preserve list AND update.ts `preserveRuntimeState`
-  (64 MB cap mirroring errors/), each with hermetic regression tests.
+  (64 MB cap mirroring errors/). The update.ts path has hermetic regression
+  tests (`index/ preserve cap` suite); the deploy.ps1 side is covered by its
+  CI smoke jobs (dry-run + real secret-filtered deploy) instead of a dedicated
+  assertion that the preserved directory survives an actual swap.
 - **E3 scope:** keyword BM25 ONLY. The config enum stays single-valued
   ('keyword') until vector/hybrid actually exist - no forward-declared dead
   options; embeddings land in v2 behind `search.backend` via `ollamaEmbed`.
