@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Oversized regions are summarized hierarchically instead of truncated**
+  (review F-07): regions larger than the summarizer input cap used to be
+  cut to head (8k) + tail (22k) for a single call, silently discarding the
+  middle of the conversation. The region is now chunked at MESSAGE
+  boundaries, each chunk is summarized within the input cap (secrets masked
+  per chunk), and a final meta-call combines the part summaries. Cost is
+  reported honestly (every part + meta call counted in `summarizeCalls`,
+  total input/output chars). A hard budget of 8 part calls + 1 meta call
+  bounds cost; messages beyond the budget stay in the context verbatim
+  (lossless) and the summary marker states the coverage
+  ("Summarized X of Y messages"). A single oversized message is truncated
+  for the summarizer call only, with an explicit drop marker.
 - Summary-cache reuse is now content-verified (review F-06): validity was
   keyed on the last region message's ID, so a history edit that changes a
   message's content while keeping its ID would silently serve a stale

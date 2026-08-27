@@ -692,7 +692,7 @@ describe('summarizePass', () => {
     // History edit: the same message id, different content. throughId alone
     // would call this "unchanged" and serve the stale summary; the content
     // fingerprint must force a cache miss.
-    const mutated = msgs.map((m, i) => (i === 1 ? { ...m, content: `EDITED by the user: ${String(m.content)}` } : m));
+    const mutated = msgs.map((m, i) => (i === 1 ? { ...m, content: `EDITED by the user: ${String(m.content)}` } : m)) as ContextMessage[];
     const r2 = await summarizePass(mutated, 1, cfg, deps, state, 'task-sum-f06');
     assert.equal(calls.n, 2, 'cache miss on changed content with stable ids');
     assert.equal(r2.summarizeCalls, 1);
@@ -793,7 +793,7 @@ describe('summarizePass', () => {
     assert.equal(r2.summarizeCalls, 1);
   });
 
-  it('keeps the beginning of oversized regions for the summarizer', async () => {
+  it('summarizes oversized regions hierarchically - nothing is silently dropped (review F-07)', async () => {
     const big = Array.from({ length: 4000 }, (_, i) => `pad line ${i} - filling the conversation with repetitive content`).join('\n');
     const msgs: ContextMessage[] = [
       user('Brief: build the billing module.'),
@@ -810,10 +810,41 @@ describe('summarizePass', () => {
     const state = createCompressState();
     const calls = { n: 0, inputs: [] as string[] };
     const deps = countingDeps(calls);
-    await summarizePass(msgs, 1, summarizeConfig({ minChars: 100 }), deps, state, 'task-sum-5');
-    assert.equal(calls.n, 1);
+    const r = await summarizePass(msgs, 1, summarizeConfig({ minChars: 100 }), deps, state, 'task-sum-5');
+    // Hierarchical: chunk calls + 1 meta call, all counted honestly.
+    assert.ok(calls.n > 1, `hierarchical path makes several calls (got ${calls.n})`);
+    assert.equal(r.summarizeCalls, calls.n, 'cost side reports every call');
+    // The beginning (original requirements) reaches the summarizer.
     assert.ok(calls.inputs[0].includes('UNIQUE_ANCHOR_START'));
-    assert.ok(calls.inputs[0].includes('[BEGINNING OF CONVERSATION'));
+    // Content from the former "dropped middle" now reaches the summarizer.
+    assert.ok(calls.inputs.some((i) => i.includes('pad line 300')));
+    // A single oversized message is truncated FOR THE CALL ONLY, visibly marked.
+    assert.ok(calls.inputs.some((i) => i.includes('chars of this single oversized message were dropped')));
+    assert.ok(r.messages.some((m) => isSummaryMessage(m)), 'summary present');
+    assert.ok(r.removedChars > 0);
+  });
+
+  it('keeps messages beyond the chunk budget verbatim instead of dropping them (review F-07)', async () => {
+    const block = (i: number) => `CHUNK_ANCHOR_${i} ${'y'.repeat(13_500)}`;
+    const msgs: ContextMessage[] = [user('Brief: build the billing module.'), ...Array.from({ length: 20 }, (_, i) => assistant(block(i))), user('Protected tail.')];
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const r = await summarizePass(msgs, 1, summarizeConfig({ minChars: 100 }), deps, state, 'task-sum-budget');
+    // 20 x ~15k chars -> 10 message-boundary chunks; the budget caps calls at
+    // 8 part calls + 1 meta call, covering the first 16 messages.
+    assert.equal(calls.n, 9);
+    assert.equal(r.summarizeCalls, 9);
+    const summaryMsg = r.messages.find((m) => isSummaryMessage(m));
+    assert.ok(summaryMsg, 'summary present');
+    assert.ok(String(summaryMsg.content).includes('Summarized 16 of 20 messages'), 'coverage is stated honestly in the marker');
+    assert.equal(JSON.stringify(r.messages).includes('CHUNK_ANCHOR_0'), false, 'covered part is replaced by the summary');
+    for (const i of [16, 17, 18, 19]) {
+      assert.ok(
+        r.messages.some((m) => String(m.content).includes(`CHUNK_ANCHOR_${i}`)),
+        `message beyond the chunk budget stays verbatim (${i})`,
+      );
+    }
   });
 
   it('redacts secrets before sending content to the summarizer', async () => {
@@ -882,7 +913,7 @@ describe('summarizePass', () => {
     };
     const r = await summarizePass(msgs, 1, summarizeConfig(), failingDeps, state, 'task-sum-7');
     assert.equal(r.failed, true);
-    assert.equal(r.summarizeCalls, 1);
+    assert.equal(r.summarizeCalls, 0, 'a throwing call never completed - no call is counted (honest cost side)');
     assert.equal(r.messages, msgs); // untouched
   });
 
