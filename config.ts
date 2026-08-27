@@ -129,6 +129,30 @@ const FlushSchema = z.object({
 });
 const flushDefault = FlushSchema.parse({});
 
+/**
+ * F4 local project search. v1 ships the KEYWORD backend only - the enum
+ * stays single-valued until vector/hybrid actually exist (honest config
+ * surface over forward-declared dead options).
+ */
+const SearchSchema = z.object({
+  /**
+   * Default ON: registering the broke-search tool touches no stored history.
+   * Honest tradeoff (documented in README): every registered tool ships its
+   * JSON schema with each model call - keep off if every token counts.
+   */
+  enabled: z.boolean().default(true),
+  backend: z.enum(['keyword']).default('keyword'),
+  /** Top-k snippet results per query. */
+  maxResults: z.number().int().min(1).max(50).default(8),
+  /** TOTAL char budget across all results of one query - the token control. */
+  maxChars: z.number().int().positive().default(6000),
+  /** Context lines kept around each best-matching line. */
+  contextLines: z.number().int().min(1).max(20).default(6),
+  /** Files larger than this never enter the index. */
+  maxFileKB: z.number().int().positive().default(512),
+});
+const searchDefault = SearchSchema.parse({});
+
 const UiSchema = z.object({
   /** Show the 💸 saved-tokens badge in the task status bar. */
   showStatusBadge: z.boolean().default(true),
@@ -179,6 +203,7 @@ export const ConfigSchema = z.object({
   stats: StatsSchema.default(statsDefault),
   snapshot: SnapshotSchema.default(snapshotDefault),
   flush: FlushSchema.default(flushDefault),
+  search: SearchSchema.default(searchDefault),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -271,6 +296,12 @@ export function applyConfigUpdates(current: Config, updates: Array<[string, unkn
     summarize: { ...current.summarize },
     ui: { ...current.ui },
     stats: { ...current.stats },
+    // Blocks added later need their clones too - without one, a dotted-path
+    // update traverses the SHARED sub-object and mutates the caller's
+    // previous config instance (found while wiring the search block).
+    snapshot: { ...current.snapshot },
+    flush: { ...current.flush },
+    search: { ...current.search },
   };
   for (const [path, value] of updates) {
     const parts = path.split('.');

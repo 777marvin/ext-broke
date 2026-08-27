@@ -32,6 +32,12 @@ Usage: /broke <subcommand>
   slice focus <path>            always return this file in full (per task)
   slice focus clear             drop the explicit focus
   slice status                  slicing mode and current focus for this task
+  index | index rebuild         build/rebuild the local project keyword index (persisted)
+  index status                  indexed files, terms, disk size, built age
+  search <query>                broke-search snippet summary - top-k results under a char budget
+                                (defaults: ${d.search.maxResults} hits, ${d.search.maxChars.toLocaleString('en-US')} chars total)
+  search on | off               register / unregister the broke-search agent tool
+                                (default: ${d.search.enabled ? 'on' : 'off'} - a registered tool ships its schema with every model call)
   snapshot [label]              record a milestone snapshot of this task now
   snapshot list                 list this task's snapshots (newest first)
   snapshot show <n>             print snapshot #n from the list
@@ -81,6 +87,10 @@ export type BrokeCommand =
   | { kind: 'slice-focus'; path: string }
   | { kind: 'slice-focus-clear' }
   | { kind: 'slice-status' }
+  | { kind: 'index-rebuild' }
+  | { kind: 'index-status' }
+  | { kind: 'search'; query: string }
+  | { kind: 'search-toggle'; enabled: boolean }
   | { kind: 'snapshot'; label?: string }
   | { kind: 'snapshot-list' }
   | { kind: 'snapshot-show'; index: number }
@@ -181,6 +191,22 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
       // A focus path may contain spaces - everything after 'focus' is one path.
       if (opt === 'focus' && rest.length >= 2) return { kind: 'slice-focus', path: rest.slice(1).join(' ') };
       if (opt === 'status' && rest.length === 1) return { kind: 'slice-status' };
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
+    case 'index': {
+      const opt = rest[0];
+      if (opt === undefined || opt === 'rebuild') return { kind: 'index-rebuild' };
+      if (opt === 'status' && rest.length === 1) return { kind: 'index-status' };
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
+    // /broke search <query...> - the whole tail is one query, spaces legal.
+    case 'search': {
+      // Reserved keywords before query interpretation (pattern: snapshot list).
+      if (rest.length === 1 && (rest[0] === 'on' || rest[0] === 'off')) {
+        return { kind: 'search-toggle', enabled: rest[0] === 'on' };
+      }
+      const query = rest.join(' ').trim();
+      if (query.length > 0) return { kind: 'search', query };
       return { kind: 'unknown', raw: args.join(' ') };
     }
     case 'summarize': {
@@ -313,6 +339,13 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
         message: cmd.enabled
           ? 'ST-slicing enabled - file reads return interface views (focus file stays full). NOTE: rewrites land in STORED task history and cannot be undone by disabling slicing later.'
           : 'ST-slicing disabled - file reads pass through untouched (already-stored views stay sliced)',
+      };
+    case 'search-toggle':
+      return {
+        config: updateConfigPath('search.enabled', cmd.enabled, filePath),
+        message: cmd.enabled
+          ? 'broke-search registered - agents can query the local keyword index under the char budget'
+          : 'broke-search unregistered - no tool-schema cost on future model calls (index stays on disk)',
       };
     case 'slice-focus':
     case 'slice-focus-clear':

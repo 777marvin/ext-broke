@@ -324,6 +324,12 @@ async function fetchRelease(
 const PRESERVED_LEDGER_PREFIXES = ['stats.jsonl', 'measure.jsonl'];
 /** errors/ archive is carried over up to this size (parity with deploy.ps1). */
 export const MAX_PRESERVED_ERRORS_BYTES = 100 * 1024 * 1024;
+/**
+ * F4 keyword indexes are derived caches and CAN be rebuilt - carrying them
+ * over simply saves paid-for indexing work across an update. Capped like
+ * errors/: a runaway index is a bug signal, not a treasure to preserve.
+ */
+export const MAX_PRESERVED_INDEX_BYTES = 64 * 1024 * 1024;
 
 function dirSizeBytes(dir: string): number {
   let total = 0;
@@ -384,6 +390,16 @@ function preserveRuntimeState(oldInstall: string, stagedPayload: string, warning
   // Rotation bounds its size (a few JSON records per task), so no cap here.
   const snapDir = join(oldInstall, 'snapshots');
   if (existsSync(snapDir)) cpSync(snapDir, join(stagedPayload, 'snapshots'), { recursive: true });
+  // F4 keyword index (plan decision E2): derived cache, but skipping this
+  // would wipe every built index on /broke update. Rebuildable, hence capped.
+  const idxDir = join(oldInstall, 'index');
+  if (existsSync(idxDir)) {
+    if (dirSizeBytes(idxDir) <= MAX_PRESERVED_INDEX_BYTES) {
+      cpSync(idxDir, join(stagedPayload, 'index'), { recursive: true });
+    } else {
+      warnings.push('index/ exceeded 64 MB and was left to lazy rebuild');
+    }
+  }
 }
 
 function filesDiffer(a: string, b: string): boolean {

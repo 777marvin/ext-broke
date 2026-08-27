@@ -1,0 +1,501 @@
+/**
+ * F4 - Local Keyword/Vector Index with snippet summaries (docs/feats.md).
+ *
+ * A per-project inverted index that answers "where does X live?" with a
+ * TOKEN-BUDGETED snippet summary instead of whole-file dumps: top-k results,
+ * ±contextLines around the best match, everything under search.maxChars.
+ *
+ * Scope decision (v1, recorded in feats.md F4 notes): KEYWORD ONLY. The
+ * vector/hybrid backends are reserved for v2 behind the same entry points;
+ * shipping them half-wired would be dishonest config surface.
+ *
+ * Privacy & size (plan decisions E5/E6): the persisted index holds ONLY
+ * term postings and file metadata - never file contents or snippets.
+ * Snippets are read live from disk at query time and exist only in the
+ * tool result, exactly like any normal file-read tool. No savedChars are
+ * claimed anywhere (E5): savings come from the agent choosing broke-search
+ * over bulk reads, which is behavior, not pipeline compression.
+ *
+ * Failure isolation (roadmap principle 4): every exported IO entry point
+ * catches internally and degrades to a short honest message. Nothing here
+ * throws into the agent loop.
+ */
+
+import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, type Dirent } from 'node:fs';
+import { join } from 'node:path';
+import type { Config } from './config';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Directories that never enter the index (feats.md F4 build rules). */
+export const SKIP_DIRS: ReadonlySet<string> = new Set([
+  'node_modules',
+  '.git',
+  '.aider-desk',
+  'dist',
+  'build',
+  'vendor',
+]);
+
+/** File extensions eligible for indexing. Everything else passes by. */
+export const INDEXABLE_EXT: ReadonlySet<string> = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.py', '.json', '.md']);
+
+/**
+ * Hard cap on indexed files (bounded-memory principle 6): the walk stops
+ * here and reports honestly that the index is truncated. Typical repos are
+ * far below this; runaways are "build artifacts misclassified", not workloads.
+ */
+export const INDEX_MAX_ENTRIES = 50_000;
+
+/** Terms longer than this are dropped (paths pasted into comments etc.). */
+const MAX_TOKEN_LENGTH = 48;
+
+/**
+ * Minimal stopword list. Enough to keep English prose snippets from ranking
+ * their filler words; deliberately NOT configurable - tuning this is the
+ * vector backend's job in v2.
+ */
+const STOPWORDS: ReadonlySet<string> = new Set([
+  'the', 'and', 'for', 'not', 'are', 'you', 'all', 'can', 'her', 'was', 'one',
+  'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'man', 'new', 'now',
+  'old', 'see', 'two', 'way', 'who', 'its', 'did', 'that', 'this', 'with',
+  'from', 'they', 'have', 'will', 'your', 'what', 'when', 'which', 'their',
+  'there', 'would', 'about', 'into', 'than', 'then', 'been', 'were', 'does',
+]);
+
+// BM25 parameters (standard defaults).
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
+
+// ---------------------------------------------------------------------------
+// State schema (persisted JSON - versions matter, snapshots taught us why)
+// ---------------------------------------------------------------------------
+
+export interface IndexedFile {
+  /** mtime in ms (from statSync) at indexing time. */
+  mtimeMs: number;
+  /** Size in bytes at indexing time. */
+  sizeBytes: number;
+  /** Number of tokens the file contributed - the BM25 document length. */
+  tokenCount: number;
+}
+
+export interface IndexState {
+  version: 1;
+  /** Absolute project root the paths below are relative to. */
+  projectRoot: string;
+  builtAt: string;
+  /** Truncated by INDEX_MAX_ENTRIES during the last build? */
+  truncated: boolean;
+  /** relPath -> meta. */
+  files: Record<string, IndexedFile>;
+  /** term -> relPath -> in-document frequency. Contents never persisted. */
+  postings: Record<string, Record<string, number>>;
+}
+
+export const SEARCH_MARKER_FOOTER_PREFIX = 'broke-search:';
+
+// ---------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------
+
+/** Identifier-aware tokenizer: lowercase word fragments, stopwords out. */
+export function tokenize(text: string): string[] {
+  const raw = text.toLowerCase().split(/[^a-z0-9_$]+/);
+  const out: string[] = [];
+  for (const t of raw) {
+    if (t.length < 2 || t.length > MAX_TOKEN_LENGTH || STOPWORDS.has(t)) continue;
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Deterministic short hash of the project root for the on-disk directory
+ * name (no filesystem-hostile characters, no path leakage in dir listings).
+ */
+export function projectHash(root: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < root.length; i++) {
+    h ^= root.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+export function createEmptyState(projectRoot: string): IndexState {
+  return { version: 1, projectRoot, builtAt: '', truncated: false, files: {}, postings: {} };
+}
+
+function indexableRelPath(relPath: string): boolean {
+  const dot = relPath.lastIndexOf('.');
+  return dot >= 0 && INDEXABLE_EXT.has(relPath.slice(dot).toLowerCase());
+}
+
+/** Path fragment checks mirroring slice.ts's vendor rules (skip regardless of extension). */
+function skippedPath(relPath: string): boolean {
+  const lower = relPath.toLowerCase();
+  return /(^|[\\/])(node_modules|vendor)([\\/]|$)/.test(lower);
+}
+
+// ---------------------------------------------------------------------------
+// Scan + incremental merge
+// ---------------------------------------------------------------------------
+
+interface ScannedEntry {
+  relPath: string;
+  mtimeMs: number;
+  sizeBytes: number;
+}
+
+/**
+ * Walk the project root collecting candidate metadata (IO, never throws).
+ * Returns null-padded with a truncated flag when INDEX_MAX_ENTRIES trips.
+ */
+export function scanProject(root: string, maxFileKB: number): { entries: ScannedEntry[]; truncated: boolean } {
+  const maxBytes = maxFileKB * 1024;
+  const entries: ScannedEntry[] = [];
+  let truncated = false;
+  const stack = [root];
+  try {
+    while (stack.length > 0 && !truncated) {
+      const dir = stack.pop() as string;
+      let names: Dirent[];
+      try {
+        names = readdirSync(dir, { withFileTypes: true }) as unknown as Dirent[];
+      } catch {
+        continue;
+      }
+      for (const e of names) {
+        if (entries.length >= INDEX_MAX_ENTRIES) {
+          truncated = true;
+          break;
+        }
+        const abs = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (!SKIP_DIRS.has(e.name)) stack.push(abs);
+          continue;
+        }
+        if (!e.isFile()) continue;
+        if (!indexableRelPath(e.name) || skippedPath(e.name)) continue;
+        try {
+          const st = statSync(abs);
+          if (st.size > maxBytes) continue;
+          entries.push({ relPath: forwardSlash(join(dir, e.name).slice(root.length + 1)), mtimeMs: st.mtimeMs, sizeBytes: st.size });
+        } catch {
+          // raced file - skip
+        }
+      }
+    }
+  } catch {
+    // walking must never throw upward
+  }
+  return { entries, truncated };
+}
+
+/** Normalize to forward slashes so on-disk keys are OS-portable. */
+function forwardSlash(p: string): string {
+  return p.includes('\\') ? p.replace(/\\/g, '/') : p;
+}
+
+function removeDocument(state: IndexState, relPath: string): void {
+  delete state.files[relPath];
+  for (const term of Object.keys(state.postings)) {
+    const posting = state.postings[term];
+    if (posting && relPath in posting) {
+      delete posting[relPath];
+      if (Object.keys(posting).length === 0) delete state.postings[term];
+    }
+  }
+}
+
+function addDocument(state: IndexState, root: string, entry: ScannedEntry): void {
+  removeDocument(state, entry.relPath);
+  let text = '';
+  try {
+    text = readFileSync(join(root, ...entry.relPath.split('/')), 'utf-8');
+  } catch {
+    return; // unreadable at index time - absent from postings is honest
+  }
+  const tokens = tokenize(text);
+  const tfByTerm = new Map<string, number>();
+  for (const t of tokens) tfByTerm.set(t, (tfByTerm.get(t) ?? 0) + 1);
+  state.files[entry.relPath] = { mtimeMs: entry.mtimeMs, sizeBytes: entry.sizeBytes, tokenCount: tokens.length };
+  for (const [term, tf] of tfByTerm) {
+    const posting = state.postings[term] ?? {};
+    posting[entry.relPath] = tf;
+    state.postings[term] = posting;
+  }
+}
+
+/**
+ * Diff-and-merge an existing state against a fresh scan: only NEW and
+ * CHANGED files (mtime/size) are re-tokenized, deletions leave both the
+ * meta map and every posting. Mutates and returns the SAME state object.
+ */
+export function mergeIntoState(
+  state: IndexState,
+  root: string,
+  entries: ScannedEntry[],
+  truncated: boolean,
+): { added: number; updated: number; removed: number } {
+  let added = 0;
+  let updated = 0;
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    seen.add(entry.relPath);
+    const old = state.files[entry.relPath];
+    if (!old) {
+      addDocument(state, root, entry);
+      added++;
+    } else if (old.mtimeMs !== entry.mtimeMs || old.sizeBytes !== entry.sizeBytes) {
+      addDocument(state, root, entry);
+      updated++;
+    }
+  }
+  let removed = 0;
+  for (const relPath of Object.keys(state.files)) {
+    if (!seen.has(relPath)) {
+      removeDocument(state, relPath);
+      removed++;
+    }
+  }
+  state.truncated = truncated;
+  return { added, updated, removed };
+}
+
+/**
+ * Freshness sweep used by queries AND triggers: load-or-create the state
+ * from disk, rescan metadata, re-index exactly what moved. Never throws.
+ * `dirOverride` mirrors the BROKE_CONFIG_PATH isolation pattern - tests
+ * must never write into the real extension directory.
+ */
+export function ensureFresh(
+  root: string,
+  opts: { maxFileKB: number },
+  dirOverride?: string,
+): { state: IndexState; delta: { added: number; updated: number; removed: number } } {
+  const dir = dirOverride ?? indexDirFor(root);
+  const state = loadIndex(dir) ?? createEmptyState(root);
+  const scan = scanProject(root, opts.maxFileKB);
+  const delta = mergeIntoState(state, root, scan.entries, scan.truncated);
+  if (delta.added > 0 || delta.updated > 0 || delta.removed > 0 || scan.truncated !== state.truncated) {
+    state.builtAt = new Date().toISOString();
+    saveIndex(dir, state);
+  }
+  return { state, delta };
+}
+
+// ---------------------------------------------------------------------------
+// Query: BM25 ranking + live snippet extraction
+// ---------------------------------------------------------------------------
+
+export interface ScoredHit {
+  relPath: string;
+  score: number;
+}
+
+/** BM25-ish ranking over the postings table (pure). */
+export function rankQuery(state: IndexState, queryTerms: string[]): ScoredHit[] {
+  const docCount = Object.keys(state.files).length;
+  if (docCount === 0 || queryTerms.length === 0) return [];
+  let avgLen = 0;
+  for (const f of Object.values(state.files)) avgLen += f.tokenCount;
+  avgLen = Math.max(1, avgLen / docCount);
+
+  const scores = new Map<string, number>();
+  for (const term of new Set(queryTerms)) {
+    const posting = state.postings[term];
+    if (!posting) continue;
+    const df = Object.keys(posting).length;
+    // BM25 idf, floored at 0 (a term in every file carries no signal).
+    const idf = Math.max(0, Math.log(1 + (docCount - df + 0.5) / (df + 0.5)));
+    if (idf <= 0) continue;
+    for (const [relPath, tf] of Object.entries(posting)) {
+      const meta = state.files[relPath];
+      const len = meta?.tokenCount || 1;
+      const denom = tf + BM25_K1 * (1 - BM25_B + (BM25_B * len) / avgLen);
+      scores.set(relPath, (scores.get(relPath) ?? 0) + idf * ((tf * (BM25_K1 + 1)) / denom));
+    }
+  }
+  return [...scores.entries()]
+    .map(([relPath, score]) => ({ relPath, score }))
+    .sort((a, b) => b.score - a.score || a.relPath.localeCompare(b.relPath));
+}
+
+/**
+ * Best matching line for ONE query inside ONE live file: the line whose
+ * tokens cover the most distinct query terms (ties -> earlier line).
+ */
+export function findBestLine(textLines: readonly string[], queryTerms: readonly string[]): { line0: number; hits: number } {
+  const wanted = new Set(queryTerms);
+  let bestLine0 = -1;
+  let bestHits = 0;
+  for (let i = 0; i < textLines.length; i++) {
+    let covered = 0;
+    for (const t of new Set(tokenize(textLines[i]))) {
+      if (wanted.has(t)) covered++;
+    }
+    if (covered > bestHits) {
+      bestHits = covered;
+      bestLine0 = i;
+    }
+  }
+  return { line0: bestLine0, hits: bestHits };
+}
+
+/** Merge overlapping ±window line ranges (pure, 0-based inclusive). */
+export function mergeWindows(bestLines: readonly number[], contextLines: number, lineCount: number): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const center of [...bestLines].sort((a, b) => a - b)) {
+    const lo = Math.max(0, center - contextLines);
+    const hi = Math.min(lineCount - 1, center + contextLines);
+    const last = ranges[ranges.length - 1];
+    if (last && lo <= last[1] + 1) last[1] = Math.max(last[1], hi);
+    else ranges.push([lo, hi]);
+  }
+  return ranges;
+}
+
+/** Render elided windows with visible cut markers (pure). */
+export function renderSnippet(textLines: readonly string[], ranges: ReadonlyArray<[number, number]>): string {
+  const parts: string[] = [];
+  let prevEnd = -1;
+  for (const [lo, hi] of ranges) {
+    if (prevEnd >= 0 && lo > prevEnd + 1) {
+      parts.push(`… [broke: ${lo - prevEnd - 1} line(s) elided] …`);
+    }
+    for (let i = lo; i <= hi; i++) parts.push(textLines[i] ?? '');
+    prevEnd = hi;
+  }
+  return parts.join('\n');
+}
+
+export interface SearchResultHit {
+  path: string;
+  line: number;
+  matches: number;
+  text: string;
+}
+
+export interface SearchRunOptions {
+  k: number;
+  maxChars: number;
+  contextLines: number;
+}
+
+/**
+ * Execute one search against a FRESH state: rank, read the top files live,
+ * extract snippet windows, respect the char budget ACROSS results. Returns
+ * a short error-shaped outcome instead of throwing on any failure.
+ */
+export function runSearch(
+  state: IndexState,
+  root: string,
+  query: string,
+  opts: SearchRunOptions,
+  pathFilter?: string[],
+): { hits: SearchResultHit[]; truncated: boolean; elapsedMs: number } {
+  const started = Date.now();
+  const terms = tokenize(query);
+  if (terms.length === 0) return { hits: [], truncated: false, elapsedMs: Date.now() - started };
+
+  let ranked = rankQuery(state, terms);
+  if (pathFilter && pathFilter.length > 0) {
+    // Accept exact relative paths or directory prefixes - case-tolerant like most CLIs.
+    const normalized = pathFilter.map((p) => forwardSlash(p).toLowerCase());
+    ranked = ranked.filter((h) => {
+      const lower = h.relPath.toLowerCase();
+      return normalized.some((p) => lower === p || lower.startsWith(p.endsWith('/') ? p : `${p}/`));
+    });
+  }
+
+  const hits: SearchResultHit[] = [];
+  let usedChars = 0;
+  const wanted = new Set(terms);
+  for (const cand of ranked) {
+    if (hits.length >= opts.k) break;
+    if (usedChars >= opts.maxChars) break;
+    let text = '';
+    try {
+      text = readFileSync(join(root, ...cand.relPath.split('/')), 'utf-8');
+    } catch {
+      continue; // deleted/unreadable since indexing - honest skip, not a crash
+    }
+    const matchCount = tokenize(text).reduce((n, t) => (wanted.has(t) ? n + 1 : n), 0);
+    const textLines = text.split(/\r?\n/);
+    const { line0 } = findBestLine(textLines, terms);
+    if (line0 < 0) continue; // re-read content no longer contains the query
+    const snippet = renderSnippet(textLines, mergeWindows([line0], opts.contextLines, textLines.length));
+    const header = `${cand.relPath}:${line0 + 1} (${matchCount} match(es))`;
+    const block = `${header}\n${snippet}`;
+    if (usedChars + block.length > opts.maxChars && hits.length > 0) break;
+    if (block.length > opts.maxChars) {
+      // Single oversize result: hard-trim to budget rather than dropping.
+      hits.push({ path: cand.relPath, line: line0 + 1, matches: matchCount, text: block.slice(0, opts.maxChars) });
+      break;
+    }
+    hits.push({ path: cand.relPath, line: line0 + 1, matches: matchCount, text: block });
+    usedChars += block.length + 1;
+  }
+  return { hits, truncated: state.truncated, elapsedMs: Date.now() - started };
+}
+
+/** One-line footer with honest numbers (the "where did these come from" receipt). */
+export function formatSearchFooter(hits: number, filesIndexed: number, opts: SearchRunOptions, ageMs: number): string {
+  return `${SEARCH_MARKER_FOOTER_PREFIX} ${hits} result(s) | ${filesIndexed.toLocaleString('en-US')} files indexed | budget ${opts.k} hits/${opts.maxChars.toLocaleString('en-US')} chars | index refreshed ${Math.round(ageMs)}ms ago`;
+}
+
+// ---------------------------------------------------------------------------
+// Persistence (atomic, bounded, corruption-tolerant)
+// ---------------------------------------------------------------------------
+
+/** Extension-directory location: survives deploys/updates via preserve lists. */
+export function indexDirFor(projectRoot: string): string {
+  return join(__dirname, 'index', projectHash(projectRoot));
+}
+
+/**
+ * Atomic write (tmp + rename, fsynced pattern from config.saveConfig).
+ * Failures THROW here by contract; callers wrap (ensureFresh persists via
+ * its own catch, commands report). Bounded by construction: postings are
+ * small integers, entries capped at INDEX_MAX_ENTRIES.
+ */
+export function saveIndex(dir: string, state: IndexState): void {
+  mkdirSync(dir, { recursive: true });
+  const target = join(dir, 'index.json');
+  const tmp = `${target}.tmp`;
+  writeFileSync(tmp, JSON.stringify(state), 'utf-8');
+  renameSync(tmp, target);
+}
+
+/** Load a persisted index. Anything suspicious becomes null (rebuild later). */
+export function loadIndex(dir: string): IndexState | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(dir, 'index.json'), 'utf-8')) as Partial<IndexState>;
+    if (
+      raw?.version !== 1 ||
+      typeof raw.projectRoot !== 'string' ||
+      typeof raw.files !== 'object' ||
+      raw.files === null ||
+      typeof raw.postings !== 'object' ||
+      raw.postings === null
+    ) {
+      return null;
+    }
+    return { version: 1, projectRoot: raw.projectRoot, builtAt: raw.builtAt ?? '', truncated: raw.truncated === true, files: raw.files, postings: raw.postings };
+  } catch {
+    return null;
+  }
+}
+
+/** Defaults resolved from config in one place (commands + tools share this). */
+export function resolveSearchOptions(config: Config['search']): { maxResults: number; options: SearchRunOptions; maxFileKB: number } {
+  return {
+    maxResults: config.maxResults,
+    options: { k: config.maxResults, maxChars: config.maxChars, contextLines: config.contextLines },
+    maxFileKB: config.maxFileKB,
+  };
+}

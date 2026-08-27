@@ -22,7 +22,7 @@
   *.pfx, *.log, .aider*, stats.jsonl) are never copied from the working
   tree, at ANY depth (nested examples/.env is excluded too). Existing
   runtime files in the target (config.json, stats.jsonl,
-  node_modules, snapshots/, and errors/ up to 100 MB) are preserved across
+  node_modules, snapshots/, index/, and errors/ up to 100 MB) are preserved across
   the deploy.
 
 .PARAMETER Category
@@ -205,7 +205,7 @@ try {
   # preserved file wins over a same-named file from the repo - runtime state
   # is user data by definition (extensions only).
   $preserveList = switch ($Category) {
-    'extensions' { @('config.json', 'stats.jsonl', 'node_modules', 'snapshots') }
+    'extensions' { @('config.json', 'stats.jsonl', 'node_modules', 'snapshots', 'index') }
     'agents'     { @() }   # config.json is the deployable profile artifact
     'skills'     { @() }
     default      { @() }

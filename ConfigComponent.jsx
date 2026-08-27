@@ -34,6 +34,7 @@
   const errors = cfg.errors ?? {};
   const uiCfg = cfg.ui ?? {};
   const statsCfg = cfg.stats ?? {};
+  const searchCfg = cfg.search ?? {};
 
   return (
     <div className="flex flex-col gap-5">
@@ -193,7 +194,37 @@
         </p>
       </div>
 
-      {/* 6 - UI */}
+      {/* 6 - Local project search (F4) */}
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium">Local project search (broke-search tool)</p>
+        <Checkbox
+          label="Register broke-search for agents (offline keyword index)"
+          checked={searchCfg.enabled ?? true}
+          onChange={(checked) => updateConfig({ ...config, search: { ...searchCfg, enabled: checked } })}
+        />
+        <div className="flex gap-4">
+          {numberField('Max results per query', searchCfg.maxResults ?? 8, (n) =>
+            updateConfig({ ...config, search: { ...searchCfg, maxResults: n } }),
+          1, 50)}
+          {numberField('Total char budget per query', searchCfg.maxChars ?? 6000, (n) =>
+            updateConfig({ ...config, search: { ...searchCfg, maxChars: n } }),
+          )}
+          {numberField('Context lines around match', searchCfg.contextLines ?? 6, (n) =>
+            updateConfig({ ...config, search: { ...searchCfg, contextLines: n } }),
+          1, 20)}
+          {numberField('Skip files larger than (KB)', searchCfg.maxFileKB ?? 512, (n) =>
+            updateConfig({ ...config, search: { ...searchCfg, maxFileKB: n } }),
+          )}
+        </div>
+        <p className="text-xs text-text-secondary -mt-2">
+          The per-project index under <span className="font-mono">index/</span> stores term postings and metadata only -
+          never file contents; snippets are read live from disk. Honest tradeoff: every registered tool ships its JSON
+          schema with each model call, so disable this if every token counts.{' '}
+          <span className="font-mono">/broke index status</span> reports what was built.
+        </p>
+      </div>
+
+      {/* 7 - UI */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">UI &amp; measurement</p>
         <Checkbox
