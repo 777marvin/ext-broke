@@ -17,7 +17,7 @@ be resolved during the corresponding feature's development.
 | F1 | Active Log & Stack-Trace Compressor | 0.2.0 | S | shipped |
 | F2 | ST-Slicing (Semantic Context Thinning) | 0.7.0 | M | shipped |
 | F3 | State Snapshotting & Memory Flushing | 0.9.0 | M | shipped |
-| F4 | Local Keyword/Vector Index with snippet summaries | TBD | L | planned |
+| F4 | Local Keyword/Vector Index with snippet summaries | 0.10.0 | L | implemented on `feat/f4-index` |
 
 **Version reality check (2026-08-26):** v0.3.0 to v0.8.0 are released
 and shipped F1 improvements, the reference
@@ -32,7 +32,8 @@ ST-slicing (v0.7.0). F3 is implemented on
 `feat/f3-snapshot-flush` (snapshots/, snapshot.ts module, config blocks,
 commands, onAfterCommit/test-green triggers, confirmed+undo-gated flush via
 loadContextMessages) and targets v0.9.0 once spike S2's manual run passed;
-F4 is **not** implemented in any released version. The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
+F4 is implemented on `feat/f4-index` and ships as 0.10.0.
+The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
 F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without
 F2/F3, and 0.5.0 shipped the XF-hardening round instead) and stay TBD
 until the features are actually scheduled.
@@ -430,6 +431,37 @@ into the context. Honest positioning: AiderDesk already ships
 (`TaskContext.getRepoMap()`). Broke's differentiators: token-budgeted snippet
 output, offline keyword mode with zero embedding dependency, per-project
 persistence, and integration with the compression pipeline's philosophy.
+
+Implementation notes (v1 as built, plan decisions E1-E7):
+
+- **E1 spike outcome (supersedes the doc-head API assumption):** `getTools`
+  and `ToolDefinition` DO exist in published `@aiderdesk/extensions`
+  0.31.0 (`dist/index.d.ts`, zod v4 on both sides) - an earlier grep pass
+  missed them, app main shows the same shape
+  (`getTools?(context, mode, agentProfile): ToolDefinition[]`). So broke-search
+  registers against the REAL typed interface; the one unverified acceptance
+  step stays a live agent session invoking the tool (post-deploy check).
+- **E2 persistence:** `index/<projectHash>/index.json` is carried by BOTH
+  deploy.ps1's extension preserve list AND update.ts `preserveRuntimeState`
+  (64 MB cap mirroring errors/), each with hermetic regression tests.
+- **E3 scope:** keyword BM25 ONLY. The config enum stays single-valued
+  ('keyword') until vector/hybrid actually exist - no forward-declared dead
+  options; embeddings land in v2 behind `search.backend` via `ollamaEmbed`.
+- **E4 no startup indexing:** builds happen lazily before queries and off
+  throttled commit signals (onAfterCommit -> TTL-cached refresh); neither
+  app start nor the agent loop is blocked synchronously.
+- **E5 honesty:** NO savedChars/stats claims anywhere for F4. Value comes
+  from agents choosing budgeted snippets over bulk reads; the tool footer
+  reports result counts + indexed-file counts instead.
+- **E6 privacy/size:** persisted state = term postings + file metadata
+  (mtime/size/tokenCount) ONLY. Snippets are read live from disk at query
+  time and never reach storage beyond ordinary tool-result history.
+  Skip-list mirrors slice.ts plus `.aider-desk`; INDEX_MAX_ENTRIES caps
+  pathological walks with an honest TRUNCATED flag.
+- **E7 default on:** a registered tool ships its JSON schema with every
+  model call - documented tradeoff in README; controlled via
+  `/broke search on | off` (reserved-keyword parsing, pattern from
+  snapshot list) or the settings dialog.
 
 ### AiderDesk compatibility
 
