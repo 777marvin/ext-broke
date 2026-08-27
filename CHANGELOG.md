@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Versioning policy adopted ("Option B")**: `main` carries a development
+  version (`X.Y.Z-dev`) between releases; the release commit itself pins the
+  exact version and is the only commit a `vX.Y.Z` tag may point at. `main`
+  now sits at `0.12.0-dev` after the 0.11.0 release. Post-release work no
+  longer hides under a released version number.
+- New version-consistency gate (`npm run check:version`, run in CI and in
+  the release workflow): `package.json` version == `package-lock.json` root
+  version == the release tag at release time. The lockfile root metadata,
+  which had drifted to `0.9.0` while `package.json` said `0.11.0`, is now
+  synced.
+
 ### Fixed
 
 - `/broke index`, `/broke index status` and `broke-search` no longer fail with
