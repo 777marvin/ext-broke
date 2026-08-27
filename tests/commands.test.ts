@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   applyBrokeCommand,
+  formatEstimate,
   formatMeasure,
   formatStats,
   hasOllamaModel,
@@ -13,7 +14,7 @@ import {
   type BrokeCommand,
 } from '../commands';
 import { DEFAULT_CONFIG, type Config } from '../config';
-import { emptyStats } from '../tokens';
+import { emptyStats, loadTaskStats, persistStats } from '../tokens';
 
 const kind = (args: string[]): BrokeCommand['kind'] => parseBrokeCommand(args).kind;
 const expectUnknown = (args: string[]): void => {
@@ -519,6 +520,72 @@ describe('/broke index & search (F4)', () => {
     assert.match(HELP_TEXT, /^  index status/m);
     assert.match(HELP_TEXT, /^  search <query>/m);
     assert.match(HELP_TEXT, new RegExp(String.raw`defaults: ${DEFAULT_CONFIG.search.maxResults} hits`));
+  });
+});
+
+describe('/broke estimate', () => {
+  it('parses as its own subcommand', () => {
+    assert.equal(kind(['estimate']), 'estimate');
+  });
+
+  it('renders nothing-tracked and all-zero variants with their labels', () => {
+    const none = formatEstimate(null);
+    assert.match(none, /nothing tracked yet/);
+
+    const zeros = formatEstimate(emptyStats('t1'));
+    assert.match(zeros, /NOT counted in \/broke stats totals/);
+    assert.match(zeros, /all zero so far - nothing sliced, flushed or searched yet/);
+    // slice stays absent-looking at zero but flush/search lines always render
+    assert.match(zeros, /flush:   0 chars/);
+    assert.match(zeros, /search:  0 chars/);
+  });
+
+  it('labels each figure with its source and never claims measured totals', () => {
+    const stats = emptyStats('t2');
+    stats.savedChars.slice = 3000;
+    stats.estimates = { flush: 4123, search: 12000 };
+    const text = formatEstimate(stats);
+    assert.match(text, /slice: {3}3,000 chars \(≈ 750 tokens\).*measured per sliced read/);
+    assert.match(text, /flush: {3}4,123 chars.*--undo takes it back/);
+    assert.match(text, /search:\s{2}12,000 chars.*counterfactual.*upper-bound model/i);
+    assert.doesNotMatch(text, /saved actual/); // never borrows the /broke stats headline
+  });
+
+  it('legacy task stats without an estimates object still render', () => {
+    const legacy = emptyStats('t3'); // emptyStats carries no estimates key at all
+    assert.equal(legacy.estimates, undefined);
+    const text = formatEstimate(legacy);
+    assert.match(text, /all zero so far/);
+  });
+});
+
+describe('estimate persistence (stats.jsonl ledger)', () => {
+  it('round-trips the estimates object and keeps legacy lines without one', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-est-'));
+    try {
+      const file = join(dir, 'stats.jsonl');
+
+      const stats = emptyStats('est-task');
+      stats.estimates = { flush: 900, search: 4500 };
+      persistStats(stats, file);
+
+      const loaded = loadTaskStats('est-task', file);
+      assert.deepEqual(loaded?.estimates, { flush: 900, search: 4500 });
+
+      // A task that never produced estimates stays estimate-less on disk.
+      persistStats(emptyStats('plain-task'), file);
+      const plain = loadTaskStats('plain-task', file);
+      assert.equal(plain?.estimates, undefined);
+
+      // Half-written objects (future fields) normalize instead of crashing.
+      const broken = JSON.stringify({ taskId: 'half-task', savedChars: {}, estimates: { flush: 7 } });
+      const fs = await import('node:fs');
+      fs.appendFileSync(file, `${broken}\n`);
+      const half = loadTaskStats('half-task', file);
+      assert.deepEqual(half?.estimates, { flush: 7, search: 0 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

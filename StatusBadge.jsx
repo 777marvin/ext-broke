@@ -20,6 +20,12 @@
   const ollama = data?.ollama ?? null;
   const cost = data?.cost ?? { savedUsd: null, modelLabel: null };
   const disabled = data?.summarizeDisabled ?? false;
+  // Counterfactual/one-shot estimates (E5 honesty): flush and search savings
+  // are modeled figures that never enter totalSavedTokens; slice is an
+  // estimate but already part of the pass sums.
+  const est = data?.estimates ?? null;
+  const showEstimates =
+    !!est && ((est.slice ?? 0) > 0 || (est.flush ?? 0) > 0 || (est.search ?? 0) > 0);
   // Idle transparency (XF17): when nothing was ever compressed for this
   // task, show WHY instead of a bare suspicious 0 - the last optimize run's
   // input size vs the configured threshold.
@@ -56,7 +62,9 @@
       : '',
     cost.modelLabel ? `  at current task model: ${cost.modelLabel}` : '',
     `  structural: ${(s.structural ?? 0).toLocaleString('en-US')} | error: ${(s.error ?? 0).toLocaleString('en-US')} | truncate: ${(s.truncate ?? 0).toLocaleString('en-US')} | summarize: ${(s.summarize ?? 0).toLocaleString('en-US')}`,
-    s.slice > 0 ? `  slice: ${(s.slice).toLocaleString('en-US')} (ST-slicing, estimate)` : '',
+    showEstimates
+      ? `  estimates: slice ${(est.slice ?? 0).toLocaleString('en-US')} (part of pass totals) · flush ${(est.flush ?? 0).toLocaleString('en-US')} / search ${(est.search ?? 0).toLocaleString('en-US')} - counterfactual, NOT counted above (/broke estimate)`
+      : '',
     `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` - ${failed} failure(s)` : ''}${disabled ? ' - auto-disabled after repeated failures (/broke reset re-enables)' : ''}`,
     ollamaNote ? `  ${ollamaNote}` : '',
     'click the task input for /broke stats',

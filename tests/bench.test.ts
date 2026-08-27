@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { compressMessages, createCompressState, type SummarizeDeps } from '../compress';
 import { DEFAULT_CONFIG } from '../config';
 import { messagesChars } from '../tokens';
-import { buildBenchWorkload, runScenario, STUB_SUMMARY } from '../scripts/bench';
+import { benchF4Scenario, buildBenchWorkload, F4_QUERIES, runScenario, STUB_SUMMARY } from '../scripts/bench';
 
 const deps: SummarizeDeps = {
   generateLocal: async () => STUB_SUMMARY,
@@ -69,5 +69,27 @@ describe('benchmark workload', () => {
         assert.ok(text.includes(snippet), `${doc} must contain the current bench number "${snippet}" - re-run npm run bench and sync the docs`);
       }
     }
+  });
+});
+
+describe('F4 keyword-index scenario (bench)', () => {
+  it('is deterministic: two runs report identical numbers', async () => {
+    const r1 = await benchF4Scenario();
+    const r2 = await benchF4Scenario();
+    assert.deepEqual(r1.result, r2.result);
+    assert.deepEqual(r1.lines, r2.lines);
+  });
+
+  it('reports honest counterfactual figures within the shipped budget', async () => {
+    const { result } = await benchF4Scenario();
+    assert.ok(result.filesIndexed >= 12, 'fixture modules + README must be indexed');
+    assert.ok(result.queryHits.reduce((a, b) => a + b, 0) > 0, 'the fixed queries must hit the fixture');
+    assert.ok(result.snippetsSentChars > 0);
+    assert.ok(
+      result.snippetsSentChars <= F4_QUERIES.length * DEFAULT_CONFIG.search.maxChars,
+      'snippet traffic must respect the per-query char budget',
+    );
+    assert.ok(result.bulkReadBaselineChars >= result.snippetsSentChars, 'whole-file reads cost at least as much as snippets here');
+    assert.equal(result.avoidedChars, Math.max(0, result.bulkReadBaselineChars - result.snippetsSentChars));
   });
 });

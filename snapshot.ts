@@ -40,6 +40,19 @@ export const SnapshotRecordSchema = z.object({
    * Filename relative to the record's directory.
    */
   historyFile: z.string().optional(),
+  /**
+   * Set on flush records: the measured context-byte reduction the flush
+   * produced (chars of everything after the task brief minus the chars of
+   * the replacement [broke-state] message). /broke estimate uses this to
+   * credit a flush - and an --undo subtracts exactly this number again,
+   * so undoing never leaves an inflated estimate behind.
+   */
+  reduction: z
+    .object({
+      regionChars: z.number().int().nonnegative(),
+      stateMessageChars: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 export type SnapshotRecord = z.infer<typeof SnapshotRecordSchema>;
@@ -123,6 +136,8 @@ export function makeSnapshotRecord(
     files?: string[];
     commit?: string;
     summary: string;
+    /** Measured flush reduction (see SnapshotRecordSchema.reduction). */
+    reduction?: { regionChars: number; stateMessageChars: number };
   },
   createdAt = new Date().toISOString(),
 ): SnapshotRecord {
@@ -137,6 +152,15 @@ export function makeSnapshotRecord(
     // Absent vs present matters: an absent key keeps JSON.stringify(state)
     // byte-stable and avoids noise like "commit": null/undefined.
     ...(input.commit ? { commit: maskSecrets(input.commit) } : {}),
+    // Same absence rule as commit: only flush records carry a reduction.
+    ...(input.reduction
+      ? {
+          reduction: {
+            regionChars: Math.max(0, Math.trunc(input.reduction.regionChars)),
+            stateMessageChars: Math.max(0, Math.trunc(input.reduction.stateMessageChars)),
+          },
+        }
+      : {}),
     summary: maskSecrets(input.summary),
   });
 }
@@ -222,6 +246,35 @@ interface IoPaths {
 
 function taskDir(paths: IoPaths, taskId: string): string {
   return join(paths.root, safeLabel(taskId));
+}
+
+/**
+ * Record the measured flush reduction onto an EXISTING flush record file
+ * (best effort, exactly-once). Deliberately NOT part of persistSnapshot:
+ * the pre-flush snapshot must be complete and abort-safe BEFORE any message
+ * is removed, while the reduction is only knowable after the replacement
+ * message exists (its own chars count against the saving). Only fills an
+ * absent field - a second write can never double-credit.
+ */
+export function writeFlushReduction(
+  recordPath: string,
+  reduction: { regionChars: number; stateMessageChars: number },
+): void {
+  try {
+    if (!existsSync(recordPath)) return;
+    const parsed = SnapshotRecordSchema.safeParse(JSON.parse(readFileSync(recordPath, 'utf-8')));
+    if (!parsed.success || parsed.data.reduction) return;
+    const next = SnapshotRecordSchema.parse({
+      ...parsed.data,
+      reduction: {
+        regionChars: Math.max(0, Math.trunc(reduction.regionChars)),
+        stateMessageChars: Math.max(0, Math.trunc(reduction.stateMessageChars)),
+      },
+    });
+    writeFileSync(recordPath, `${JSON.stringify(next)}\n`, { encoding: 'utf-8', mode: 0o600 });
+  } catch {
+    // best effort: the estimate stays unrecorded instead of breaking anything
+  }
 }
 
 /**

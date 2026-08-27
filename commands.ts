@@ -54,6 +54,8 @@ Usage: /broke <subcommand>
   summarize allow-remote <on|off>
                                 allow NON-loopback Ollama hosts (default: ${d.summarize.allowRemoteHost ? 'on' : 'off'} - conversation content stays on this machine)
   stats                         per-pass saved chars/tokens for this task
+  estimate                      counterfactual view: what slice / flush / broke-search roughly
+                                avoided - explicitly NOT part of the /broke stats totals
   why                           live gate-by-gate verdict: why does this task save 0 (or not)?
   measure                       summarize the per-run measurement ledger (measure.jsonl)
   measure on | off              record every compression run to measure.jsonl (default: ${d.stats.measure ? 'on' : 'off'})
@@ -102,6 +104,7 @@ export type BrokeCommand =
   | { kind: 'summarize-after'; turns: number }
   | { kind: 'summarize-allow-remote'; enabled: boolean }
   | { kind: 'stats' }
+  | { kind: 'estimate' }
   | { kind: 'why' }
   | { kind: 'measure' }
   | { kind: 'measure-toggle'; enabled: boolean }
@@ -227,6 +230,8 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
     }
     case 'stats':
       return { kind: 'stats' };
+    case 'estimate':
+      return { kind: 'estimate' };
     case 'why':
       return { kind: 'why' };
     case 'measure': {
@@ -438,6 +443,31 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
     `  last summarizer: ${stats.lastSummarizer}`,
     `  level: ${config.level} | maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} | protectedTurns: ${config.protectedTurns}`,
   ];
+  return lines.join('\n');
+}
+
+/**
+ * /broke estimate - the "roughly what did slice / flush / broke-search avoid"
+ * view. Deliberately separate from formatStats: these are counterfactual or
+ * one-shot figures (a flush frees bytes once; a search snippet models what a
+ * whole-file read would have cost), so mixing them into the compression
+ * totals would blur what is measured vs. modeled. Every line states its
+ * source; nothing here ever feeds totalSavedChars.
+ */
+export function formatEstimate(stats: TaskStats | null): string {
+  if (!stats) {
+    return 'broke estimate - nothing tracked yet for this task (slice reads, flushes and broke-search queries start filling this in).';
+  }
+  const est = stats.estimates ?? { flush: 0, search: 0 };
+  const allZero = stats.savedChars.slice === 0 && est.flush === 0 && est.search === 0;
+  const lines = [
+    'broke estimate - rough avoided-context figures, NOT counted in /broke stats totals',
+    `  slice:   ${fmtChars(stats.savedChars.slice)} (full-file size vs. interface view returned - measured per sliced read, estimate outside the measure ledger)`,
+    `  flush:   ${fmtChars(est.flush)} (net context bytes freed by flush(es) - measured once per flush; /broke flush --undo takes it back)`,
+    `  search:  ${fmtChars(est.search)} (counterfactual: broke-search snippets vs. reading every result file whole - an upper-bound model, not a measurement)`,
+  ];
+  if (allZero) lines.push('  (all zero so far - nothing sliced, flushed or searched yet)');
+  lines.push('  chars/4 heuristic throughout; see docs/token-saving.md for what these numbers can and cannot claim.');
   return lines.join('\n');
 }
 
