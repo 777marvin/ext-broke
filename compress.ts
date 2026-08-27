@@ -677,12 +677,15 @@ export function errorPass(messages: ContextMessage[], protectedTurns: number, op
       // Marker mirrors the truncate pass so the model/user can see the cut:
       // "… [broke: error summary - N lines → M lines] - full output removed".
       const summary = formatErrorSummary(extracted, ' - full output removed');
-      // The marker line adds overhead, so a tiny output with a matched
-      // error line can produce a summary LONGER than the input. The rewrite
-      // still happens (the summary carries the redacted text - the raw
-      // secret must not stay in the context), but the savings are clamped
-      // to 0: the stats must never report negative saved chars.
-      const removed = Math.max(outputText.text.length - summary.length, 0);
+      // XF6 consistency, D2 decision (review F-08): never GROW the context.
+      // The old code rewrote even when the summary was LONGER than the
+      // original (clamping the reported savings to 0). Skipping keeps the
+      // original - in that edge case the unredacted text simply stays until
+      // the summarize/truncate passes handle it, exactly like every other
+      // noop guard. With the shipped defaults (minChars 8000) an oversize
+      // summary is practically impossible anyway.
+      if (summary.length >= outputText.text.length) return p;
+      const removed = outputText.text.length - summary.length;
       changed = true;
       removedChars += removed;
       return { ...part, output: outputText.wrap(summary) };
@@ -949,6 +952,21 @@ export interface CompressOptions {
   onValidationFailure?: (line: string) => void;
 }
 
+/**
+ * Content-based pipeline gate (review F-10). The old `messages.length < 4`
+ * check excluded small contexts ENTIRELY - a short-but-fat context (a huge
+ * error tool result in a 3-message loop) never reached the error pass. The
+ * only lossy pass that can fire below `maxContextChars` is error compression
+ * (per-message `errors.minChars`), so a short context proceeds when its
+ * content could actually trip that threshold; the region/pairing math then
+ * decides what is safely compressible. Long contexts always proceed.
+ */
+export function shouldCompress(messages: ContextMessage[], config: Config, totalChars?: number): boolean {
+  if (!config.enabled) return false;
+  if (messages.length >= 4) return true;
+  return (totalChars ?? messagesChars(messages)) >= config.errors.minChars;
+}
+
 export async function compressMessages(
   messages: ContextMessage[],
   config: Config,
@@ -960,7 +978,7 @@ export async function compressMessages(
   const totalCharsBefore = messagesChars(messages);
   const report = emptyReport(totalCharsBefore);
 
-  if (!config.enabled || messages.length < 4) {
+  if (!shouldCompress(messages, config, totalCharsBefore)) {
     return { messages, report };
   }
 

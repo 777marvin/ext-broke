@@ -158,8 +158,17 @@ describe('host contract: full event lifecycle', () => {
       input: { command: 'pytest' },
       agentProfile: {},
       output: {
+        // Long enough that the extracted summary (marker + error window) is
+        // clearly smaller than the output - the F08/D2 never-grow guard must
+        // not skip the rewrite here.
         stdout: '',
-        stderr: ['Traceback (most recent call last):', '  File "app.py", line 42, in main', '    run()', `ValueError: boom${'!'.repeat(600)}`].join('\n'),
+        stderr: [
+          ...Array.from({ length: 40 }, (_, i) => `build step ${i}: compiled src/module${i}.ts ok`),
+          'Traceback (most recent call last):',
+          '  File "app.py", line 42, in main',
+          '    run()',
+          `ValueError: boom${'!'.repeat(600)}`,
+        ].join('\n'),
         exitCode: 1,
       },
     };

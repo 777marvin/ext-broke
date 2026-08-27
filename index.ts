@@ -20,6 +20,7 @@ import {
   compressMessages,
   createCompressState,
   maskSecrets,
+  shouldCompress,
   summarizePass,
   type CompressReport,
   type CompressState,
@@ -444,7 +445,7 @@ export default class Broke implements Extension {
     }
     const { start, end } = compressibleRange(messages, config.protectedTurns);
     const regionChars = start < end ? messagesChars(messages.slice(start, end)) : 0;
-    if (messages.length < 4 || regionChars <= 0) {
+    if (!shouldCompress(messages, config) || regionChars <= 0) {
       return 'broke: summarize now - nothing compressible yet (no old messages outside the protected turns)';
     }
 
@@ -589,7 +590,11 @@ export default class Broke implements Extension {
         ? saveErrorOutput(taskId, event.toolCallId || event.toolName, redacted, undefined, { retentionDays: config.errors.retentionDays })
         : '';
       const suffix = savedPath ? ` - full output saved to ${savedPath}` : ' - full output removed';
-      return { output: wrap(formatErrorSummary(extracted, suffix)) };
+      const summary = formatErrorSummary(extracted, suffix);
+      // XF6/D2 (review F-08): never grow the stored history with a summary
+      // longer than the output it replaces.
+      if (summary.length >= text.length) return;
+      return { output: wrap(summary) };
     } catch (err) {
       // Never break tool execution - compression is best effort.
       context.log(`Broke: tool-level error compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
@@ -1372,8 +1377,8 @@ export default class Broke implements Extension {
     ];
     if (!config.enabled) {
       lines.push('  verdict: pipeline disabled - nothing will be compressed or recorded (/broke on).');
-    } else if (messages.length < 4) {
-      lines.push('  verdict: conversation too small to process (< 4 messages) - nothing happens by design.');
+    } else if (!shouldCompress(messages, config)) {
+      lines.push('  verdict: nothing to process - the context is below every compression threshold (enabled passes will no-op).');
     } else if (hasOldContent && totalChars > config.maxContextChars) {
       lines.push(
         `  verdict: ABOVE threshold with compressible history - lossy passes engage on the next model call. Savings depend on items exceeding per-item limits (truncate: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB, tool inputs > ${config.truncate.maxInputChars.toLocaleString('en-US')} chars${config.level === 'summarize' ? `, summarize regions ≥ ${config.summarize.minChars.toLocaleString('en-US')} chars` : ''}).`,

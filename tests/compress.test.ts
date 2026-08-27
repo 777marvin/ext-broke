@@ -8,6 +8,7 @@ import {
   errorPass,
   isSummaryMessage,
   maskSecrets,
+  shouldCompress,
   structuralPass,
   summarizePass,
   truncatePass,
@@ -582,11 +583,35 @@ describe('truncatePass', () => {
   });
 });
 
+describe('shouldCompress gate (review F-10)', () => {
+  const baseConfig = { ...DEFAULT_CONFIG, enabled: true };
+
+  it('is content-based: a short-but-fat context is NOT excluded by message count', () => {
+    const fatTool = 'x'.repeat(9000);
+    const shortFat: ContextMessage[] = [user('brief'), assistant('a'), tool('power---bash', fatTool), assistant('b')];
+    assert.equal(
+      shouldCompress(shortFat, baseConfig, 10_000),
+      true,
+      'the old messages.length < 4 gate excluded small contexts entirely; content decides now',
+    );
+    const shortThin: ContextMessage[] = [user('brief'), assistant('a'), tool('power---bash', 'ok')];
+    assert.equal(shouldCompress(shortThin, baseConfig, 40), false, 'tiny contexts with no compressible content skip the pipeline');
+    assert.equal(shouldCompress(shortThin, { ...baseConfig, enabled: false }, 999_999), false, 'master switch wins');
+  });
+
+  it('compressMessages leaves a below-threshold short context untouched', async () => {
+    const msgs: ContextMessage[] = [user('brief'), assistant('a'), tool('power---bash', 'ok')];
+    const { messages: out, report } = await compressMessages(msgs, baseConfig, countingDeps({ n: 0, inputs: [] }), createCompressState(), 't');
+    assert.deepEqual(out, msgs);
+    assert.equal(report.touched, false);
+  });
+});
+
 describe('errorPass', () => {
-  it('never reports negative savings when the summary is LONGER than the input (F18)', () => {
+  it('never grows the context when the summary is LONGER than the input (F18/D2)', () => {
     // A single short tsc error line: the marker line alone is longer than
-    // the input, so the savings must be clamped to 0. The rewrite still
-    // happens (the redacted summary replaces the raw text).
+    // the input. XF6 consistency (review F-08, decision D2): the rewrite is
+    // SKIPPED entirely - the original stays, savings stay honestly at 0.
     const msgs: ContextMessage[] = [
       user('brief'),
       assistant('running'),
@@ -595,7 +620,8 @@ describe('errorPass', () => {
     ];
     const { messages: out, removedChars } = errorPass(msgs, 1, { minChars: 5, contextLines: 8 });
     assert.equal(removedChars, 0);
-    assert.ok(JSON.stringify(out[2].content).includes('broke: error summary'), 'matched error output is still replaced by its redacted summary');
+    assert.equal(JSON.stringify(out[2].content).includes('broke: error summary'), false, 'oversize summaries do not replace the original');
+    assert.ok(JSON.stringify(out[2].content).includes('error TS2322: boom'), 'original output kept verbatim');
   });
 
   it('still compresses a large matching output', () => {
