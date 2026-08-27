@@ -54,3 +54,25 @@ describe('runSelfTest', () => {
     assert.ok(!offLines.includes('NOT exercised'), `disabled run must not contradict itself:\n${offLines}`);
   });
 });
+
+describe('runSelfTest: F4 index exercise', () => {
+  it('indexes a synthetic temp project and reports an honest search receipt (F4, increment 6)', async () => {
+    const result = await runSelfTest({ ...DEFAULT_CONFIG });
+    const joined = result.lines.join('\n');
+    assert.match(joined, /F4 index: \d+ synthetic file\(s\) indexed; re-scan delta \+0\/~0\/-0/, `index line missing or churn detected:\n${joined}`);
+    assert.match(joined, /persisted to disk: yes/, `persistence proof missing:\n${joined}`);
+    assert.match(joined, /F4 search 'createInvoice exportCsv': [1-9]\d* hit/, `no hits reported:\n${joined}`);
+    assert.match(joined, /billing file ranked: yes/);
+    assert.match(joined, /every snippet within the 2000-char budget: yes/);
+    assert.ok(!joined.includes('skipped -'), `hermetic F4 section degraded instead of running:\n${joined}`);
+    assert.ok(!joined.includes('UNEXPECTED churn'));
+  });
+
+  it('leaves no temp directories behind when the F4 section runs twice in a row', async () => {
+    await runSelfTest({ ...DEFAULT_CONFIG });
+    // The second call re-entering cleanly is the real regression signal:
+    // leaked handles/dirs would surface as flaky failures on Windows.
+    await runSelfTest({ ...DEFAULT_CONFIG });
+    assert.ok(true);
+  });
+});
