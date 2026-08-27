@@ -394,8 +394,21 @@ its own suite.
 - **R2 canonical history:** until AiderDesk splits tool-event output into
   stored vs. projected, slicing and tool-level error compression remain
   opt-in rewrites of stored history with explicit consent messaging.
+- **R2 canonical history:** until AiderDesk splits tool-event output into
+  stored vs. projected, slicing and tool-level error compression remain
+  opt-in rewrites of stored history with explicit consent messaging.
 - **R9 atomicity:** the Windows in-place fallback keeps its merge path
   (rollback + retries + verified copy + snapshot restore). A crash mid-merge
   can still require manual recovery from `broke.old`; the next update's
   stale-backout recovery handles leftovers automatically.
+- **R15 (found 2026-08-27, P3): fake-host suites may bind default runtime
+  paths.** During the F4 pass-hint work, repo-root `config.json`,
+  `stats.jsonl` and `measure.jsonl` residue (fake task ids) surfaced. The
+  env-contract (`BROKE_*_PATH` set before dynamic imports) is provably sound
+  for `tests/index.test.ts` (isolated run leaves no residue), but one or more
+  of the other suites lets a static import chain bind constants before its
+  own env setup - chronic, gitignored, invisible to users; fix by making the
+  path constants lazy or auditing each suite's first import. Scoped out of
+  the F4 round to keep the diff reviewable.
+
 
