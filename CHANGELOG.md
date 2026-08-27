@@ -38,6 +38,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`/broke update` recovery is transactional** (review F-02, HIGH). Both
+  swap paths now write a fsynced `.update-state.json` commit marker only
+  after the verified copy finished. Startup recovery reads it instead of
+  guessing: a committed install drops its stale backup, a partial install
+  (crash mid-copy) is restored FROM the backup - the old "install dir
+  exists -> trust it" heuristic could keep a half-written installation and
+  delete the good backup. Complete pre-marker installations (deploy.ps1 or
+  an older updater, identified by `.deployed-version`, which both write as
+  their last step) keep the previous behavior - no surprise rollbacks.
+- The primary install rename goes through the existing retrying rename
+  instead of raw `renameSync` (review F-15): a transient Windows lock no
+  longer escalates straight to the destructive in-place swap path.
+- Release tarballs stream to disk with a hard byte counter and a
+  Content-Length pre-check instead of being fully buffered in memory before
+  the size limit was enforced (review F-11).
 - `/broke index`, `/broke index status` and `broke-search` no longer fail with
   "no open project - indexing is project-scoped" inside an open project. The
   command handler and the tool invocation now receive contexts that know their

@@ -24,16 +24,20 @@
  */
 import { exec, execFile } from 'node:child_process';
 import {
+  closeSync,
   cpSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
   type Dirent,
 } from 'node:fs';
 import { createHash, createPublicKey, verify } from 'node:crypto';
@@ -190,12 +194,55 @@ async function defaultDownloadTarball(url: string, destFile: string): Promise<vo
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
   try {
     const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > MAX_TARBALL_BYTES) throw new Error(`tarball exceeds ${MAX_TARBALL_BYTES} bytes - refusing`);
-    writeFileSync(destFile, buf);
+    // Hard byte counter + mid-stream abort (review F-11): the size cap must
+    // stop a hostile/oversized download WHILE it streams, not cap memory
+    // after the whole payload was buffered into the heap.
+    await streamResponseToFileWithCap(res, destFile, MAX_TARBALL_BYTES);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Minimal fetch-Response surface needed by {@link streamResponseToFileWithCap};
+ * structural so tests can pass hand-built fakes without a network stack.
+ */
+export interface DownloadResponseLike {
+  ok: boolean;
+  status: number;
+  headers: { get(name: string): string | null };
+  body: ReadableStream<Uint8Array> | null;
+}
+
+/**
+ * Stream a download to `destFile`, enforcing `capBytes` twice: a
+ * Content-Length pre-check rejects before the first byte, and a running byte
+ * counter aborts mid-stream when the body exceeds the cap. The file holds
+ * only the already-written prefix when the cap trips (it is never executed
+ * or extracted - the caller's checksum verification rejects it).
+ */
+export async function streamResponseToFileWithCap(res: DownloadResponseLike, destFile: string, capBytes: number): Promise<void> {
+  if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > capBytes) {
+    throw new Error(`download exceeds ${capBytes} bytes (Content-Length pre-check) - refusing`);
+  }
+  if (!res.body) throw new Error('download failed: empty response body');
+  let received = 0;
+  const out = openSync(destFile, 'w');
+  try {
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > capBytes) {
+        throw new Error(`download exceeds ${capBytes} bytes mid-stream - refusing`);
+      }
+      writeSync(out, value);
+    }
+  } finally {
+    closeSync(out);
   }
 }
 
@@ -533,10 +580,88 @@ function writeDeployedVersion(installDir: string, tag: string): void {
   writeFileSync(join(installDir, '.deployed-version'), `${tag}\n`, 'utf-8');
 }
 
-function recoverStaleBackup(backup: string, installDir: string): void {
-  if (!existsSync(backup)) return;
-  if (existsSync(installDir)) rmSync(backup, { recursive: true, force: true });
-  else renameSync(backup, installDir); // previous run crashed between rename and copy
+/**
+ * Transaction commit marker (review F-02). Written ONLY after a verified
+ * copy finished, in BOTH swap paths, before the backup is dropped. On the
+ * next startup recovery reads it to decide deterministically between "the
+ * previous update finished (drop the stale backup)" and "the previous
+ * update died mid-copy (restore the backup)" - the old heuristic "install
+ * dir exists -> trust it" could discard the good backup and keep a
+ * half-written installation.
+ */
+const UPDATE_STATE_FILE = '.update-state.json';
+
+/** fsynced write: the marker must survive the crash it exists to diagnose. */
+function writeFileSyncForce(path: string, content: string): void {
+  const fd = openSync(path, 'w');
+  try {
+    writeSync(fd, Buffer.from(content, 'utf-8'));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function writeCommitMarker(installDir: string, tag: string): void {
+  writeFileSyncForce(join(installDir, UPDATE_STATE_FILE), `${JSON.stringify({ committed: true, tag, at: new Date().toISOString() })}\n`);
+}
+
+function isCommittedInstall(installDir: string): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(join(installDir, UPDATE_STATE_FILE), 'utf-8')) as { committed?: unknown };
+    return raw.committed === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Legacy completeness proxy: BOTH deploy.ps1 and the updater write
+ * `.deployed-version` as their very last step, so a partial copy can never
+ * carry it. Old installations (pre-`.update-state.json`) rely on this. */
+function installHasDeployedVersion(installDir: string): boolean {
+  return existsSync(join(installDir, '.deployed-version'));
+}
+
+/**
+ * Deterministic stale-backup recovery. Called at the start of both swap
+ * paths with `backup` = "<installDir>.old".
+ *
+ * - no backup            -> nothing to do (normal state)
+ * - marker committed     -> the previous update FINISHED; the backup is a
+ *                          locked leftover - drop it
+ * - `.deployed-version`  -> a complete pre-marker installation (deploy.ps1
+ *                          or an older updater finished its verified copy);
+ *                          keep legacy behavior and drop the backup
+ * - otherwise            -> the previous update died mid-copy: RESTORE the
+ *                          previous installation from the backup. The
+ *                          partial install dir is removed first; if Windows
+ *                          keeps it locked, the backup is merged over it
+ *                          file-by-file instead (backup files win).
+ */
+export function recoverStaleBackup(backup: string, installDir: string): 'clean' | 'leftover-dropped' | 'restored' {
+  if (!existsSync(backup)) return 'clean';
+  if (isCommittedInstall(installDir) || installHasDeployedVersion(installDir)) {
+    rmSync(backup, { recursive: true, force: true });
+    return 'leftover-dropped';
+  }
+  // Crash recovery: the previous installation lives in the backup.
+  try {
+    if (existsSync(installDir)) rmSync(installDir, { recursive: true, force: true });
+  } catch {
+    // Windows lock on the partial directory - the merge-copy below still
+    // restores every backup file over its partial counterpart.
+  }
+  try {
+    renameSync(backup, installDir);
+  } catch {
+    cpSync(backup, installDir, { recursive: true, force: true });
+    try {
+      rmSync(backup, { recursive: true, force: true });
+    } catch {
+      // locked leftover - the next recovery pass drops it
+    }
+  }
+  return 'restored';
 }
 
 /**
@@ -550,13 +675,17 @@ export function swapInstallDirectory(installDir: string, payloadDir: string, tag
   const backup = `${installDir}.old`;
   recoverStaleBackup(backup, installDir);
   try {
-    renameSync(installDir, backup);
+    // Retry here too (review F-15): a transient EPERM on the PRIMARY rename
+    // used to skip straight to the destructive in-place path; the existing
+    // retry strategy resolves it in place instead.
+    doRename(installDir, backup);
   } catch {
     return 'blocked';
   }
   try {
     copyPayloadVerified(payloadDir, installDir, io.copyRaw ?? ((from, to) => cpSync(from, to, { recursive: true })));
     writeDeployedVersion(installDir, tag);
+    writeCommitMarker(installDir, tag);
   } catch (err) {
     try {
       rmSync(installDir, { recursive: true, force: true });
@@ -672,6 +801,7 @@ export function replaceInstallationInPlace(installDir: string, payloadDir: strin
   try {
     copyPayloadVerified(payloadDir, installDir, doCopy);
     writeDeployedVersion(installDir, tag);
+    writeCommitMarker(installDir, tag);
   } catch (err) {
     for (const entry of readdirSync(installDir)) {
       // Merged entries must NOT be wiped wholesale before their snapshot
