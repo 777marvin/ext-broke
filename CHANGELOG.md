@@ -38,6 +38,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Summary-cache reuse is now content-verified (review F-06): validity was
+  keyed on the last region message's ID, so a history edit that changes a
+  message's content while keeping its ID would silently serve a stale
+  summary. The cache additionally stores a SHA-256 over the summarized
+  portion's contents (role + id + content); any content change with stable
+  IDs forces a regeneration. Appending new messages keeps the cache valid.
+- **Compression never grows the context anymore** (review F-08): both error
+  compression paths (history pass and tool-level rewrite) now skip the
+  rewrite when the generated summary is longer than the output it would
+  replace. The old history pass rewrote anyway (reporting clamped 0
+  savings); the rule is now consistent with the pipeline-wide XF6
+  "never grow" guard. Note: in that edge case the original (unredacted)
+  output simply stays in the context - live-context redaction was never a
+  broke guarantee (`maskSecrets` is best-effort and applies to summaries).
+- The pipeline gate is content-based instead of message-count-based
+  (review F-10): `compressMessages` no longer hard-excludes contexts with
+  fewer than 4 messages; a short context now proceeds when its content
+  could trip the error-compression threshold, and the region/pairing math
+  decides what is safely compressible. `/broke why` and
+  `/broke summarize now` share the same predicate.
 - **`/broke update` recovery is transactional** (review F-02, HIGH). Both
   swap paths now write a fsynced `.update-state.json` commit marker only
   after the verified copy finished. Startup recovery reads it instead of

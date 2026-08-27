@@ -681,6 +681,24 @@ describe('summarizePass', () => {
     assert.ok(r2.messages.some((m) => isSummaryMessage(m)));
   });
 
+  it('regenerates when a message keeps its ID but its CONTENT changed (review F-06)', async () => {
+    const msgs = summaryConversation();
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const cfg = summarizeConfig();
+    await summarizePass(msgs, 1, cfg, deps, state, 'task-sum-f06');
+    assert.equal(calls.n, 1);
+    // History edit: the same message id, different content. throughId alone
+    // would call this "unchanged" and serve the stale summary; the content
+    // fingerprint must force a cache miss.
+    const mutated = msgs.map((m, i) => (i === 1 ? { ...m, content: `EDITED by the user: ${String(m.content)}` } : m));
+    const r2 = await summarizePass(mutated, 1, cfg, deps, state, 'task-sum-f06');
+    assert.equal(calls.n, 2, 'cache miss on changed content with stable ids');
+    assert.equal(r2.summarizeCalls, 1);
+    assert.ok(r2.messages.some((m) => isSummaryMessage(m)));
+  });
+
   it('appends new tool messages without regenerating the summary', async () => {
     const msgs = summaryConversation();
     const state = createCompressState();

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { Config } from './config';
 import { extractErrorSummary, formatErrorSummary, isCommandTool } from './errors';
@@ -73,6 +73,14 @@ export interface CachedSummary {
   summarizer: 'local' | 'cloud';
   /** Fingerprint of the summarize config the summary was generated with. */
   fingerprint: string;
+  /**
+   * SHA-256 over the contents of the messages the summary covers, up to and
+   * including `throughId` (review F-06): a message can keep its id while its
+   * content changes (history edits) - `throughId` alone would then serve a
+   * stale summary. The fingerprint covers ONLY the already-summarized
+   * portion, so appending new messages keeps the cache valid.
+   */
+  contentFingerprint: string;
 }
 
 export interface CompressState {
@@ -774,6 +782,24 @@ function summarizeConfigFingerprint(config: Config): string {
   });
 }
 
+/**
+ * SHA-256 over role + id + content of `region[0..throughIndex]` (review
+ * F-06): the summary-cache identity must follow CONTENT, not just the last
+ * message id - a history edit can change a message's content while keeping
+ * its id, which would silently serve a stale summary. Content arrays are
+ * serialized verbatim (tool results included).
+ */
+function regionContentFingerprint(region: ContextMessage[], throughIndex: number): string {
+  const h = createHash('sha256');
+  for (let i = 0; i <= throughIndex && i < region.length; i++) {
+    const m = region[i];
+    h.update(`${String(m.id ?? '')}\u0000${String(m.role ?? '')}\u0000`);
+    h.update(typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? null));
+    h.update('\u0001');
+  }
+  return h.digest('hex');
+}
+
 export async function summarizePass(
   messages: ContextMessage[],
   protectedTurns: number,
@@ -817,7 +843,10 @@ export async function summarizePass(
 
   // --- Reuse: region unchanged since the last summarization ------------------
   // No new LLM call; the cached summary replaces the region again.
-  if (cached && cached.throughId === lastId) {
+  // contentFingerprint guard (review F-06): same last-message id does NOT
+  // imply the same region - a history edit can change a message's content
+  // while keeping its id, and the cached summary would silently go stale.
+  if (cached && cached.throughId === lastId && cached.contentFingerprint === regionContentFingerprint(region, region.length - 1)) {
     const removedChars = regionChars - messageChars(cached.message);
     // XF6: a summary that is not smaller than the region it replaces would
     // GROW the context - keep the original instead.
@@ -832,22 +861,32 @@ export async function summarizePass(
   if (cached) {
     const throughIndex = region.findIndex((m) => m.id === cached.throughId);
     if (throughIndex !== -1) {
-      const sinceThrough = region.slice(throughIndex + 1);
-      // Pairing safety: appending must not start with a tool RESULT whose
-      // producing call is covered by the cached summary (history edits can
-      // shift ids between runs). Regenerate instead of orphaning the result.
-      const appendsOrphanedResult = sinceThrough.length > 0 && sinceThrough[0].role === 'tool';
-      const newUserTurns = sinceThrough.filter((m) => m.role === 'user').length;
-      const newChars = messagesChars(sinceThrough);
-      if (!appendsOrphanedResult && newUserTurns === 0 && newChars < config.summarize.minChars) {
-        const removedChars = regionChars - messageChars(cached.message) - newChars;
-        // XF6: only swap when the cached summary + the new tool messages are
-        // smaller than the original region - never grow the context.
-        if (removedChars <= 0) return noop;
-        const updated: CachedSummary = { ...cached, throughId: lastId };
-        boundedMapSet(state.cachedSummaryByTask, taskId, updated);
-        const result = [...messages.slice(0, start), cached.message, ...sinceThrough, ...messages.slice(end)];
-        return { messages: result, removedChars, summarizedRanges: 1, summarizeCalls: 0, failed: false, summarizer: cached.summarizer, summarizerInputChars: 0, summarizerOutputChars: 0 };
+      // F-06 guard: the already-summarized portion must be byte-identical to
+      // what the summary was generated from; otherwise regenerate.
+      if (cached.contentFingerprint === regionContentFingerprint(region, throughIndex)) {
+        const sinceThrough = region.slice(throughIndex + 1);
+        // Pairing safety: appending must not start with a tool RESULT whose
+        // producing call is covered by the cached summary (history edits can
+        // shift ids between runs). Regenerate instead of orphaning the result.
+        const appendsOrphanedResult = sinceThrough.length > 0 && sinceThrough[0].role === 'tool';
+        const newUserTurns = sinceThrough.filter((m) => m.role === 'user').length;
+        const newChars = messagesChars(sinceThrough);
+        if (!appendsOrphanedResult && newUserTurns === 0 && newChars < config.summarize.minChars) {
+          const removedChars = regionChars - messageChars(cached.message) - newChars;
+          // XF6: only swap when the cached summary + the new tool messages are
+          // smaller than the original region - never grow the context.
+          if (removedChars <= 0) return noop;
+          // F-06: the covered portion is unchanged, but the cache now covers
+          // the WHOLE region (throughId = lastId) - re-fingerprint it.
+          const updated: CachedSummary = {
+            ...cached,
+            throughId: lastId,
+            contentFingerprint: regionContentFingerprint(region, region.length - 1),
+          };
+          boundedMapSet(state.cachedSummaryByTask, taskId, updated);
+          const result = [...messages.slice(0, start), cached.message, ...sinceThrough, ...messages.slice(end)];
+          return { messages: result, removedChars, summarizedRanges: 1, summarizeCalls: 0, failed: false, summarizer: cached.summarizer, summarizerInputChars: 0, summarizerOutputChars: 0 };
+        }
       }
     }
   }
@@ -923,7 +962,13 @@ export async function summarizePass(
     return { messages, removedChars: 0, summarizedRanges: 0, summarizeCalls: 1, failed: false, summarizer: 'none', summarizerInputChars, summarizerOutputChars };
   }
 
-  boundedMapSet(state.cachedSummaryByTask, taskId, { throughId: lastId, message: summaryMessage, summarizer, fingerprint });
+  boundedMapSet(state.cachedSummaryByTask, taskId, {
+    throughId: lastId,
+    message: summaryMessage,
+    summarizer,
+    fingerprint,
+    contentFingerprint: regionContentFingerprint(region, region.length - 1),
+  });
 
   const result = [...messages.slice(0, start), summaryMessage, ...messages.slice(end)];
 
