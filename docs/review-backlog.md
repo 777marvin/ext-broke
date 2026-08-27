@@ -401,15 +401,20 @@ its own suite.
   (rollback + retries + verified copy + snapshot restore). A crash mid-merge
   can still require manual recovery from `broke.old`; the next update's
   stale-backout recovery handles leftovers automatically.
-- **R15 (found 2026-08-27, P3): fake-host suites may bind default runtime
-  paths.** During the F4 pass-hint work, repo-root `config.json`,
-  `stats.jsonl` and `measure.jsonl` residue (fake task ids) surfaced. The
-  env-contract (`BROKE_*_PATH` set before dynamic imports) is provably sound
-  for `tests/index.test.ts` (isolated run leaves no residue), but one or more
-  of the other suites lets a static import chain bind constants before its
-  own env setup - chronic, gitignored, invisible to users; fix by making the
-  path constants lazy or auditing each suite's first import. Scoped out of
-  the F4 round to keep the diff reviewable.
+- **R15 (found 2026-08-27, P3) - Fixed (2026-08-27): fake-host suites may
+  bind default runtime paths.** During the F4 pass-hint work, repo-root
+  `config.json`, `stats.jsonl` and `measure.jsonl` residue (fake task ids)
+  surfaced. The env-contract (`BROKE_*_PATH` set before dynamic imports) is
+  provably sound for `tests/index.test.ts` (isolated run leaves no residue),
+  but two suites let a static import chain bind constants before their own
+  env setup: `tests/host-contract.test.ts` (statically imported
+  `../commands`, which pulls in `../config` and `../tokens` ahead of its env
+  assignments) and `tests/commands.test.ts` (no isolation at all).
+  Reproduced per-suite, fixed by moving project imports behind the env
+  setup (the `index.test.ts` pattern) in both files; a full-suite run now
+  leaves no repo-root residue. Lazy path constants (the `snapshot.ts`
+  pattern) remain a possible future modernization, not needed for
+  correctness.
 
 ---
 

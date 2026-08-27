@@ -20,7 +20,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionContext } from '@aiderdesk/extensions';
 import type { Config } from '../config';
-import { parseBrokeCommand } from '../commands';
 
 const tmp = mkdtempSync(join(tmpdir(), 'broke-contract-'));
 process.env.BROKE_CONFIG_PATH = join(tmp, 'config.json');
@@ -33,10 +32,12 @@ process.env.BROKE_SNAPSHOTS_DIR = join(tmp, 'snapshots');
 let Broke: (typeof import('../index'))['default'];
 let DEFAULT_CONFIG: (typeof import('../config'))['DEFAULT_CONFIG'];
 let saveConfig: (typeof import('../config'))['saveConfig'];
+let parseBrokeCommand: (typeof import('../commands'))['parseBrokeCommand'];
 
 before(async () => {
   ({ default: Broke } = await import('../index'));
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
+  ({ parseBrokeCommand } = await import('../commands'));
 });
 
 after(() => {
@@ -288,7 +289,6 @@ describe('host contract: slice focus context isolation', () => {
 });
 
 describe('host contract: F3 snapshots & flush', () => {
-  const parse = parseBrokeCommand;
 
   it('onAfterCommit persists a valid record and survives a hostile context surface', async () => {
     writeConfig();
@@ -330,7 +330,7 @@ describe('host contract: F3 snapshots & flush', () => {
     };
 
     // Confirmed through askQuestion (no --yes flag needed).
-    const note = await ext.handleFlushCommand(context, parse(['flush']));
+    const note = await ext.handleFlushCommand(context, parseBrokeCommand(['flush']));
     assert.match(note, /flushed 2 message\(s\)/);
     assert.ok(/broke flush removes/.test(asked), 'confirmation question was asked by default');
 
@@ -348,7 +348,7 @@ describe('host contract: F3 snapshots & flush', () => {
     // Undo restores EXACTLY what was captured before the flush.
     task.getContextMessages = async () => (replacement as unknown[]) ?? [];
     replacement = null;
-    const undoNote = await ext.handleFlushCommand(context, parse(['flush', '--undo', '1']));
+    const undoNote = await ext.handleFlushCommand(context, parseBrokeCommand(['flush', '--undo', '1']));
     assert.match(undoNote, /restored \d+ message\(s\)/);
     assert.equal(JSON.stringify(replacement), JSON.stringify(original), 'byte-identical history restored');
   });
@@ -370,7 +370,7 @@ describe('host contract: F3 snapshots & flush', () => {
       task.loadContextMessages = async (msgs: unknown[]) => {
         replacement = msgs;
       };
-      const note = await ext.handleFlushCommand(context, parse(['flush', '--yes']));
+      const note = await ext.handleFlushCommand(context, parseBrokeCommand(['flush', '--yes']));
       assert.match(note, /ABORTED before removing anything/);
       assert.equal(replacement, null, 'context untouched when persistence fails');
     } finally {

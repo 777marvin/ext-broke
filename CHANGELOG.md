@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   docs/feats.md: corrected the leftover "F3 targets v0.9.0" wording and
   the extension-types reference (now ~0.31).
 
+### Fixed
+
+- Test environment (R15): `tests/commands.test.ts` and
+  `tests/host-contract.test.ts` could leave `config.json` / `stats.jsonl` /
+  `measure.jsonl` residue in the repo root - project path constants bind to
+  `BROKE_*_PATH` at module load, and both suites loaded project modules
+  before their isolation env was in place. Both now use the proven
+  `index.test.ts` pattern (env overrides first, project imports dynamic in
+  `before()`); a full-suite run leaves no residue. Test-only, no
+  user-facing impact.
+
 ## [0.12.0] - 2026-08-27
 
 ### Changed

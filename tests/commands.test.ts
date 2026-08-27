@@ -1,20 +1,50 @@
 ﻿import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  applyBrokeCommand,
-  formatEstimate,
-  formatMeasure,
-  formatStats,
-  hasOllamaModel,
-  HELP_TEXT,
-  parseBrokeCommand,
-  type BrokeCommand,
-} from '../commands';
-import { DEFAULT_CONFIG, type Config } from '../config';
-import { emptyStats, loadTaskStats, persistStats } from '../tokens';
+import type { BrokeCommand } from '../commands';
+import type { Config } from '../config';
+
+// R15 isolation: CONFIG_PATH / STATS_PATH / MEASURE_PATH bind to process.env
+// at module load time and static imports are hoisted, so the env overrides
+// MUST be in place before any project module loads (same pattern as
+// tests/index.test.ts) - otherwise default-path writes leak into the repo
+// root. Type-only imports stay static: they are erased at compile time.
+const tmp = mkdtempSync(join(tmpdir(), 'broke-commands-'));
+process.env.BROKE_CONFIG_PATH = join(tmp, 'config.json');
+process.env.BROKE_STATS_PATH = join(tmp, 'stats.jsonl');
+process.env.BROKE_MEASURE_PATH = join(tmp, 'measure.jsonl');
+
+let applyBrokeCommand: (typeof import('../commands'))['applyBrokeCommand'];
+let formatEstimate: (typeof import('../commands'))['formatEstimate'];
+let formatMeasure: (typeof import('../commands'))['formatMeasure'];
+let formatStats: (typeof import('../commands'))['formatStats'];
+let hasOllamaModel: (typeof import('../commands'))['hasOllamaModel'];
+let HELP_TEXT: (typeof import('../commands'))['HELP_TEXT'];
+let parseBrokeCommand: (typeof import('../commands'))['parseBrokeCommand'];
+let DEFAULT_CONFIG: (typeof import('../config'))['DEFAULT_CONFIG'];
+let emptyStats: (typeof import('../tokens'))['emptyStats'];
+let loadTaskStats: (typeof import('../tokens'))['loadTaskStats'];
+let persistStats: (typeof import('../tokens'))['persistStats'];
+
+before(async () => {
+  ({
+    applyBrokeCommand,
+    formatEstimate,
+    formatMeasure,
+    formatStats,
+    hasOllamaModel,
+    HELP_TEXT,
+    parseBrokeCommand,
+  } = await import('../commands'));
+  ({ DEFAULT_CONFIG } = await import('../config'));
+  ({ emptyStats, loadTaskStats, persistStats } = await import('../tokens'));
+});
+
+after(() => {
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 const kind = (args: string[]): BrokeCommand['kind'] => parseBrokeCommand(args).kind;
 const expectUnknown = (args: string[]): void => {
