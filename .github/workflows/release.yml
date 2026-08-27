@@ -9,10 +9,12 @@
 # - SHA256SUMS is signed with Ed25519; the private key lives only in the
 #   BROKE_RELEASE_SIGNING_KEY repository secret. The updater embeds the
 #   matching public key and verifies signature + checksum before extracting.
-#
-# Deliberately dependency-free (no third-party actions beyond checkout /
-# setup-node): every extra action would widen the supply-chain surface this
-# workflow exists to close.
+# - CI gate (review F-03): the release REUSES the CI workflow against the
+#   exact tagged commit and only signs/publishes when every check passed.
+#   Signing is the last privileged transformation.
+# - Dependency-free by design: the only third-party actions are checkout /
+#   setup-node, pinned to the SAME immutable commit SHAs as ci.yml
+#   (review F-04).
 name: release
 
 on:
@@ -23,14 +25,27 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    name: Full CI gate on the tagged commit
+    uses: ./.github/workflows/ci.yml
+
   release:
+    name: Build, sign and publish
+    needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout the tagged commit (with tags)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+
+      - name: Verify tag == package version (F-05/F-16 invariant)
+        run: node scripts/check-version.mjs
 
       - name: Build the source artifact (byte-stable git archive)
         run: git archive --format=tar.gz --output="broke-${{ github.ref_name }}.tar.gz" "${{ github.ref_name }}"

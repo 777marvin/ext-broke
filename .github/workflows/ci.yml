@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Reused by the release workflow as its pre-signature gate (review F-03):
+  # the exact tagged commit must pass the full CI/security suite before
+  # anything is signed or published.
+  workflow_call:
 
 # Least privilege: jobs opt in to the permissions they actually need.
 permissions:

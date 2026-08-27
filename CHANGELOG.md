@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Release signing is now gated by full CI on the exact tagged commit**
+  (review F-03): the release workflow reuses the CI workflow
+  (`workflow_call`) as a required `verify` job and only builds/signs/publishes
+  when every check passed on the tagged commit. A version/tag consistency
+  check (`scripts/check-version.mjs`) runs again on the tagged commit before
+  anything is signed - signing is the last privileged transformation.
+- Release workflow actions are pinned to the same immutable commit SHAs as
+  CI (review F-04) - the release pipeline previously floated `@v4` tags.
 - Slice focus resolves updated files through the LIVE execution context
   instead of the context captured at extension load (review F-12): in
   multi-task scenarios the focus decision could have consulted another
