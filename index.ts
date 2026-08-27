@@ -20,6 +20,7 @@ import {
   compressMessages,
   createCompressState,
   maskSecrets,
+  shouldCompress,
   summarizePass,
   type CompressReport,
   type CompressState,
@@ -363,6 +364,28 @@ export default class Broke implements Extension {
    * failure noise down; the manual command surfaces failures to the user in
    * the chat instead, so it enables per-failure warnings.
    */
+  /**
+   * Disclosure telemetry (review F-13): every time conversation content
+   * leaves this machine for summarization, the user gets ONE clear log line
+   * per target - repeats would be noise, silence would hide the disclosure.
+   * Regex redaction stays best-effort; the trust boundary is this log plus
+   * the consent gates, never a "secret-free" claim.
+   */
+  private readonly disclosureNotified = new Set<string>();
+  private notifyDisclosure(context: ExtensionContext, backend: 'ollama' | 'cloud', target: string): void {
+    const key = `${backend}:${target}`;
+    if (this.disclosureNotified.has(key)) return;
+    this.disclosureNotified.add(key);
+    try {
+      context.log(
+        `Broke: DISCLOSURE - conversation content (best-effort secret-masked) is sent to the ${backend} summarization target "${target}".`,
+        'warn',
+      );
+    } catch {
+      // logging must never break the pipeline
+    }
+  }
+
   private buildSummarizeDeps(
     config: Config,
     task: NonNullable<ReturnType<ExtensionContext['getTaskContext']>>,
@@ -383,6 +406,9 @@ export default class Broke implements Extension {
           );
           return undefined;
         }
+        if (isRemoteOllamaHost(config.summarize.ollamaUrl)) {
+          this.notifyDisclosure(context, 'ollama', config.summarize.ollamaUrl);
+        }
         const result = await ollamaGenerate(config.summarize.ollamaUrl, model, prompt, 800);
         if (!result.ok && opts.explainFailures) {
           context.log(`Broke: local summarizer error - ${result.error ?? 'unknown Ollama error'}`, 'warn');
@@ -395,6 +421,9 @@ export default class Broke implements Extension {
         // generateText with a literal "provider/undefined".
         if (!fallbackModel) return undefined;
         const modelId = config.summarize.cloudModelId || `${task.data.provider}/${fallbackModel}`;
+        // Cloud targets are remote by definition (review F-13): one clear
+        // disclosure line per target, then silence.
+        this.notifyDisclosure(context, 'cloud', modelId);
         // Cost guards: the summarizer input is capped in summarizePass
         // (MAX_SUMMARIZER_INPUT_CHARS) and the result is truncated to
         // maxSummaryChars afterwards. generateText offers no max-output
@@ -444,7 +473,7 @@ export default class Broke implements Extension {
     }
     const { start, end } = compressibleRange(messages, config.protectedTurns);
     const regionChars = start < end ? messagesChars(messages.slice(start, end)) : 0;
-    if (messages.length < 4 || regionChars <= 0) {
+    if (!shouldCompress(messages, config) || regionChars <= 0) {
       return 'broke: summarize now - nothing compressible yet (no old messages outside the protected turns)';
     }
 
@@ -589,7 +618,11 @@ export default class Broke implements Extension {
         ? saveErrorOutput(taskId, event.toolCallId || event.toolName, redacted, undefined, { retentionDays: config.errors.retentionDays })
         : '';
       const suffix = savedPath ? ` - full output saved to ${savedPath}` : ' - full output removed';
-      return { output: wrap(formatErrorSummary(extracted, suffix)) };
+      const summary = formatErrorSummary(extracted, suffix);
+      // XF6/D2 (review F-08): never grow the stored history with a summary
+      // longer than the output it replaces.
+      if (summary.length >= text.length) return;
+      return { output: wrap(summary) };
     } catch (err) {
       // Never break tool execution - compression is best effort.
       context.log(`Broke: tool-level error compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
@@ -597,24 +630,30 @@ export default class Broke implements Extension {
   }
 
   /** True when the target key matches this task's focus (explicit > edit > updated files). */
-  private isFocus(taskId: string, targetKey: string, base: string | null, config: Config): boolean {
+  private isFocus(taskId: string, targetKey: string, base: string | null, config: Config, context: ExtensionContext): boolean {
     const explicit = this.explicitFocus.get(taskId);
     if (explicit && slicePathKey(explicit, base) === targetKey) return true;
     if (!config.slice.focusAuto) return false;
     const edit = this.lastEditPath.get(taskId);
     if (edit && slicePathKey(edit.path, base) === targetKey) return true;
-    for (const updated of this.cachedUpdatedFiles(taskId)) {
+    for (const updated of this.cachedUpdatedFiles(taskId, context)) {
       if (slicePathKey(updated, base) === targetKey) return true;
     }
     return false;
   }
 
-  /** TTL-cached getUpdatedFiles() - a git diff must not fire per file read. */
-  private cachedUpdatedFiles(taskId: string): string[] {
+  /**
+   * TTL-cached getUpdatedFiles() - a git diff must not fire per file read.
+   * Resolves through the LIVE execution context (review F-12): the captured
+   * extension-level `this.context` can belong to a different task/project
+   * in multi-task scenarios, which would leak another task's updated-file
+   * list into this task's focus decision.
+   */
+  private cachedUpdatedFiles(taskId: string, context: ExtensionContext): string[] {
     const cached = this.updatedFilesCache.get(taskId);
     if (cached && Date.now() - cached.at < Broke.UPDATED_FILES_TTL_MS) return cached.paths;
-    void this.context
-      ?.getTaskContext()
+    void context
+      .getTaskContext()
       ?.getUpdatedFiles?.()
       .then((files) => {
         boundedMapSet(
@@ -668,7 +707,7 @@ export default class Broke implements Extension {
       }
       const targetKey = slicePathKey(path, base);
 
-      if (taskId && this.isFocus(taskId, targetKey, base, config)) {
+      if (taskId && this.isFocus(taskId, targetKey, base, config, context)) {
         return { output: wrap(`${FOCUS_MARKER}\n${text}`) };
       }
 
@@ -1223,10 +1262,11 @@ export default class Broke implements Extension {
 
   /**
    * The ONLY destructive operation in broke. Order of guarantees:
-   * 1. plan + confirm gate, 2. write snapshot AND undo file (abort on any IO
-   * failure BEFORE touching the conversation), 3. one loadContextMessages()
-   * replacement to task brief + [broke-state]. removeMessagesUpTo cannot keep
-   * the brief (inclusive-of-self), hence the documented loadContext alternative.
+   * 1. plan + confirm gate, 2. write snapshot AND (when flush.undo is on)
+   * the undo file - abort on any IO failure or an oversized undo file BEFORE
+   * touching the conversation, 3. one loadContextMessages() replacement to
+   * task brief + [broke-state]. removeMessagesUpTo cannot keep the brief
+   * (inclusive-of-self), hence the documented loadContext alternative.
    */
   private async handleFlushCommand(context: ExtensionContext, cmd: BrokeCommand): Promise<string> {
     if (cmd.kind !== 'flush') return '';
@@ -1246,7 +1286,7 @@ export default class Broke implements Extension {
         if (!history || history.length === 0) {
           return record.historyFile
             ? 'broke: the undo file is missing or unreadable - refusing to half-restore'
-            : 'broke: no undo file for this snapshot (snapshot.keepHistory was off when it was taken)';
+            : 'broke: no undo file for this snapshot (raw history was not written - snapshot.keepHistory/flush.undo was off, or the history exceeded the size cap)';
         }
         if (typeof task.loadContextMessages !== 'function') {
           return 'broke: this AiderDesk build does not expose loadContextMessages - undo unavailable (feature-detect)';
@@ -1275,7 +1315,7 @@ export default class Broke implements Extension {
           return `broke: host confirmation is unavailable here - rerun with explicit "/broke flush --yes" to remove ${plan.removedCount} message(s)`;
         }
         const answer = await task.askQuestion(
-          `broke flush removes ${plan.removedCount} message(s) between the task brief and now and replaces them with ONE [broke-state] summary. A history file enables /broke flush --undo. Proceed?`,
+          `broke flush removes ${plan.removedCount} message(s) between the task brief and now and replaces them with ONE [broke-state] summary. With flush.undo on (default), a history file enables /broke flush --undo. Proceed?`,
           { answers: [{ text: 'Flush', shortkey: 'y' }, { text: 'Cancel', shortkey: 'n' }], defaultAnswer: 'n' },
         );
         if (!/^y(es)?$/i.test(String(answer ?? '').trim())) return 'broke: flush cancelled - nothing changed';
@@ -1293,7 +1333,14 @@ export default class Broke implements Extension {
           summary: cachedText || `${plan.removedCount} message(s) were flushed right after this state was recorded`,
         });
         stateText = buildStateMessage(record);
-        const persisted = persistSnapshot(record, messages, { label: 'flush', keepHistory: config.snapshot.keepHistory });
+        const persisted = persistSnapshot(record, messages, { label: 'flush', keepHistory: config.flush.undo });
+        if (config.flush.undo && persisted.historySkipped === 'oversized') {
+          // Abort-safe contract: a flush that could never be undone (undo
+          // file over the size cap) must not remove anything.
+          throw new Error(
+            `pre-flush history exceeds the undo-file cap (MAX_HISTORY_FILE_BYTES) - flush aborted, nothing removed`,
+          );
+        }
         recordPath = persisted.recordPath;
         persistedName = basename(recordPath);
       } catch (err) {
@@ -1364,8 +1411,8 @@ export default class Broke implements Extension {
     ];
     if (!config.enabled) {
       lines.push('  verdict: pipeline disabled - nothing will be compressed or recorded (/broke on).');
-    } else if (messages.length < 4) {
-      lines.push('  verdict: conversation too small to process (< 4 messages) - nothing happens by design.');
+    } else if (!shouldCompress(messages, config)) {
+      lines.push('  verdict: nothing to process - the context is below every compression threshold (enabled passes will no-op).');
     } else if (hasOldContent && totalChars > config.maxContextChars) {
       lines.push(
         `  verdict: ABOVE threshold with compressible history - lossy passes engage on the next model call. Savings depend on items exceeding per-item limits (truncate: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB, tool inputs > ${config.truncate.maxInputChars.toLocaleString('en-US')} chars${config.level === 'summarize' ? `, summarize regions ≥ ${config.summarize.minChars.toLocaleString('en-US')} chars` : ''}).`,

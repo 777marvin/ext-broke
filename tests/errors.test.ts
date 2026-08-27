@@ -574,7 +574,11 @@ describe('secret redaction in error output', () => {
   });
 
   it('errorPass redacts secrets from the generated summary', async () => {
-    const text = `tsc output\nsrc/app.ts:1:1 - error TS2322: connect failed with sk-abcDEFgh1234567890XYZabcd\n  1  const x = 1;`;
+    // Realistic long build log with a secret-bearing error line: the summary
+    // (marker + error window) is clearly smaller than the input, so the
+    // replacement happens and must carry NO secret.
+    const filler = Array.from({ length: 40 }, (_, i) => `build step ${i}: compiled src/module${i}.ts ok`).join('\n');
+    const text = `${filler}\ntsc output\nsrc/app.ts:1:1 - error TS2322: connect failed with REDACTED_SECRET_FIXTURE\n  1  const x = 1;`;
     const messages: ContextMessage[] = [
       user('brief'),
       assistant('step'),
@@ -586,5 +590,24 @@ describe('secret redaction in error output', () => {
     const { messages: result } = await compressMessages(messages, config, noopDeps, state, 't');
     const serialized = JSON.stringify(result);
     assert.ok(!serialized.includes('sk-abcDEFgh1234567890XYZabcd'), 'summary must not leak the secret');
+  });
+
+  it('keeps the original when the summary would be LONGER than the input (F08/D2 noop)', async () => {
+    const text = `tsc output\nsrc/app.ts:1:1 - error TS2322: connect failed with sk-abcDEFgh1234567890XYZabcd\n  1  const x = 1;`;
+    const messages: ContextMessage[] = [
+      user('brief'),
+      assistant('step'),
+      tool('power---bash', text),
+      user('q2'),
+    ];
+    const config = makeConfig({ protectedTurns: 1, errors: { ...DEFAULT_CONFIG.errors, enabled: true, minChars: 20 } });
+    const state = createCompressState();
+    const { messages: result } = await compressMessages(messages, config, noopDeps, state, 't');
+    const serialized = JSON.stringify(result);
+    assert.equal(serialized.includes('broke: error summary'), false, 'no oversize rewrite');
+    assert.ok(
+      serialized.includes('sk-abcDEFgh1234567890XYZabcd'),
+      'the original stays verbatim - live-context redaction is not a broke guarantee (maskSecrets is best-effort and applies to summaries)',
+    );
   });
 });

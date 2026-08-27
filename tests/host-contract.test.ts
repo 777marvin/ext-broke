@@ -158,8 +158,17 @@ describe('host contract: full event lifecycle', () => {
       input: { command: 'pytest' },
       agentProfile: {},
       output: {
+        // Long enough that the extracted summary (marker + error window) is
+        // clearly smaller than the output - the F08/D2 never-grow guard must
+        // not skip the rewrite here.
         stdout: '',
-        stderr: ['Traceback (most recent call last):', '  File "app.py", line 42, in main', '    run()', `ValueError: boom${'!'.repeat(600)}`].join('\n'),
+        stderr: [
+          ...Array.from({ length: 40 }, (_, i) => `build step ${i}: compiled src/module${i}.ts ok`),
+          'Traceback (most recent call last):',
+          '  File "app.py", line 42, in main',
+          '    run()',
+          `ValueError: boom${'!'.repeat(600)}`,
+        ].join('\n'),
         exitCode: 1,
       },
     };
@@ -229,6 +238,55 @@ describe('host contract: hooks never throw on hostile surfaces', () => {
   });
 });
 
+describe('host contract: slice focus context isolation', () => {
+  it('resolves updated files through the LIVE execution context (review F-12)', async () => {
+    writeConfig();
+    const ext = new Broke();
+    // A decoy context captured at extension level (e.g. from a DIFFERENT
+    // task/project): if the focus path resolved through it, the wrong task's
+    // updated-file list would leak into the decision.
+    const decoyCalls: string[] = [];
+    const { context: decoy } = makeHost('decoy-task');
+    (decoy as unknown as { getTaskContext: () => unknown }).getTaskContext = () => ({
+      data: { id: 'decoy-task' },
+      getUpdatedFiles: async () => {
+        decoyCalls.push('decoy');
+        return [{ path: 'decoy-only.ts' }];
+      },
+    });
+    (ext as unknown as { context: ExtensionContext }).context = decoy;
+
+    // The LIVE context knows the actually updated file (absolute path - the
+    // fixture has no project base, so focus keys are absolute too).
+    const liveUpdatedAbs = join(tmp, 'live-updated.ts');
+    const { context: live } = makeHost('live-task');
+    const liveTask = live.getTaskContext() as unknown as {
+      data: { id: string };
+      getUpdatedFiles?: () => Promise<Array<{ path: string }>>;
+    };
+    let liveCalls = 0;
+    liveTask.getUpdatedFiles = async () => {
+      liveCalls++;
+      return [{ path: liveUpdatedAbs }];
+    };
+
+    // The focus cache fills ASYNCHRONOUSLY (TTL design): the first read
+    // warms it, the second read must hit.
+    const readEvent = {
+      toolName: 'power---file_read',
+      input: { filePath: liveUpdatedAbs },
+      agentProfile: {},
+      output: { content: [{ type: 'text', text: `${'line of code\n'.repeat(200)}` }] },
+    };
+    await ext.onToolFinished({ ...readEvent, toolCallId: 'f12a' } as never, live);
+    const res = await ext.onToolFinished({ ...readEvent, toolCallId: 'f12b' } as never, live);
+    assert.ok(res && typeof res === 'object', 'focus read is rewritten with the marker');
+    assert.ok(JSON.stringify((res as { output?: unknown }).output).includes('[broke: focus file'), 'live updated file counts as focus');
+    assert.ok(liveCalls > 0, 'getUpdatedFiles came from the LIVE context');
+    assert.equal(decoyCalls.length, 0, 'the decoy/captured context was never consulted');
+  });
+});
+
 describe('host contract: F3 snapshots & flush', () => {
   const parse = parseBrokeCommand;
 
@@ -236,11 +294,14 @@ describe('host contract: F3 snapshots & flush', () => {
     writeConfig();
     const ext = new Broke();
     const { context } = makeHost('f3-commit', { contextMessages: [user1(), assistantMsg()] });
-    // Success path: the record + undo file exist on disk.
+    // Success path: the record exists; NO raw undo file by default
+    // (review F-01 / decision D1: auto-commit snapshots stay summary-only,
+    // raw history is opt-in via snapshot.keepHistory; the destructive flush
+    // writes its undo file via flush.undo - covered below).
     await assert.doesNotReject(ext.onAfterCommit({ message: 'feat: billing discount\n\nbody text', amend: false }, context));
     const files = readdirSync(join(tmp, 'snapshots', 'f3-commit'));
     assert.ok(files.some((f) => f.endsWith('.json')), 'record written');
-    assert.ok(files.some((f) => f.endsWith('.history.json')), 'undo file written');
+    assert.ok(!files.some((f) => f.endsWith('.history.json')), 'no raw history by default (F-01/D1)');
 
     // Hostile path: getContextMessages throws -> hook resolves anyway.
     const hostile = makeHost('f3-hostile', { failGetContextMessages: new Error('context exploded') });

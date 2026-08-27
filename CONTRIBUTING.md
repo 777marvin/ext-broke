@@ -34,6 +34,17 @@ beyond TypeScript itself (`tsconfig.json`).
 - Releases follow [Semantic Versioning](https://semver.org/) with annotated
   tags (`git tag -a vX.Y.Z -m "Release X.Y.Z"`).
 
+## Versioning policy ("Option B")
+
+- Between releases, `main` always carries a **development version**
+  (`X.Y.Z-dev`). Right after tagging a release, bump `main` to the next
+  `-dev` version in its own commit.
+- The **release commit** sets the exact version (`X.Y.Z`), is tagged
+  `vX.Y.Z`, and is the only commit a release tag may point at.
+- `npm run check:version` enforces both invariants (lockfile metadata sync,
+  exact-version-with-tag / dev-version-without-tag) locally and in CI, and
+  again on the tagged commit inside the release workflow before signing.
+
 ## Testing
 
 - New behavior needs regression tests in `tests/` (plain node:test with

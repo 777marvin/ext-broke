@@ -25,11 +25,13 @@ import {
   MAX_PRESERVED_ERRORS_BYTES,
   MAX_PRESERVED_INDEX_BYTES,
   normalizeTag,
+  recoverStaleBackup,
   releaseAssetName,
   replaceInstallationInPlace,
   resolveLatestVersion,
   runUpdate,
   SIG_ASSET_NAME,
+  streamResponseToFileWithCap,
   SUMS_ASSET_NAME,
   swapInstallDirectory,
 } from '../update';
@@ -650,5 +652,158 @@ describe('index/ preserve cap (F4, plan decision E2)', () => {
     assert.equal(res.warnings?.length, 1);
     assert.match(res.warnings?.[0] ?? '', /64 MB/);
     assert.equal(existsSync(join(install, 'index', 'bloated')), false); // skipped entirely
+  });
+});
+
+describe('stale-backup recovery + commit marker (review F-02/F-15)', () => {
+  it('drops the backup when the previous update committed (.update-state.json)', () => {
+    const install = fakeInstall('0.6.0');
+    writeFileSync(join(install, '.update-state.json'), '{"committed":true,"tag":"v0.6.0"}\n');
+    const backup = `${install}.old`;
+    mkdirSync(backup);
+    writeFileSync(join(backup, 'junk.txt'), 'junk');
+    assert.equal(recoverStaleBackup(backup, install), 'leftover-dropped');
+    assert.equal(existsSync(backup), false);
+    assert.equal(readFileSync(join(install, 'package.json'), 'utf-8'), JSON.stringify({ name: 'broke', version: '0.6.0' }));
+  });
+
+  it('drops the backup for a complete LEGACY install (.deployed-version, no marker)', () => {
+    const install = fakeInstall('0.5.9');
+    writeFileSync(join(install, '.deployed-version'), 'v0.5.9\n'); // deploy.ps1 / old updater signature
+    const backup = `${install}.old`;
+    mkdirSync(backup);
+    writeFileSync(join(backup, 'junk.txt'), 'junk');
+    assert.equal(recoverStaleBackup(backup, install), 'leftover-dropped', 'legacy behavior preserved - no surprise rollback');
+    assert.equal(existsSync(backup), false);
+  });
+
+  it('RESTORES the backup when the install dir is partial (crash mid-copy)', () => {
+    const install = join(tmp, `partial-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(install);
+    writeFileSync(join(install, 'half-copied.txt'), 'trunca'); // partial payload, no markers
+    const backup = `${install}.old`;
+    mkdirSync(backup);
+    writeFileSync(join(backup, 'package.json'), '{"name":"broke"}');
+    writeFileSync(join(backup, '.deployed-version'), 'v0.5.0\n');
+    assert.equal(recoverStaleBackup(backup, install), 'restored');
+    assert.equal(existsSync(backup), false);
+    assert.equal(readFileSync(join(install, 'package.json'), 'utf-8'), '{"name":"broke"}');
+    assert.equal(existsSync(join(install, 'half-copied.txt')), false, 'the partial copy is gone');
+  });
+
+  it('restores via merge-copy when the partial dir is locked (Windows EPERM)', () => {
+    const install = join(tmp, `locked-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(install);
+    writeFileSync(join(install, 'partial-file.txt'), 'junk');
+    const lockPath = join(install, 'locked-extra.txt');
+    const lock = openSync(lockPath, 'w'); // an open handle pins rmSync on win32
+    try {
+      const backup = `${install}.old`;
+      mkdirSync(backup);
+      writeFileSync(join(backup, 'restored.txt'), 'previous');
+      assert.equal(recoverStaleBackup(backup, install), 'restored');
+      assert.equal(readFileSync(join(install, 'restored.txt'), 'utf-8'), 'previous');
+      assert.equal(existsSync(join(install, 'partial-file.txt')), false, 'partial content is overwritten/removed');
+      assert.equal(existsSync(backup), false);
+    } finally {
+      closeSync(lock);
+    }
+  });
+
+  it('swapInstallDirectory and replaceInstallationInPlace write the commit marker last', () => {
+    const installA = join(tmp, `marker-swap-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(installA);
+    writeFileSync(join(installA, 'old.txt'), 'old');
+    const payloadA = join(tmp, `marker-swap-p-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(payloadA);
+    writeFileSync(join(payloadA, 'new.txt'), 'new');
+    assert.equal(swapInstallDirectory(installA, payloadA, 'v9.8.7'), 'swapped');
+    const markerA = JSON.parse(readFileSync(join(installA, '.update-state.json'), 'utf-8')) as { committed: boolean; tag: string };
+    assert.equal(markerA.committed, true);
+    assert.equal(markerA.tag, 'v9.8.7');
+
+    const installB = join(tmp, `marker-inplace-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(installB);
+    writeFileSync(join(installB, 'old.txt'), 'old');
+    const payloadB = join(tmp, `marker-inplace-p-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(payloadB);
+    writeFileSync(join(payloadB, 'new.txt'), 'new');
+    replaceInstallationInPlace(installB, payloadB, 'v9.8.6');
+    const markerB = JSON.parse(readFileSync(join(installB, '.update-state.json'), 'utf-8')) as { committed: boolean; tag: string };
+    assert.equal(markerB.committed, true);
+    assert.equal(markerB.tag, 'v9.8.6');
+  });
+
+  it('routes the PRIMARY swap move through the injectable/retrying rename (review F-15)', () => {
+    const install = join(tmp, `retry-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(install);
+    writeFileSync(join(install, 'old.txt'), 'old');
+    const payload = join(tmp, `retry-p-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(payload);
+    writeFileSync(join(payload, 'new.txt'), 'new');
+    // Spy: the primary install->backup move MUST go through doRename (the
+    // retrying abstraction). The old code called raw renameSync for it, so a
+    // transient EPERM skipped the retry strategy and escalated to the
+    // destructive in-place path immediately.
+    const calls: Array<[string, string]> = [];
+    const result = swapInstallDirectory(install, payload, 'v1.2.3', {
+      rename: (from, to) => {
+        calls.push([from, to]);
+        renameSync(from, to);
+      },
+    });
+    assert.equal(result, 'swapped');
+    assert.equal(calls.length, 1, 'the swap path performs exactly one rename');
+    assert.equal(calls[0][0], install, 'the primary move starts at the install dir');
+    assert.equal(calls[0][1], `${install}.old`, 'the primary move targets the backup');
+    assert.equal(readFileSync(join(install, 'new.txt'), 'utf-8'), 'new');
+  });
+});
+
+describe('streamResponseToFileWithCap (review F-11)', () => {
+  function streamOf(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const c of chunks) controller.enqueue(c);
+        controller.close();
+      },
+    });
+  }
+  const res = (body: ReadableStream<Uint8Array> | null, contentLength: string | null = null) => ({
+    ok: true,
+    status: 200,
+    headers: { get: (name: string) => (name.toLowerCase() === 'content-length' ? contentLength : null) },
+    body,
+  });
+
+  it('writes the full body to disk when it fits the cap', async () => {
+    const dest = join(tmp, `stream-ok-${Math.random().toString(36).slice(2)}.bin`);
+    await streamResponseToFileWithCap(res(streamOf([new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])])), dest, 10);
+    assert.deepEqual([...readFileSync(dest)], [1, 2, 3, 4, 5]);
+  });
+
+  it('rejects via Content-Length pre-check before reading a byte', async () => {
+    const dest = join(tmp, `stream-cl-${Math.random().toString(36).slice(2)}.bin`);
+    await assert.rejects(
+      streamResponseToFileWithCap(res(streamOf([new Uint8Array([1])]), '999999'), dest, 10),
+      /Content-Length pre-check/,
+    );
+    assert.equal(existsSync(dest), false, 'nothing was written');
+  });
+
+  it('aborts MID-STREAM when the body exceeds the cap (no full buffering)', async () => {
+    const dest = join(tmp, `stream-big-${Math.random().toString(36).slice(2)}.bin`);
+    await assert.rejects(
+      streamResponseToFileWithCap(res(streamOf([new Uint8Array(6).fill(1), new Uint8Array(6).fill(2)])), dest, 10),
+      /mid-stream/,
+    );
+    assert.equal(readFileSync(dest).byteLength, 6, 'only the written prefix is on disk');
+  });
+
+  it('refuses HTTP errors and empty bodies like the old buffered path', async () => {
+    const dest = join(tmp, `stream-err-${Math.random().toString(36).slice(2)}.bin`);
+    await assert.rejects(streamResponseToFileWithCap({ ...res(null), ok: false, status: 404 }, dest, 10), /HTTP 404/);
+    await assert.rejects(streamResponseToFileWithCap(res(null), dest, 10), /empty response body/);
+    assert.equal(existsSync(dest), false);
   });
 });

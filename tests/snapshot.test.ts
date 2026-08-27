@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -14,10 +14,13 @@ import {
   extractAchieved,
   extractGoal,
   GOAL_MAX_CHARS,
+  isoFilename,
   listSnapshots,
   looksLikeGreenTests,
   makeSnapshotRecord,
+  MAX_HISTORY_FILE_BYTES,
   MAX_SNAPSHOTS_PER_TASK,
+  MAX_SNAPSHOT_BYTES_PER_TASK,
   persistSnapshot,
   readHistory,
   readSnapshot,
@@ -174,6 +177,71 @@ describe('persistence round-trip', () => {
       assert.ok(parsed);
       assert.equal(parsed.historyFile, undefined);
       assert.equal(readHistory(p.recordPath, parsed), undefined);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses oversized histories: skips the undo file, keeps the record (review F-01/F-14)', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const record = makeSnapshotRecord({ taskId: 'tk', goal: 'g', summary: 's' });
+      const fatHistory = [user('u1', 'x'.repeat(5000))];
+      const p = persistSnapshot(record, fatHistory, { dir, label: 'manual', historyBytesCap: 1024 });
+      assert.equal(p.historyPath, undefined);
+      assert.equal(p.historySkipped, 'oversized', 'caller can distinguish skip-from-failure');
+      const parsed = readSnapshot(p.recordPath);
+      assert.ok(parsed, 'record still persists');
+      assert.equal(parsed.historyFile, undefined, 'record never claims a missing undo file');
+      // Default cap is the exported constant.
+      assert.ok(MAX_HISTORY_FILE_BYTES > 1024);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('writes records and histories owner-readable only (0600 on POSIX)', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const record = makeSnapshotRecord({ taskId: 'tk', goal: 'g', summary: 's' });
+      const p = persistSnapshot(record, [user('u1', 'x')], { dir, label: 'manual' });
+      if (process.platform === 'win32') {
+        // mode is a POSIX no-op on Windows - existence is the contract there
+        assert.ok(existsSync(p.recordPath) && p.historyPath && existsSync(p.historyPath));
+        return;
+      }
+      assert.equal(statSync(p.recordPath).mode & 0o777, 0o600, 'record is 0600');
+      assert.equal(statSync(p.historyPath as string).mode & 0o777, 0o600, 'raw history is 0600');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('evicts oldest pairs until the aggregate byte budget holds (review F-14)', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const taskDirPath = join(dir, 'rot');
+      mkdirSync(taskDirPath, { recursive: true });
+      // Three snapshots, each record ~"payload-N" sized + a fat history file.
+      for (let i = 0; i < 3; i++) {
+        const iso = `2026-08-26T1${i}:00:00.000Z`;
+        const record = makeSnapshotRecord({ taskId: 'rot', goal: `g${i}`, summary: 's' }, iso);
+        writeFileSync(join(taskDirPath, `${isoFilename(iso)}_manual.history.json`), JSON.stringify([user('u1', 'y'.repeat(900))]));
+        const p = persistSnapshot(record, [], { dir, label: 'manual' });
+        assert.ok(p.recordPath);
+      }
+      const before = listSnapshots('rot', { dir });
+      assert.equal(before.length, 3);
+      // Budget between 2x and 3x the measured pair size -> exactly the
+      // oldest pair must leave for the total to fit again.
+      const pairBytes = statSync(join(taskDirPath, before[2].file)).size + 940;
+      const removed = rotateTaskDir(taskDirPath, MAX_SNAPSHOTS_PER_TASK, Math.round(pairBytes * 2.5));
+      assert.equal(removed, 1, 'the oldest pair leaves first');
+      const after = listSnapshots('rot', { dir });
+      assert.equal(after.length, 2);
+      assert.ok(!after.some((e) => e.record?.goal === 'g0'), 'oldest snapshot gone');
+      // Count-only ceiling still applies on top.
+      assert.equal(rotateTaskDir(taskDirPath, 1, MAX_SNAPSHOT_BYTES_PER_TASK), 1, 'count ceiling evicts the next oldest');
     } finally {
       cleanup();
     }

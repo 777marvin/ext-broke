@@ -7,8 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Snapshots no longer write raw conversation history by default** (review
+  F-01, CRITICAL). `snapshot.keepHistory` now defaults to `false`: automatic
+  commit snapshots and manual `/broke snapshot` records are summary-only.
+  Raw histories can contain secrets and unmasked tool output - durable
+  plaintext copies are an explicit opt-in. The destructive `/broke flush`
+  is governed separately by the new `flush.undo` (default `true`): it still
+  writes its pre-flush undo file so `/broke flush --undo` keeps working, and
+  a flush now aborts BEFORE removing anything when its undo file would
+  exceed the new size cap. Undo-file bytes stay on disk owner-readable only
+  (0600 on POSIX).
+- New storage quotas for snapshots (review F-14): a per-task byte budget
+  (`MAX_SNAPSHOT_BYTES_PER_TASK`, 25 MB) and a per-history-file cap
+  (`MAX_HISTORY_FILE_BYTES`, 10 MB) complement the existing count-based
+  rotation with size-aware eviction of the oldest record+history pairs.
+  `/broke update` caps the `snapshots/` carry-over at 64 MB (like the
+  errors/ and index/ archives) instead of copying it unbounded.
+- **Versioning policy adopted ("Option B")**: `main` carries a development
+  version (`X.Y.Z-dev`) between releases; the release commit itself pins the
+  exact version and is the only commit a `vX.Y.Z` tag may point at. `main`
+  now sits at `0.12.0-dev` after the 0.11.0 release. Post-release work no
+  longer hides under a released version number.
+- New version-consistency gate (`npm run check:version`, run in CI and in
+  the release workflow): `package.json` version == `package-lock.json` root
+  version == the release tag at release time. The lockfile root metadata,
+  which had drifted to `0.9.0` while `package.json` said `0.11.0`, is now
+  synced.
+
 ### Fixed
 
+- **Release signing is now gated by full CI on the exact tagged commit**
+  (review F-03): the release workflow reuses the CI workflow
+  (`workflow_call`) as a required `verify` job and only builds/signs/publishes
+  when every check passed on the tagged commit. A version/tag consistency
+  check (`scripts/check-version.mjs`) runs again on the tagged commit before
+  anything is signed - signing is the last privileged transformation.
+- Release workflow actions are pinned to the same immutable commit SHAs as
+  CI (review F-04) - the release pipeline previously floated `@v4` tags.
+- **Remote summarization is framed as an explicit disclosure** (review F-13):
+  the first time conversation content leaves the machine for a summarization
+  target (a non-loopback Ollama host with consent, or a cloud model), broke
+  writes one clear `DISCLOSURE` warning line naming the target. Regex
+  redaction gained patterns for Google (`AIza…`), npm granular tokens,
+  GitLab PATs and Groq keys - and stays explicitly best-effort: the trust
+  boundary is the consent gate plus this log line, never a "secret-free"
+  claim.
+- Slice focus resolves updated files through the LIVE execution context
+  instead of the context captured at extension load (review F-12): in
+  multi-task scenarios the focus decision could have consulted another
+  task's `getUpdatedFiles()` list. The captured context is no longer
+  consulted; a regression test pins that only the live context is used.
+- **Search-index persistence is hardened against path escape** (review F-09):
+  every relPath loaded from the persisted `index.json` is now validated
+  against a confinement invariant (forward slashes, no `..`/`.`/empty
+  segments, no absolute paths or backslashes) - one bad key invalidates the
+  whole file and triggers a rebuild. The search read boundary re-checks
+  confinement before touching the filesystem. `ensureFresh` discards
+  persisted state that was built for a different project root instead of
+  merging it blindly. `projectHash` moves from 32-bit FNV to a 64-bit
+  SHA-256 prefix, and legacy 8-hex index dirs are cleaned up along the
+  default index path. (Note: the on-disk scanner never followed symlinks -
+  Node `Dirent` semantics skip them - so symlink escapes were already
+  impossible; the new validation closes the tampered-file vector.)
+- **Oversized regions are summarized hierarchically instead of truncated**
+  (review F-07): regions larger than the summarizer input cap used to be
+  cut to head (8k) + tail (22k) for a single call, silently discarding the
+  middle of the conversation. The region is now chunked at MESSAGE
+  boundaries, each chunk is summarized within the input cap (secrets masked
+  per chunk), and a final meta-call combines the part summaries. Cost is
+  reported honestly (every part + meta call counted in `summarizeCalls`,
+  total input/output chars). A hard budget of 8 part calls + 1 meta call
+  bounds cost; messages beyond the budget stay in the context verbatim
+  (lossless) and the summary marker states the coverage
+  ("Summarized X of Y messages"). A single oversized message is truncated
+  for the summarizer call only, with an explicit drop marker.
+- Summary-cache reuse is now content-verified (review F-06): validity was
+  keyed on the last region message's ID, so a history edit that changes a
+  message's content while keeping its ID would silently serve a stale
+  summary. The cache additionally stores a SHA-256 over the summarized
+  portion's contents (role + id + content); any content change with stable
+  IDs forces a regeneration. Appending new messages keeps the cache valid.
+- **Compression never grows the context anymore** (review F-08): both error
+  compression paths (history pass and tool-level rewrite) now skip the
+  rewrite when the generated summary is longer than the output it would
+  replace. The old history pass rewrote anyway (reporting clamped 0
+  savings); the rule is now consistent with the pipeline-wide XF6
+  "never grow" guard. Note: in that edge case the original (unredacted)
+  output simply stays in the context - live-context redaction was never a
+  broke guarantee (`maskSecrets` is best-effort and applies to summaries).
+- The pipeline gate is content-based instead of message-count-based
+  (review F-10): `compressMessages` no longer hard-excludes contexts with
+  fewer than 4 messages; a short context now proceeds when its content
+  could trip the error-compression threshold, and the region/pairing math
+  decides what is safely compressible. `/broke why` and
+  `/broke summarize now` share the same predicate.
+- **`/broke update` recovery is transactional** (review F-02, HIGH). Both
+  swap paths now write a fsynced `.update-state.json` commit marker only
+  after the verified copy finished. Startup recovery reads it instead of
+  guessing: a committed install drops its stale backup, a partial install
+  (crash mid-copy) is restored FROM the backup - the old "install dir
+  exists -> trust it" heuristic could keep a half-written installation and
+  delete the good backup. Complete pre-marker installations (deploy.ps1 or
+  an older updater, identified by `.deployed-version`, which both write as
+  their last step) keep the previous behavior - no surprise rollbacks.
+- The primary install rename goes through the existing retrying rename
+  instead of raw `renameSync` (review F-15): a transient Windows lock no
+  longer escalates straight to the destructive in-place swap path.
+- Release tarballs stream to disk with a hard byte counter and a
+  Content-Length pre-check instead of being fully buffered in memory before
+  the size limit was enforced (review F-11).
 - `/broke index`, `/broke index status` and `broke-search` no longer fail with
   "no open project - indexing is project-scoped" inside an open project. The
   command handler and the tool invocation now receive contexts that know their

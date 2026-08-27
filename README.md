@@ -174,7 +174,11 @@ for testing uncommitted changes during development; inside a git checkout
   content (including tool outputs) to that host. Such hosts are **blocked
   by default** - local summarization refuses to send anything until you
   explicitly consent with `/broke summarize allow-remote on` (or the
-  settings-dialog toggle). Plaintext `http://` remote URLs additionally
+  settings-dialog toggle). When such a target is actually used, broke logs
+  one clear `DISCLOSURE` warning naming it (review F-13) - remote
+  summarization is treated as an explicit disclosure of best-effort
+  masked conversation content, never as a secret-free guarantee. Plaintext
+  `http://` remote URLs additionally
   trigger a warning; prefer `https://` or keep Ollama local.
   Common secret patterns are masked before the content is sent, but this
   is regex-based and best effort - unknown secret formats pass through
@@ -307,7 +311,7 @@ Shorthand used below: **SHORT** = the conversation never crosses
 | `summarize.via` (local) | Nothing to summarize yet | Local adds seconds of latency per regeneration; cloud adds provider tokens | Local wins outright at scale: constant quality/cost ratio; cloud with `cloudModelId` = a cheap model only, never the task's frontier model |
 | `summarize.afterTurns` (8) | Irrelevant until summarizing starts | Shields recent steps from summarization | Over-raising starves the summarizer on turn-poor sessions - note regions with zero user turns (autonomous loops) exempt themselves anyway |
 | `summarize.minChars` (8000) | Gate never met | Fine where it is | Do not lower much: a summary call costs one extra request, small regions never amortize it |
-| `snapshot.onCommit` (on) | Cheap, harmless | Free milestone trail after each commit | Your inspection-and-undo backbone; keep `keepHistory` on or `flush --undo` becomes impossible |
+| `snapshot.onCommit` (on) | Cheap, harmless | Free milestone trail after each commit | Summary-only by default (privacy review F-01): raw undo files are opt-in via `snapshot.keepHistory`. The destructive flush keeps its undo file via `flush.undo` (on) |
 | `snapshot.onTestPass` (off) | - | False positives on flaky suites made this opt-in | Enable only if your test runner prints a clean `passed`/exit-0 pattern reliably |
 | `stats.measure` (on) | Negligible overhead, records every compression run | These ledger records are your provable numbers (`/broke measure`) | Keep it on; 5 MB rotation bounds the file |
 | `search.enabled` (on) | Dormant cost only: the registered tool ships its JSON schema with every model call even if never used - `/broke search off` drops that for agents that never search | First real payoff: snippets replace whole-file reads when locating code | Compounds: smaller read results flow into every later call; commits trigger a throttled refresh, queries re-scan lazily before returning stale hits |
@@ -344,7 +348,7 @@ A practical playbook:
 - **After:** `/broke stats` gives the per-pass breakdown,
   `/broke measure` the real-run ledger, `/broke snapshot list` the milestone
   trail. Optionally `/broke flush --yes` to slim the task before follow-up
-  prompts - undoable while `snapshot.keepHistory` is on.
+  prompts - undoable while `flush.undo` is on (default).
 - **If the badge says 0 but you expected savings:** run `/broke why` - it
   walks the gates live and names the first one blocking.
 
@@ -421,10 +425,12 @@ replaces everything after the original task brief with ONE `[broke-state]`
 message carrying that state record - so long-running tasks can restart each
 step from brief + current state instead of the full scrollback. It is manual,
 asks for confirmation (`flush.confirm`), writes BOTH the snapshot record and
-a raw-history undo file BEFORE touching any message, aborts untouched if
-those writes fail, and `/broke flush --undo <n>` restores the byte-identical
-history afterwards. Keep `snapshot.keepHistory` on or undo becomes
-impossible.
+a raw-history undo file BEFORE touching any message (when `flush.undo` is on,
+default), aborts untouched if
+those writes fail or the undo file would exceed its size cap, and
+`/broke flush --undo <n>` restores the byte-identical
+history afterwards. Auto/manual snapshots are summary-only by default
+(`snapshot.keepHistory` off, review F-01); undo files for them are opt-in.
 
 Known limitation (spike S2): AiderDesk also maintains
 `.aider.chat.history.md` in the task folder as its own connector artifact.
@@ -535,8 +541,9 @@ every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
 | stats.measure | on | one record per compression run in `measure.jsonl` |
 | snapshot.onCommit | on | milestone snapshot after every successful commit |
 | snapshot.onTestPass | off | test-green detection as milestones (heuristic misfires) |
-| snapshot.keepHistory | on | write raw-history undo files (required for `flush --undo`) |
+| snapshot.keepHistory | off | raw-history undo files for auto/manual snapshots (privacy opt-in, F-01) |
 | flush.confirm | on | ask before the destructive `/broke flush` |
+| flush.undo | on | raw pre-flush undo file; enables `flush --undo` (abort-safe) |
 
 ## Status
 

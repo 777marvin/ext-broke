@@ -411,4 +411,37 @@ its own suite.
   path constants lazy or auditing each suite's first import. Scoped out of
   the F4 round to keep the diff reviewable.
 
+---
+
+# External Review Remediation (2026-08-27)
+
+Findings from the external static review (`ext-broke-professional-review.md`,
+16 findings F-01..F-16). All findings were verified against the source first;
+two severities were corrected after path analysis (F-06 in-memory only,
+F-09 reconciled-before-read). Remediation landed on
+`fix/ext-review-remediation` in 11 reviewable commits; decisions D1-D5 were
+approved by the maintainer before implementation.
+
+| Finding | Slice / Commit topic | Note |
+|---|---|---|
+| F-01 (CRITICAL) | snapshot privacy (`keepHistory` off, `flush.undo` on) | D1 decision |
+| F-02 (HIGH) | transactional updater recovery (`.update-state.json`) | D4 decision |
+| F-03 (HIGH) | release workflow CI gate via `workflow_call` | D6 manual repo settings remain |
+| F-04 (HIGH) | SHA-pinned release actions | |
+| F-05 (HIGH) | lockfile sync + `check:version` gate | D3: policy "Option B" |
+| F-06 (HIGH→MED) | content-fingerprinted summary cache | in-memory cache only |
+| F-07 (HIGH) | hierarchical summarization, no silent middle drop | budget 8+1 calls, honest coverage |
+| F-08 (MED-HIGH) | XF6-consistent error rewrite guard | D2 decision |
+| F-09 (MED-HIGH→LOW-MED) | index path confinement + root check + 64-bit hash | tampered-file vector; symlinks were already skipped |
+| F-10 (MED) | content-based pipeline gate (`shouldCompress`) | region math already guarded small contexts |
+| F-11 (MED) | streaming tarball download with mid-stream cap | |
+| F-12 (MED) | slice focus via live execution context | |
+| F-13 (MED) | disclosure telemetry + more secret patterns | best-effort framing kept |
+| F-14 (MED) | snapshot byte quotas + capped carry-over | coupled with F-01 |
+| F-15 (LOW-MED) | primary rename through retrying rename | |
+| F-16 (LOW-MED) | dev-version policy on main | D3: "Option B" |
+
+Manual follow-ups (GitHub repo settings, D6): protected `v*` tags, a
+`release` environment with approval, branch-protection required checks.
+
 

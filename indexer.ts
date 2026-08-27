@@ -21,7 +21,8 @@
  * throws into the agent loop.
  */
 
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, type Dirent } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { Config } from './config';
 
@@ -115,14 +116,27 @@ export function tokenize(text: string): string[] {
 /**
  * Deterministic short hash of the project root for the on-disk directory
  * name (no filesystem-hostile characters, no path leakage in dir listings).
+ * SHA-256 truncated to 64 bits (review F-09): the previous 32-bit FNV hash
+ * made cross-project collisions plausible on a shared machine; 64 bits make
+ * them practically impossible.
  */
 export function projectHash(root: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < root.length; i++) {
-    h ^= root.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, '0');
+  return createHash('sha256').update(root).digest('hex').slice(0, 16);
+}
+
+/**
+ * Path confinement invariant (review F-09): every relPath that enters the
+ * persisted index - and is later joined onto the project root for reading -
+ * must be a plain forward-slashed relative path without traversal segments.
+ * Absolute paths, backslashes, '..'/'.' segments and empty segments are
+ * rejected. Applied to persisted index keys at load time and, as defense in
+ * depth, to candidates right before their file read at search time.
+ */
+export function isConfinedRelPath(relPath: unknown): relPath is string {
+  if (typeof relPath !== 'string' || relPath.length === 0 || relPath.length > 512) return false;
+  if (relPath.includes('\\') || relPath.startsWith('/')) return false;
+  if (/^[a-zA-Z]:/.test(relPath)) return false;
+  return !relPath.split('/').some((seg) => seg === '' || seg === '.' || seg === '..');
 }
 
 export function createEmptyState(projectRoot: string): IndexState {
@@ -272,13 +286,55 @@ export function mergeIntoState(
  * `dirOverride` mirrors the BROKE_CONFIG_PATH isolation pattern - tests
  * must never write into the real extension directory.
  */
+/**
+ * Case/platform-tolerant root comparison for persisted-state verification:
+ * a persisted index may only be merged when it was built for THIS project
+ * root (review F-09). Trailing separators are ignored; comparison is
+ * case-insensitive on Windows only.
+ */
+function sameProjectRoot(a: string, b: string): boolean {
+  const norm = (p: string) => {
+    const fwd = forwardSlash(p).replace(/\/+$/, '');
+    return process.platform === 'win32' ? fwd.toLowerCase() : fwd;
+  };
+  return norm(a) === norm(b);
+}
+
+/**
+ * Remove legacy 8-hex-hash index dirs left by the pre-SHA256 projectHash
+ * (best effort, only along the default index path - never with dirOverride,
+ * whose parent is test/tmp territory). Orphans are rebuildable caches; the
+ * cleanup just keeps the index dir from accumulating stale copies.
+ */
+function removeLegacyIndexDirs(indexBase: string, currentHash: string): void {
+  try {
+    for (const name of readdirSync(indexBase)) {
+      if (name !== currentHash && /^[0-9a-f]{8}$/.test(name)) {
+        rmSync(join(indexBase, name), { recursive: true, force: true });
+      }
+    }
+  } catch {
+    // cosmetic cleanup - never fail indexing over it
+  }
+}
+
 export function ensureFresh(
   root: string,
   opts: { maxFileKB: number },
   dirOverride?: string,
 ): { state: IndexState; delta: { added: number; updated: number; removed: number } } {
   const dir = dirOverride ?? indexDirFor(root);
+  if (!dirOverride) removeLegacyIndexDirs(join(dir, '..'), projectHash(root));
   const state = loadIndex(dir) ?? createEmptyState(root);
+  if (!sameProjectRoot(state.projectRoot, root)) {
+    // Foreign/stale root (moved project, copied store, tampered file): the
+    // persisted state says nothing about THIS tree - rebuild from scratch.
+    state.files = {};
+    state.postings = {};
+    state.projectRoot = root;
+    state.truncated = false;
+    state.builtAt = '';
+  }
   const scan = scanProject(root, opts.maxFileKB);
   const delta = mergeIntoState(state, root, scan.entries, scan.truncated);
   if (delta.added > 0 || delta.updated > 0 || delta.removed > 0 || scan.truncated !== state.truncated) {
@@ -418,6 +474,10 @@ export function runSearch(
   for (const cand of ranked) {
     if (hits.length >= opts.k) break;
     if (usedChars >= opts.maxChars) break;
+    // Defense in depth (review F-09): postings keys are validated at load
+    // time, but the read boundary re-checks confinement before touching the
+    // filesystem - an in-memory state can always be hand-built wrong.
+    if (!isConfinedRelPath(cand.relPath)) continue;
     let text = '';
     try {
       text = readFileSync(join(root, ...cand.relPath.split('/')), 'utf-8');
@@ -516,6 +576,19 @@ export function loadIndex(dir: string): IndexState | null {
       raw.postings === null
     ) {
       return null;
+    }
+    // Path confinement (review F-09): the on-disk index is derived state that
+    // a tampered/synced/stale file could poison; relPaths are joined onto the
+    // project root at READ time, so every persisted key must be confined.
+    // One bad key invalidates the whole file - a rebuild is always safe.
+    for (const relPath of Object.keys(raw.files)) {
+      if (!isConfinedRelPath(relPath)) return null;
+    }
+    for (const posting of Object.values(raw.postings)) {
+      if (typeof posting !== 'object' || posting === null) return null;
+      for (const relPath of Object.keys(posting)) {
+        if (!isConfinedRelPath(relPath)) return null;
+      }
     }
     return { version: 1, projectRoot: raw.projectRoot, builtAt: raw.builtAt ?? '', truncated: raw.truncated === true, files: raw.files, postings: raw.postings };
   } catch {
