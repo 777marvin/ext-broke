@@ -136,6 +136,26 @@ function loadPackageVersion(): string {
   }
 }
 
+/**
+ * Char-only scan of command-tool result sizes in a live message array
+ * (`/broke why` pass hints). No content is read beyond .length - same
+ * privacy parity as the measurement ledger.
+ */
+function scanBiggestCommandResultChars(messages: ReadonlyArray<{ role?: unknown; content?: unknown }>): number {
+  let biggest = 0;
+  for (const m of messages) {
+    if (m.role !== 'tool' || !Array.isArray(m.content)) continue;
+    for (const part of m.content as Array<Record<string, unknown>>) {
+      if (part.type !== 'tool-result') continue;
+      const out = part.output as { value?: unknown } | undefined;
+      const text = typeof out?.value === 'string' ? out.value : '';
+      if (!isCommandTool(typeof part.toolName === 'string' ? part.toolName : '')) continue;
+      if (text.length > biggest) biggest = text.length;
+    }
+  }
+  return biggest;
+}
+
 export default class Broke implements Extension {
   static metadata = {
     name: 'Broke',
@@ -1291,6 +1311,28 @@ export default class Broke implements Extension {
       lines.push(
         `  verdict: input is ${(config.maxContextChars - totalChars).toLocaleString('en-US')} chars below the threshold - broke stays idle (an honest 0 on the badge). Engage earlier with /broke maxchars <n>.`,
       );
+    }
+    // Per-pass zero explanations (why is structural/error at 0 in a run that
+    // clearly saved millions of chars?). Data-driven where possible.
+    if (stats && stats.passes > 0) {
+      const saved = stats.savedChars;
+      if (saved.truncate + saved.summarize > 0 && saved.structural === 0) {
+        lines.push(
+          '  structural: 0 is honest - it counts only REMOVED adjacent duplicate tool results and empty messages; merged message framing never counts as savings (anti-phantom rule)',
+        );
+      }
+      if (saved.error === 0 && (config.level === 'truncate' || config.level === 'summarize') && config.errors.enabled) {
+        const biggest = scanBiggestCommandResultChars(messages);
+        if (biggest < config.errors.minChars) {
+          lines.push(
+            `  error: 0 so far - the largest command-tool output still in the region is ${biggest.toLocaleString('en-US')} chars (< errors.minChars ${config.errors.minChars.toLocaleString('en-US')}); big failing-test/compiler dumps are what this pass eats`,
+          );
+        } else {
+          lines.push(
+            `  error: 0 even though a ${biggest.toLocaleString('en-US')}-char command output exists - none matched the known compiler/test-log patterns; send a sample to broaden coverage`,
+          );
+        }
+      }
     }
     lines.push(
       observation

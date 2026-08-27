@@ -156,6 +156,7 @@ describe('index.ts orchestration (fake host, XF11)', () => {
       { originalMessages: messages, optimizedMessages: messages },
       context,
     )) as { optimizedMessages: ContextMessage[] } | undefined;
+    console.error('DEBUG-147 state.summarizeCalls=', state.summarizeCalls);
     assert.ok(result, 'the hook must return optimized messages');
     assert.ok(messagesChars(result.optimizedMessages) < before, 'compression must shrink the input');
     assert.ok(state.summarizeCalls >= 1, 'the cloud summarizer must have been called');
@@ -369,12 +370,41 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.match(out, /below the threshold/);
     assert.match(out, /scope: conversation messages ONLY/);
     assert.match(out, /last optimize run/);
+    // Per-pass hints must NOT appear when there is nothing to explain:
+    // no recorded passes yet -> stats.passes === 0 in a fresh task.
+    assert.ok(!out.includes('structural: 0 is honest'), 'pass hints require recorded runs');
+  });
+
+  it('/broke why explains structural/error zeros once passes were recorded', async () => {
+    writeConfig({ level: 'summarize' });
+    const ext = new Broke();
+    const bigDump = Array.from({ length: 120 }, (_, i) => `src/x.ts:${i}: error E: nope`).join('\n'); // ~4.7k chars
+    const messages = [
+      { id: 'u0', role: 'user', content: 'brief' },
+      { id: 't1', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'power---bash', output: { type: 'text', value: bigDump } }] },
+    ] as unknown as ContextMessage[];
+    const { context, state } = makeHost('task-why-passes', () => 'stub', messages);
+    const stats: TaskStats = emptyStats('task-why-passes');
+    stats.passes = 3;
+    stats.savedChars.truncate = 5;
+    (ext as unknown as { statsByTask: Map<string, TaskStats> }).statsByTask.set('task-why-passes', stats);
+
+    const cmd = ext.getCommands(context)[0];
+    await cmd.execute(['why'], context);
+    const out = state.logLines.map((l) => l.line).join('\n');
+    // Harness minChars=500 -> 3,249-char dump EXCEEDS it: zero saved means
+    // pattern mismatch, and /broke why must say exactly that.
+    assert.match(out, /error: 0 even though a .*-char command output exists - none matched the known compiler\/test-log patterns/);
+    assert.match(out, /structural: 0 is honest/);
   });
 
   it('/broke summarize now pre-warms the cache; the next real run reuses it free', async () => {
     // Tiny threshold: the REAL pipeline gate is "input > maxContextChars" -
     // the manual warm bypasses it, the pipeline must not.
-    writeConfig({ maxContextChars: 100 });
+    // Level pinned EXPLICITLY: this suite must not inherit the configured
+    // level from whichever sibling test ran before it (ordering bug found
+    // while adding the pass-hints test).
+    writeConfig({ maxContextChars: 100, level: 'summarize' });
     const ext = new Broke();
     const { context, state } = makeHost('task-warm', () => 'Stub summary of the compressed region.');
     attachContext(ext, context);
@@ -421,6 +451,11 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     const json = JSON.stringify(result.optimizedMessages);
     assert.ok(json.includes('broke-compacted'), 'the summarized input must contain the broke summary marker');
     assert.ok(json.length < JSON.stringify(messages).length, 'and be smaller than the original input');
+    // Cache reuse IS a counted pass - real input reduction at zero LLM cost:
+    const reused = loadTaskStats('task-warm');
+    assert.ok(reused, 'the cache-reuse run must be recorded');
+    assert.equal(reused?.passes, 1);
+    assert.equal(reused?.summarizeCalls, 0, 'zero fresh summarizer calls on the reuse path');
   });
 
   it('/broke summarize now refuses cleanly below summarize.minChars without an LLM call', async () => {
