@@ -40,3 +40,6 @@ snapshots/
 # Release signing private key (NEVER commit - goes into the BROKE_RELEASE_SIGNING_KEY repo secret)
 broke-release-signing-key.pem
 SHA256SUMS*
+
+# Local tooling indexes (CodeGraph) - never part of the extension
+.codegraph/
