@@ -33,6 +33,10 @@ jobs:
   release:
     name: Verify, build, sign and publish
     runs-on: ubuntu-latest
+    # D6: the "release" environment (repo settings) carries a required
+    # reviewer + a tags-only deployment policy - without this line the
+    # approval gate would never fire.
+    environment: release
     steps:
       - name: Checkout the tagged commit (with tags)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
