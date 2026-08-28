@@ -47,6 +47,68 @@ operation of the whole roadmap (flush) and must land after F1's stats/config
 mechanics exist. F4 is the largest and benefits from the patterns established
 by F1–F3.
 
+## Candidate backlog (proposed, unscheduled)
+
+Idea-level notes recorded 2026-08-28. None of these are scheduled or
+specified yet - a spec gets written here when a candidate is picked up.
+Numbering (F5+) is provisional.
+
+| # | Candidate | Type | Effort | Status |
+|---|-----------|------|--------|--------|
+| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | proposed |
+| F6 | Live-UI expansion: provable + estimated savings, colored activity dot | feat | M | proposed |
+| F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | proposed |
+| F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
+| F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
+
+- **F5 - Mode presets & autonomy selector.** Selectable presets
+  `short / normal / long` with tuned, sensible defaults per task length,
+  plus `custom` for fully user-defined values and settings. Additionally
+  an `autonomous` vs `manual` mode selector. Entry point: a minimalist
+  selector icon next to the savings badge (StatusBadge.jsx). Open
+  questions: which config fields each preset pins (compress levels,
+  summarize.afterTurns, slice/search defaults), how presets interact with
+  manual overrides, and whether autonomous mode implies different safety
+  defaults (e.g. flush.confirm).
+- **F6 - Live-UI expansion.** Show saved money twice: proven
+  (measure-ledger backed) and estimated (chars/4-based, labeled) - the
+  estimated value in addition to the proven one. Animated status dot with
+  color semantics: green = broke on and active, blue = benchmark/measure
+  run, purple = summarizer currently running, yellow = error / needs
+  attention, red = broke off.
+- **F7 - Minimalist operation.** Reduce the daily-driver surface to the
+  essentials for non-power users (sane presets, one toggle, honest numbers
+  at a glance); the current developer-facing surface stays as an explicit,
+  optional dev mode.
+- **F8 - Honest internal benchmark.** A benchmark methodology that tells
+  the truth about broke: what is actually saved versus the baseline
+  (aiderdesk-builtin.md), measured on reproducible tasks, no vanity
+  metrics, estimated and proven numbers strictly separated.
+- **F9 - Honest user-facing benchmark.** A truth-telling, user-runnable
+  measurement path beyond `npm run bench` / `npm run measure`: users
+  should be able to verify savings claims on their own sessions, with a
+  clear methodology and documented caveats.
+- **S5 - Agent-facing skill/rule (investigation).** Should broke ship an
+  AiderDesk skill or rule that teaches agents to use broke on their own
+  (tools + `/broke` commands) during autonomous tasks? Evaluate
+  discoverability, prompt-cost tradeoff, and whether AiderDesk's
+  skill/rule mechanisms are the right vehicle.
+- **S6 - Agent tool surface (investigation).** Evaluate which further
+  extension capabilities should be exposed as agent-executable tools
+  (like broke-search) versus chat-only commands. Working assumption:
+  index build/rebuild must NOT become an agent tool - indexing stays a
+  deliberate `/broke index` command.
+- **S7 - Subagent behavior (investigation).** How do broke's hooks, stats
+  attribution and compress passes behave when subagents are spawned?
+  (Which events fire per subagent task, per-task map behavior, risk of
+  double counting?)
+- **S8 - savemytoken migration (investigation).** Evaluate migrating the
+  savemytoken extension's functionality into broke (precedent: its
+  `truncateToolResult` feature-detection pattern is already referenced in
+  the cross-cutting principles).
+
+---
+
 ## Cross-cutting principles
 
 1. **Non-destructive by default.** Everything that runs automatically must

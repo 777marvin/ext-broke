@@ -588,7 +588,10 @@ every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
 broke is in active development. The roadmap
 ([docs/feats.md](docs/feats.md)) documents all four planned features with
 implementation specs (all four shipped; F4 local keyword search landed in
-v0.10.0). Suggestions and bug reports are very welcome: just open an
+v0.10.0) plus a candidate backlog of future ideas - mode presets with an
+autonomy selector, an expanded live UI (estimated savings next to proven
+ones, colored activity dot), minimalist operation and honest benchmarking -
+all unscheduled. Suggestions and bug reports are very welcome: just open an
 [issue](https://github.com/777marvin/ext-broke/issues).
 
 broke targets AiderDesk's extension API. The compression logic itself is
