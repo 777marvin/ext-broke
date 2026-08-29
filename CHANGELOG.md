@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by exact provider+model match and fall back to a bare id only when it is
   UNIQUE - ambiguous ids report an honest unknown price instead of a
   possibly wrong provider's rate.
+- Packaging metadata (external review BRK-025): the extension declares
+  itself private (it is a GitHub/AiderDesk extension, not an npm package -
+  no accidental `npm publish`), documents its repository, issue tracker
+  and homepage, and carries a `files` manifest describing the runtime
+  payload. CONTRIBUTING now says `npm ci` for reproducible installs.
 - Summarizer metering honesty (external review BRK-021): an attempted LLM
   call is counted the moment it is DISPATCHED, not only after a successful
   response - a provider that accepts (and may bill) a request and then

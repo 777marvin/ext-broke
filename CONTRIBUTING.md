@@ -6,7 +6,7 @@ deliberate: the following conventions keep it that way.
 ## Setup
 
 ```powershell
-npm install
+npm ci
 npm run typecheck    # tsc --noEmit
 npm test             # tsx --test, pure-function tests
 ```

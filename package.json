@@ -2,7 +2,25 @@
   "name": "broke",
   "version": "1.0.1-dev",
   "description": "Token budget extension for AiderDesk: progressive input compression (structural + truncation + summarization), local-model (Ollama) summarization offload, and token-saving workflows",
+  "private": true,
   "main": "index.ts",
+  "files": [
+    "*.ts",
+    "ConfigComponent.jsx",
+    "StatusBadge.jsx",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "docs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/777marvin/ext-broke.git"
+  },
+  "bugs": {
+    "url": "https://github.com/777marvin/ext-broke/issues"
+  },
+  "homepage": "https://github.com/777marvin/ext-broke#readme",
   "scripts": {
     "test": "tsx --test \"tests/*.test.ts\"",
     "typecheck": "tsc --noEmit",
