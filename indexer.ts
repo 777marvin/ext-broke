@@ -21,7 +21,8 @@
  * throws into the agent loop.
  */
 
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { Config } from './config';
@@ -177,6 +178,53 @@ function skippedPath(relPath: string): boolean {
   return /(^|[\\/])(node_modules|vendor)([\\/]|$)/.test(lower);
 }
 
+/**
+ * BRK-003 (external review 2026-08-29): dot-paths (IDE/tool config, cache
+ * dirs, .env-style files) never enter the index - the README claims this and
+ * private content routinely lives there.
+ */
+function hasDotSegment(relPath: string): boolean {
+  return relPath.split('/').some((seg) => seg.startsWith('.'));
+}
+
+/**
+ * BRK-003: conventionally private basenames are never indexed, regardless of
+ * git status. Deliberately conservative (a tracked `secrets.ts` is skipped
+ * too) - a false "not searchable" costs less than a leaked credential.
+ */
+function sensitiveBasename(relPath: string): boolean {
+  const base = relPath.slice(relPath.lastIndexOf('/') + 1).toLowerCase();
+  if (base.startsWith('.env')) return true;
+  if (/^id_(rsa|dsa|ecdsa|ed25519)(\.\w+)?$/.test(base)) return true;
+  if (/\.(pem|key|p12|pfx)$/.test(base)) return true;
+  return /(secret|credential|password|passwd)/.test(base);
+}
+
+/**
+ * BRK-003: git-aware candidate list - tracked plus untracked-but-not-ignored
+ * files (`git ls-files -co --exclude-standard`), i.e. exactly the project
+ * surface the user chose to keep visible to git. Returns null when git is
+ * missing or fails; the caller then decides the fallback. `-z` keeps paths
+ * raw (no core.quotePath escaping), NUL-separated.
+ */
+function gitCandidateFiles(root: string): string[] | null {
+  try {
+    const out = execFileSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], {
+      cwd: root,
+      timeout: 15_000,
+      windowsHide: true,
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out
+      .toString('utf-8')
+      .split('\0')
+      .filter((p) => p.length > 0);
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Scan + incremental merge
 // ---------------------------------------------------------------------------
@@ -187,10 +235,49 @@ interface ScannedEntry {
   sizeBytes: number;
 }
 
-export function scanProject(root: string, maxFileKB: number): { entries: ScannedEntry[]; truncated: boolean } {
+export type ScanSource = 'git' | 'git-unavailable' | 'walk';
+
+/**
+ * Collect index candidates for the project root (IO, never throws).
+ *
+ * BRK-003 policy, in order of preference:
+ * - `git`: a git repository is scanned from `git ls-files -co
+ *   --exclude-standard` - gitignored files (a local secrets.json) are
+ *   structurally invisible to the index, matching user expectation that
+ *   gitignore separates repo surface from private local data.
+ * - `git-unavailable`: a `.git` entry exists but git failed (broken
+ *   worktree pointer, busy/corrupt repo). Fail SAFE: index nothing rather
+ *   than walking a tree whose ignore rules could not be evaluated.
+ * - `walk`: no git at all - the conservative legacy walk, hardened with
+ *   dot-path and sensitive-basename filters.
+ */
+export function scanProject(root: string, maxFileKB: number): { entries: ScannedEntry[]; truncated: boolean; source: ScanSource } {
   const maxBytes = maxFileKB * 1024;
   const entries: ScannedEntry[] = [];
   let truncated = false;
+  const gitFiles = gitCandidateFiles(root);
+  if (gitFiles !== null) {
+    for (const relPath of gitFiles) {
+      if (entries.length >= INDEX_MAX_ENTRIES) {
+        truncated = true;
+        break;
+      }
+      if (!indexableRelPath(relPath) || skippedPath(relPath) || hasDotSegment(relPath) || sensitiveBasename(relPath)) continue;
+      try {
+        const st = statSync(join(root, ...relPath.split('/')));
+        if (st.size > maxBytes) continue;
+        entries.push({ relPath, mtimeMs: st.mtimeMs, sizeBytes: st.size });
+      } catch {
+        // raced file - skip
+      }
+    }
+    return { entries, truncated, source: 'git' };
+  }
+  if (existsSync(join(root, '.git'))) {
+    // Git repo, but git could not answer. A blind walk here would index
+    // exactly the files the user asked git to hide.
+    return { entries: [], truncated: false, source: 'git-unavailable' };
+  }
   const stack = [root];
   try {
     while (stack.length > 0 && !truncated) {
@@ -208,11 +295,11 @@ export function scanProject(root: string, maxFileKB: number): { entries: Scanned
         }
         const abs = join(dir, e.name);
         if (e.isDirectory()) {
-          if (!SKIP_DIRS.has(e.name)) stack.push(abs);
+          if (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) stack.push(abs);
           continue;
         }
         if (!e.isFile()) continue;
-        if (!indexableRelPath(e.name) || skippedPath(e.name)) continue;
+        if (!indexableRelPath(e.name) || skippedPath(e.name) || e.name.startsWith('.') || sensitiveBasename(e.name)) continue;
         try {
           const st = statSync(abs);
           if (st.size > maxBytes) continue;
@@ -225,7 +312,7 @@ export function scanProject(root: string, maxFileKB: number): { entries: Scanned
   } catch {
     // walking must never throw upward
   }
-  return { entries, truncated };
+  return { entries, truncated, source: 'walk' };
 }
 
 /** Normalize to forward slashes so on-disk keys are OS-portable. */
@@ -584,10 +671,12 @@ export function indexDirFor(projectRoot: string): string {
  * small integers, entries capped at INDEX_MAX_ENTRIES.
  */
 export function saveIndex(dir: string, state: IndexState): void {
-  mkdirSync(dir, { recursive: true });
+  // BRK-003 hardening: the index holds paths and terms of the local project,
+  // so it is owner-only on POSIX (ignored where modes do not apply).
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, 'index.json');
   const tmp = `${target}.tmp`;
-  writeFileSync(tmp, JSON.stringify(state), 'utf-8');
+  writeFileSync(tmp, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
   renameSync(tmp, target);
 }
 

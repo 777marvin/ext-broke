@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -449,5 +450,94 @@ describe('BRK-002: index dictionaries are prototype-pollution-proof', () => {
     assert.ok(loaded, 'index loads');
     assert.ok(Object.prototype.hasOwnProperty.call(loaded.postings, '__proto__'), "'__proto__' survives as a real own key");
     assert.ok(rankQuery(loaded, ['__proto__']).some((h) => h.relPath === 'src/evil.ts'), 'dangerous term ranks after reload');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BRK-003 (external review 2026-08-29): the scan must respect git ignore
+// rules, skip dot-directories and conventionally private files, and fail
+// SAFE when git exists but cannot answer.
+// ---------------------------------------------------------------------------
+
+const gitAvailable = spawnSync('git', ['--version'], { windowsHide: true }).status === 0;
+
+describe('BRK-003: git-aware, privacy-first scan policy', () => {
+  it('never indexes git-ignored files in a git repository', { skip: !gitAvailable }, () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-git-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], 'export const alphaFindVisible = 1;');
+    writeFile(root, ['secrets.json'], '{ "liveSecretToken": "SUPERSECRETVALUE123" }');
+    writeFile(root, ['.gitignore'], 'secrets.json\nignored-dir/\n');
+    writeFile(root, ['ignored-dir', 'leak.js'], 'export const ignoredLeak = 1;');
+    const init = spawnSync('git', ['init'], { cwd: root, windowsHide: true });
+    assert.equal(init.status, 0, 'fixture git init failed');
+    const { entries } = scanProject(root, 512);
+    const paths = entries.map((e) => e.relPath);
+    assert.ok(paths.includes('src/a.ts'), 'non-ignored sources stay indexed');
+    assert.equal(paths.some((p) => p.includes('secrets.json')), false, 'git-ignored secrets file must NOT be indexed');
+    assert.equal(paths.some((p) => p.includes('ignored-dir')), false, 'git-ignored directories must NOT be indexed');
+  });
+
+  it('search never returns an ignored secret as a live snippet', { skip: !gitAvailable }, () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-git2-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], 'export const alphaFindVisible = 1;');
+    writeFile(root, ['secrets.json'], '{ "liveSecretToken": "SUPERSECRETVALUE123" }');
+    writeFile(root, ['.gitignore'], 'secrets.json\n');
+    spawnSync('git', ['init'], { cwd: root, windowsHide: true });
+    const dir = mkdtempSync(join(tmpdir(), 'broke-indexer-git2-idx-'));
+    tmpRoots.push(dir);
+    const { state } = ensureFresh(root, { maxFileKB: 512 }, dir);
+    const result = runSearch(state, root, 'liveSecretToken SUPERSECRETVALUE123', { k: 10, maxChars: 4000, contextLines: 4 });
+    assert.equal(result.hits.length, 0, 'the ignored secret must be unreachable via search');
+  });
+
+  it('skips dot-directories and conventionally private basenames (non-git fallback)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-privacy-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], 'export const alphaFindVisible = 1;');
+    writeFile(root, ['.vscode', 'settings.json'], '{ "editor.fontSize": 12 }');
+    writeFile(root, ['app-secrets.json'], '{ "liveSecretToken": "x" }');
+    writeFile(root, ['credentials.json'], '{ "user": "x" }');
+    writeFile(root, ['deploy', 'server.key'], 'PRIVATE KEY MATERIAL');
+    const { entries } = scanProject(root, 512);
+    const paths = entries.map((e) => e.relPath);
+    assert.deepEqual(paths, ['src/a.ts'], 'only the plain source file may be indexed');
+  });
+
+  it('fails SAFE when .git exists but git cannot answer (no blind walk)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-broken-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], 'export const alphaFindVisible = 1;');
+    // Worktree-style .git pointer to a nonexistent gitdir: every git call
+    // fails. Without the safe fallback the walk would index the tree whose
+    // ignore rules could not be evaluated.
+    writeFileSync(join(root, '.git'), 'gitdir: ../does-not-exist.git\n');
+    if (gitAvailable) {
+      const probe = spawnSync('git', ['ls-files', '-co', '--exclude-standard'], { cwd: root, windowsHide: true });
+      assert.notEqual(probe.status, 0, 'fixture expects git to fail on the broken pointer');
+    }
+    const { entries, source } = scanProject(root, 512);
+    assert.deepEqual(entries, [], 'a git repo whose rules cannot be evaluated must not be walked blindly');
+    assert.equal(source, 'git-unavailable');
+  });
+
+  it('non-git projects still index via the conservative walk', () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-nogit-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], 'export const alphaFindVisible = 1;');
+    const { entries, source } = scanProject(root, 512);
+    assert.equal(source, 'walk');
+    assert.ok(entries.some((e) => e.relPath === 'src/a.ts'));
+  });
+
+  it('persisted index files are owner-only readable (BRK-003 hardening)', () => {
+    if (process.platform === 'win32') return; // POSIX modes - no-op elsewhere
+    const dir = mkdtempSync(join(tmpdir(), 'broke-indexer-mode-'));
+    tmpRoots.push(dir);
+    const state = createEmptyState(join(tmpdir(), 'broke-mode-root'));
+    saveIndex(dir, state);
+    const mode = statSync(join(dir, 'index.json')).mode & 0o777;
+    assert.equal(mode, 0o600, 'persisted index files must be owner-only readable');
   });
 });
