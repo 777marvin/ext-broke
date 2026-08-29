@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (compress, indexer, update, index) against regressions, and a stray
   debug output in the test suite is gone. An ESLint/format gate is
   deliberately deferred and documented in CONTRIBUTING.
+- Documentation truth pass (external review BRK-027): docs/overview.md
+  regenerated against the current tree (version snapshot, module line
+  counts, the reworked release pipeline incl. the main-pinned signing
+  callee, the phase-3 module behaviors), stale "lazy rebuild before every
+  query" claims corrected to the BRK-013 freshness-TTL reality, and
+  docs/review-backlog.md now separates historically closed findings from
+  the currently tracked BRK-016..030 items.
 - Packaging metadata (external review BRK-025): the extension declares
   itself private (it is a GitHub/AiderDesk extension, not an npm package -
   no accidental `npm publish`), documents its repository, issue tracker

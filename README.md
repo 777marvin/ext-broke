@@ -324,7 +324,7 @@ Shorthand used below: **SHORT** = the conversation never crosses
 | `snapshot.onCommit` (on) | Cheap, harmless | Free milestone trail after each commit | Summary-only by default (privacy review F-01): raw undo files are opt-in via `snapshot.keepHistory`. The destructive flush keeps its undo file via `flush.undo` (on) |
 | `snapshot.onTestPass` (off) | - | False positives on flaky suites made this opt-in | Enable only if your test runner prints a clean `passed`/exit-0 pattern reliably |
 | `stats.measure` (on) | Negligible overhead, records every compression run | These ledger records are your provable numbers (`/broke measure`) | Keep it on; 5 MB rotation bounds the file |
-| `search.enabled` (on) | Dormant cost only: the registered tool ships its JSON schema with every model call even if never used - `/broke search off` drops that for agents that never search | First real payoff: snippets replace whole-file reads when locating code | Compounds: smaller read results flow into every later call; commits trigger a throttled refresh, queries re-scan lazily before returning stale hits |
+| `search.enabled` (on) | Dormant cost only: the registered tool ships its JSON schema with every model call even if never used - `/broke search off` drops that for agents that never search | First real payoff: snippets replace whole-file reads when locating code | Compounds: smaller read results flow into every later call; commits trigger a throttled refresh, queries serve the snapshot within a 60s freshness window and re-scan after it (BRK-013 TTL) |
 | `search.maxChars` (6000) / `contextLines` (6) | Irrelevant while dormant | Tighten toward 4000 chars if result sets feel bloated | Lower budgets buy extra headroom below `maxContextChars`; snippets land there once, then get compressed like any other tool output |
 
 ### Running autonomous agents
@@ -489,7 +489,7 @@ came from.
 Honest positioning against what AiderDesk already ships: Broke's index is
 **offline** (no embedding model needed), persisted per project under
 `<extension>/index/`, re-indexed incrementally by mtime/size diffing
-(triggered on commits and lazily before queries), and strictly budgeted.
+(triggered on commits and re-checked before queries once the 60s freshness window expires), and strictly budgeted.
 It complements rather than replaces `power---semantic_search` or the repo
 map.
 

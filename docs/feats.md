@@ -564,8 +564,9 @@ snippets there would pollute it.
   (default 6000 chars ≈ 1.5k tokens), the snippet summary *is* the token
   control.
 - Staleness: `onAfterCommit` + `onFilesAdded` trigger async, throttled,
-  never-throwing rebuilds; queries rebuild lazily when index mtime is older
-  than the newest project file change.
+  never-throwing rebuilds; queries serve the persisted snapshot within a
+  60s freshness TTL (measured from the last freshness check, BRK-013/017)
+  and rescan after it.
 - Failure isolation: index build/query errors return a short message and
   never throw into the agent loop.
 - v2 (config `search.backend`): `vector`/`hybrid` via Ollama embeddings
@@ -605,7 +606,7 @@ const SearchSchema = z.object({
 - [x] Incremental rebuild re-indexes only changed files (mtime/size);
       index survives extension reload; S3 confirms deploy preservation.
 - [x] Query while a file changed since last build returns fresh results
-      (lazy rebuild) without blocking the agent loop.
+      (TTL expiry or commit-triggered sweep) without blocking the agent loop; within the TTL window a just-changed file may not be visible yet - the index is a cache, the read boundary always reads live files.
 - [x] Unindexable dirs (`node_modules` etc.) are never walked;
       `enabled: false` removes the tool.
 - [x] `broke index status` reports honest numbers; rebuild failures degrade
