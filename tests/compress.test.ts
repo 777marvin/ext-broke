@@ -735,6 +735,81 @@ describe('summarizePass', () => {
     assert.ok(r2.messages.some((m) => m.role === 'tool' && JSON.stringify(m.content).includes('status ok')));
   });
 
+  it('keeps appended messages on the run AFTER an incremental reuse (BRK-001 regression)', async () => {
+    const msgs = summaryConversation();
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const cfg = summarizeConfig();
+    await summarizePass(msgs, 1, cfg, deps, state, 'task-brk-001');
+    assert.equal(calls.n, 1);
+    // Step 2: a pure tool step arrives - the incremental path must reuse the
+    // cached summary and keep the appended messages verbatim.
+    const extended = [...msgs.slice(0, msgs.length - 1), assistant('Step 4: checking status.'), tool('power---bash', 'status ok'), msgs[msgs.length - 1]];
+    const r2 = await summarizePass(extended, 1, cfg, deps, state, 'task-brk-001');
+    assert.equal(calls.n, 1, 'incremental reuse must not call the summarizer');
+    assert.ok(JSON.stringify(r2.messages).includes('status ok'), 'appended messages survive the incremental pass');
+    // Step 3 (the bug): the SAME region again. The old incremental path
+    // advanced the cache boundary over messages that were never summarized,
+    // so this run hit the "region unchanged" reuse path and replaced the
+    // whole region - appended messages included - with the stale summary.
+    // Silent message loss that only shows up on the third call.
+    const r3 = await summarizePass(extended, 1, cfg, deps, state, 'task-brk-001');
+    assert.equal(calls.n, 1, 'still no fresh summarizer call - the boundary stays at the summarized message');
+    assert.ok(JSON.stringify(r3.messages).includes('status ok'), 'BRK-001: appended messages must survive every subsequent run');
+  });
+
+  it('BRK-014 regression: every byte of an oversized single message reaches the summarizer', async () => {
+    // One message larger than the chunk target, with a unique sentinel at the
+    // very end. Old behavior: the message was truncated for the summarizer
+    // (an internal marker noted the drop), but coverage marked the WHOLE
+    // message as summarized - the original was then replaced by a summary
+    // that never saw the tail. The sentinel vanished silently.
+    const sentinel = 'tailSentinelXyzzyKeepMe';
+    const big = `${'a'.repeat(40_000)}\n${sentinel}`;
+    const msgs: ContextMessage[] = [user('Brief: analyse the long log.'), user(big), user('Protected tail.')];
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const r = await summarizePass(msgs, 1, summarizeConfig({ afterTurns: 1 }), countingDeps(calls), state, 'task-brk-014');
+    assert.ok(r.summarizeCalls >= 2, 'hierarchical path engaged (parts + meta)');
+    assert.ok(
+      calls.inputs.some((input) => input.includes(sentinel)),
+      'BRK-014: the tail sentinel must reach the summarizer - no unseen byte may count as covered',
+    );
+  });
+
+  it('BRK-014 edge: a message too large for the chunk budget stays verbatim instead of being half-summarized', async () => {
+    // ~9 chunk targets in ONE message: its segments exhaust
+    // MAX_SUMMARIZE_CHUNKS without completing, so nothing in the region can
+    // be honestly covered - no paid call may happen and the original must
+    // survive untouched. Old behavior: one truncated call, then the whole
+    // message was replaced by a summary that never saw 2/3 of it.
+    const huge = 'h'.repeat(28_000 * 9);
+    const msgs: ContextMessage[] = [user('Brief.'), user(huge), user('Protected tail.')];
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const r = await summarizePass(msgs, 1, summarizeConfig({ afterTurns: 1 }), countingDeps(calls), state, 'task-brk-014c');
+    assert.equal(calls.n, 0, 'no paid summarizer calls when nothing can be honestly covered');
+    assert.equal(r.removedChars, 0);
+    assert.ok(JSON.stringify(r.messages).includes('h'.repeat(500)), 'the oversized message stays verbatim');
+  });
+
+  it('BRK-014 companion: part summaries cut for the meta call are marked, not silently shortened', async () => {
+    // Hierarchical region whose part summaries trip the meta-input cap. The
+    // cap itself is fine - silently dropping chars is not: the meta call
+    // must see an explicit truncation note instead of an arbitrarily
+    // short-looking part.
+    const longStub = 'p'.repeat(5000);
+    const big = 'b'.repeat(40_000);
+    const msgs: ContextMessage[] = [user('Brief: analyse the long log.'), user(big), user('Protected tail.')];
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    await summarizePass(msgs, 1, summarizeConfig({ afterTurns: 1 }), countingDeps(calls, longStub), state, 'task-brk-014b');
+    const metaInput = calls.inputs[calls.inputs.length - 1];
+    assert.ok(metaInput.includes('[PART 1/'), 'meta call expected');
+    assert.ok(metaInput.includes('truncated from 5000'), 'BRK-014: the 4000-char part cap must be explicit in the meta input');
+  });
+
   it('never orphans a tool result when the fallback boundary splits a pair (regression)', async () => {
     // Few user turns force the ACTIVE_TURN_TAIL fallback; its fixed cut can
     // land inside a call/result pair. The summary must shrink to a safe
@@ -813,7 +888,11 @@ describe('summarizePass', () => {
   });
 
   it('summarizes oversized regions hierarchically - nothing is silently dropped (review F-07)', async () => {
-    const big = Array.from({ length: 4000 }, (_, i) => `pad line ${i} - filling the conversation with repetitive content`).join('\n');
+    // ~2900 lines ≈ 190 KB → 7 segments of the oversized tool message. The
+    // anchor chunk + 7 segments fit exactly into the 8-chunk call budget, so
+    // the WHOLE message is summarized - BRK-014: no byte is dropped, the
+    // very last line reaches the summarizer.
+    const big = Array.from({ length: 2900 }, (_, i) => `pad line ${i} - filling the conversation with repetitive content`).join('\n');
     const msgs: ContextMessage[] = [
       user('Brief: build the billing module.'),
       assistant('UNIQUE_ANCHOR_START requirement: invoices must be exact.'),
@@ -837,8 +916,9 @@ describe('summarizePass', () => {
     assert.ok(calls.inputs[0].includes('UNIQUE_ANCHOR_START'));
     // Content from the former "dropped middle" now reaches the summarizer.
     assert.ok(calls.inputs.some((i) => i.includes('pad line 300')));
-    // A single oversized message is truncated FOR THE CALL ONLY, visibly marked.
-    assert.ok(calls.inputs.some((i) => i.includes('chars of this single oversized message were dropped')));
+    // BRK-014: a single oversized message is fully segmented - the very last
+    // line reaches the summarizer instead of being silently dropped.
+    assert.ok(calls.inputs.some((i) => i.includes('pad line 2899')), 'BRK-014: the message tail must reach the summarizer');
     assert.ok(r.messages.some((m) => isSummaryMessage(m)), 'summary present');
     assert.ok(r.removedChars > 0);
   });
