@@ -731,6 +731,8 @@ const MAX_SUMMARIZER_INPUT_CHARS = 30000;
  */
 const SUMMARIZE_CHUNK_TARGET_CHARS = 28_000;
 const MAX_SUMMARIZE_CHUNKS = 8;
+/** Cap per part summary before the meta call (BRK-014 companion: cuts are marked, never silent). */
+const MAX_PART_SUMMARY_CHARS = 4000;
 
 /**
  * Redact common secret patterns before conversation content leaves for the
@@ -815,44 +817,84 @@ function regionContentFingerprint(region: ContextMessage[], throughIndex: number
 }
 
 /**
- * Chunk the flattened region at MESSAGE boundaries for hierarchical
- * summarization (review F-07). Every message stays whole within its chunk;
- * a single message larger than the chunk target is truncated for the
- * summarizer call only (head-kept, with an explicit marker) - the context
- * itself is never modified by this truncation. Each chunk records the index
- * of the last region message it fully covers.
+ * Chunk the flattened region for hierarchical summarization (review F-07).
+ * Messages stay whole within a chunk wherever possible. A single message
+ * larger than the chunk target is split into consecutive full segments -
+ * every byte reaches the summarizer (BRK-014, external review 2026-08-29):
+ * the old truncate-with-marker approach marked partially-seen messages as
+ * fully covered, so the unseen tail was destroyed together with the
+ * original message when the summary replaced it.
+ *
+ * Coverage contract per chunk (consumed by the caller to decide what may
+ * honestly be replaced):
+ * - 'complete':   every byte up to `coveredUpToIndex` was sent (an
+ *                 accumulated chunk of whole messages, or the final segment
+ *                 of a multi-segment message).
+ * - 'continues':  the chunk ends inside a message whose remaining segments
+ *                 follow in later chunks - coverage does not advance here.
+ * - 'incomplete': the message exceeded the per-message segment cap; the
+ *                 marked remainder never reaches the summarizer, so no
+ *                 chunk from here on may claim coverage and the message
+ *                 must stay verbatim in the context.
  */
+interface SummarizerChunk {
+  text: string;
+  coveredUpToIndex: number;
+  coverage: 'complete' | 'continues' | 'incomplete';
+}
+
 function chunkRegionForSummarizer(
   messageTexts: Array<{ id: unknown; role: string; text: string }>,
-): Array<{ text: string; coveredUpToIndex: number }> {
-  const chunks: Array<{ text: string; coveredUpToIndex: number }> = [];
+): SummarizerChunk[] {
+  const chunks: SummarizerChunk[] = [];
   let current: string[] = [];
   let currentLength = 0;
+  let currentCovered = -1;
+  const flushCurrent = (): void => {
+    if (current.length === 0) return;
+    chunks.push({ text: current.join('\n\n'), coveredUpToIndex: currentCovered, coverage: 'complete' });
+    current = [];
+    currentLength = 0;
+  };
   for (let i = 0; i < messageTexts.length; i++) {
     const { role, text } = messageTexts[i];
     const block = text ? `${role.toUpperCase()}:\n${text}` : '';
     const blockLength = block.length + 2;
     if (blockLength > SUMMARIZE_CHUNK_TARGET_CHARS) {
       // A single oversized message: flush the pending chunk first, then
-      // give this message its own (truncated, marked) chunk.
-      if (current.length > 0) {
-        chunks.push({ text: current.join('\n\n'), coveredUpToIndex: i - 1 });
-        current = [];
-        currentLength = 0;
+      // split the message into full segments (no silent truncation).
+      flushCurrent();
+      const roleLabel = `${role.toUpperCase()}:`;
+      const needed = Math.ceil(text.length / SUMMARIZE_CHUNK_TARGET_CHARS);
+      const sent = Math.min(needed, MAX_SUMMARIZE_CHUNKS);
+      for (let s = 0; s < sent; s++) {
+        const from = s * SUMMARIZE_CHUNK_TARGET_CHARS;
+        const part = text.slice(from, from + SUMMARIZE_CHUNK_TARGET_CHARS);
+        const header = s === 0 ? roleLabel : `${roleLabel} [continued, segment ${s + 1}/${sent}]`;
+        const isFinal = s === sent - 1;
+        // Only when the cap bites do bytes stay unsent - and then the marker
+        // makes the drop explicit and blocks coverage (the caller keeps the
+        // whole message verbatim).
+        const marker =
+          isFinal && needed > sent
+            ? `\n… [broke: ${(text.length - sent * SUMMARIZE_CHUNK_TARGET_CHARS).toLocaleString('en-US')} chars of this single oversized message were not sent to the summarizer - the message stays verbatim in the context]`
+            : '';
+        chunks.push({
+          text: `${header}\n${part}${marker}`,
+          coveredUpToIndex: i,
+          coverage: isFinal ? (needed > sent ? 'incomplete' : 'complete') : 'continues',
+        });
       }
-      const marker = `\n… [broke: ${blockLength - SUMMARIZE_CHUNK_TARGET_CHARS} chars of this single oversized message were dropped for the summarizer]`;
-      chunks.push({ text: block.slice(0, SUMMARIZE_CHUNK_TARGET_CHARS) + marker, coveredUpToIndex: i });
       continue;
     }
     if (currentLength + blockLength > SUMMARIZE_CHUNK_TARGET_CHARS && current.length > 0) {
-      chunks.push({ text: current.join('\n\n'), coveredUpToIndex: i - 1 });
-      current = [];
-      currentLength = 0;
+      flushCurrent();
     }
     current.push(block);
     currentLength += blockLength;
+    currentCovered = i;
   }
-  if (current.length > 0) chunks.push({ text: current.join('\n\n'), coveredUpToIndex: messageTexts.length - 1 });
+  flushCurrent();
   return chunks;
 }
 
@@ -1001,7 +1043,24 @@ export async function summarizePass(
       // Hierarchical path (review F-07): chunk at message boundaries, one
       // summarizer call per part, then a meta-call that combines the parts.
       const chunks = chunkRegionForSummarizer(messageTexts);
-      const usable = chunks.slice(0, MAX_SUMMARIZE_CHUNKS);
+      const budgeted = chunks.slice(0, MAX_SUMMARIZE_CHUNKS);
+      // Coverage walk BEFORE any paid call (BRK-014): 'continues' segments
+      // wait for their successor; 'incomplete' segments (dropped bytes) end
+      // coverage entirely. Calls are trimmed at the last coverage-advancing
+      // chunk - dangling segments beyond it would burn paid calls on content
+      // that cannot honestly be replaced (its message stays verbatim).
+      let coveredIndex = -1;
+      let lastAdvancing = -1;
+      for (let k = 0; k < budgeted.length; k++) {
+        const c = budgeted[k];
+        if (c.coverage === 'incomplete') break;
+        if (c.coverage === 'complete') {
+          coveredIndex = c.coveredUpToIndex;
+          lastAdvancing = k;
+        }
+      }
+      if (lastAdvancing === -1) return noop;
+      const usable = budgeted.slice(0, lastAdvancing + 1);
       const partSummaries: string[] = [];
       for (let i = 0; i < usable.length; i++) {
         const safeChunk = maskSecrets(usable[i].text);
@@ -1014,8 +1073,20 @@ export async function summarizePass(
         outputCharsTotal += partSummary.length;
         partSummaries.push(partSummary);
       }
+      // BRK-014 companion: part summaries are capped before the meta call to
+      // bound its input. The cap is explicit, not silent: every cut is
+      // marked so the meta call (and anyone auditing inputs) knows the part
+      // was truncated rather than mysteriously short.
       const metaInput = maskSecrets(
-        partSummaries.map((s, i) => `[PART ${i + 1}/${usable.length}]\n${s.slice(0, 4000)}`).join('\n\n'),
+        partSummaries
+          .map((s, i) => {
+            const body =
+              s.length > MAX_PART_SUMMARY_CHARS
+                ? `${s.slice(0, MAX_PART_SUMMARY_CHARS)}\n[broke: part summary ${i + 1} truncated from ${s.length} to ${MAX_PART_SUMMARY_CHARS} chars]`
+                : s;
+            return `[PART ${i + 1}/${usable.length}]\n${body}`;
+          })
+          .join('\n\n'),
       );
       inputCharsTotal += metaInput.length;
       summary = await callSummarizer(
@@ -1024,9 +1095,11 @@ export async function summarizePass(
       callsMade++;
       outputCharsTotal = outputCharsTotal + (summary?.length ?? 0);
       if (!summary || !summary.trim()) return failed(true);
-      // Messages beyond the chunk budget stay in the context verbatim
-      // (lossless) - coverage ends at the last fully summarized message.
-      coveredThroughIndex = usable[usable.length - 1].coveredUpToIndex;
+      // BRK-014: coverage was computed from the coverage contract above -
+      // only messages whose every byte reached the summarizer are replaced;
+      // the rest (chunk-budget overflow, capped oversized messages) stays
+      // verbatim in the context.
+      coveredThroughIndex = coveredIndex;
     }
   } catch {
     // A throwing summarizer must degrade to "failed", never break the call.

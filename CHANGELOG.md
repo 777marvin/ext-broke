@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tool messages) the cache boundary is no longer advanced over messages
   that were never summarized. The previous behavior silently dropped those
   appended messages on the NEXT compress run (external review BRK-001).
+- Summarize: a single message larger than the chunk target is now split
+  into full segments so every byte reaches the summarizer; coverage is
+  tracked segment-accurately. Previously the message was truncated for
+  the summarizer call but marked fully covered, destroying the unseen
+  tail when the summary replaced the original (external review BRK-014).
+  Part summaries cut for the meta call are now explicitly marked as
+  truncated instead of silently shortened.
 
 ## [1.0.0] - 2026-08-27
 
