@@ -36,7 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unexpected names, paths escaping the record's directory, non-message
   content or oversized files, and a failed record write no longer leaves
   an orphaned undo file behind.
-- Interface slicing fails open (external review BRK-020): placeholder-removed
+- Interface slicing fails open (external review BRK-020): exported
+  object/array initializers are kept COMPLETE instead of emitting a
+  syntactically invalid stub, public/protected class fields and overload
+  signatures stay in the view (private state does not), path matching is
+  case-folded only on Windows, and focus symbols containing regex
+  metacharacters no longer crash slicing.
 - Search index: tokens derived from repository content (e.g. identifiers
   named `__proto__`, `constructor`, `prototype`) can no longer pollute
   JavaScript global built-ins. Index dictionaries are null-prototype
