@@ -612,6 +612,16 @@ broke targets AiderDesk's extension API. The compression logic itself is
 plain TypeScript, so porting it to other agent platforms is possible in
 principle, it is simply not planned right now.
 
+## Support
+
+- Usage questions, misbehavior, bug reports: open an
+  [issue](https://github.com/777marvin/ext-broke/issues). Attaching the
+  output of `/broke why`, `/broke stats` or `/broke measure` speeds up
+  diagnosis a lot - none of it contains conversation content.
+- Security issues: never in a public issue - follow
+  [SECURITY.md](SECURITY.md) (private GitHub advisory).
+- Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).

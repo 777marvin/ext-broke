@@ -102,6 +102,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   share one in-flight request instead of stacking parallel checks, and
   the badge's 10 s poll stops entirely when no summarizer backend is
   active.
+- Open-source governance filled in (external review BRK-030): a
+  SECURITY.md documents the private advisory channel (GitHub private
+  vulnerability reporting), supported versions, response targets and the
+  scope of the security-relevant surfaces; CODEOWNERS names the
+  maintainer for review routing; a pull-request template encodes the
+  verification checklist (full suite, typecheck, UI validation, changelog
+  per finding, version consistency); and a short support section in the
+  README routes questions, bugs and security reports to the right
+  channels.
 - The UI type check can no longer silently degrade to `any` (external
   review BRK-024): a minimal, versioned host UI contract
   (`scripts/host-ui-contract.d.ts`, pinned to the compiled
