@@ -540,4 +540,64 @@ describe('BRK-003: git-aware, privacy-first scan policy', () => {
     const mode = statSync(join(dir, 'index.json')).mode & 0o777;
     assert.equal(mode, 0o600, 'persisted index files must be owner-only readable');
   });
+
+  it('includeGitIgnored widens to ignored files, but the sensitive denylist still wins (opt-in)', { skip: !gitAvailable }, () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-optin-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], 'export const alphaFindVisible = 1;');
+    writeFile(root, ['notes', 'local.md'], '# local notes about alphaFind');
+    writeFile(root, ['secrets.json'], '{ "x": 1 }');
+    writeFile(root, ['.gitignore'], 'notes/\nsecrets.json\n');
+    spawnSync('git', ['init'], { cwd: root, windowsHide: true });
+    const denied = scanProject(root, 512);
+    assert.ok(!denied.entries.some((e) => e.relPath.startsWith('notes/')), 'default: ignored files stay out');
+    const optedIn = scanProject(root, 512, { includeGitIgnored: true });
+    assert.ok(optedIn.entries.some((e) => e.relPath === 'notes/local.md'), 'opt-in indexes the ignored notes file');
+    assert.ok(!optedIn.entries.some((e) => e.relPath.includes('secrets.json')), 'the sensitive-basename denylist always wins');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BRK-013 (external review 2026-08-29): bounded indexing - TTL-served
+// snapshots, a scan deadline and an aggregate merge budget.
+// ---------------------------------------------------------------------------
+
+describe('BRK-013: bounded indexing', () => {
+  it('serves the existing snapshot within the TTL and rescans after it (TTL=0 forces)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-ttl-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], 'export const alphaFindFirst = 1;');
+    const first = ensureFresh(root, { maxFileKB: 512, ttlMs: 60_000 }, join(root, 'idx'));
+    assert.ok(first.state.files['src/a.ts']);
+    writeFile(root, ['src', 'b.ts'], 'export const alphaFindSecond = 2;');
+    const withinTtl = ensureFresh(root, { maxFileKB: 512, ttlMs: 60_000 }, join(root, 'idx'));
+    assert.equal(withinTtl.delta.added, 0, 'within the TTL the snapshot is served as-is');
+    assert.equal(withinTtl.state.files['src/b.ts'], undefined, 'no rescan inside the TTL');
+    const forced = ensureFresh(root, { maxFileKB: 512, ttlMs: 0 }, join(root, 'idx'));
+    assert.ok(forced.state.files['src/b.ts'], 'a zero TTL forces the rescan');
+  });
+
+  it('stops merging when the aggregate byte budget is exhausted (honest absent)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-budget-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], `export const alphaFindA = '${'a'.repeat(2000)}';`);
+    writeFile(root, ['src', 'b.ts'], `export const alphaFindB = '${'b'.repeat(2000)}';`);
+    const state = emptyState();
+    state.projectRoot = root;
+    const scan = scanProject(root, 512);
+    const budget = { remainingBytes: 2100, exhausted: false };
+    mergeIntoState(state, root, scan.entries, false, budget);
+    const indexed = Object.keys(state.files).length;
+    assert.ok(indexed < 2, `budget must stop the merge (indexed: ${indexed})`);
+    assert.equal(budget.exhausted, true, 'the budget reports honest exhaustion');
+  });
+
+  it('honors a scan deadline (truncated, honest)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-deadline-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], 'export const alphaFindVisible = 1;');
+    const { entries, truncated } = scanProject(root, 512, { deadlineMs: Date.now() - 1 });
+    assert.equal(truncated, true, 'an already-past deadline reports honest truncation');
+    assert.deepEqual(entries, [], 'a past deadline collects nothing');
+  });
 });

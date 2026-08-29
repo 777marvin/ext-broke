@@ -41,6 +41,16 @@ export const SKIP_DIRS: ReadonlySet<string> = new Set([
   'vendor',
 ]);
 
+/** BRK-013: default aggregate budget for re-tokenizing changed files per refresh. */
+export const DEFAULT_MERGE_BUDGET_BYTES = 64 * 1024 * 1024;
+/** BRK-013: hard wall-clock budget for one scan pass. */
+export const INDEX_SCAN_BUDGET_MS = 2_000;
+
+/** Any path segment inside a never-index directory (BRK-013 git path filter). */
+function hasSkipDirSegment(relPath: string): boolean {
+  return relPath.split('/').some((seg) => SKIP_DIRS.has(seg));
+}
+
 /** File extensions eligible for indexing. Everything else passes by. */
 export const INDEXABLE_EXT: ReadonlySet<string> = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.py', '.json', '.md']);
 
@@ -207,15 +217,19 @@ function sensitiveBasename(relPath: string): boolean {
  * missing or fails; the caller then decides the fallback. `-z` keeps paths
  * raw (no core.quotePath escaping), NUL-separated.
  */
-function gitCandidateFiles(root: string): string[] | null {
+function gitCandidateFiles(root: string, includeGitIgnored: boolean): string[] | null {
   try {
-    const out = execFileSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], {
-      cwd: root,
-      timeout: 15_000,
-      windowsHide: true,
-      maxBuffer: 64 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    const out = execFileSync(
+      'git',
+      includeGitIgnored ? ['ls-files', '-co', '-z'] : ['ls-files', '-co', '--exclude-standard', '-z'],
+      {
+        cwd: root,
+        timeout: 15_000,
+        windowsHide: true,
+        maxBuffer: 64 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
     return out
       .toString('utf-8')
       .split('\0')
@@ -237,6 +251,13 @@ interface ScannedEntry {
 
 export type ScanSource = 'git' | 'git-unavailable' | 'walk';
 
+export interface ScanOptions {
+  /** BRK-003 opt-in: index gitignored files too (denylists stay ON). */
+  includeGitIgnored?: boolean;
+  /** BRK-013: wall-clock deadline for the scan; hitting it sets truncated. */
+  deadlineMs?: number;
+}
+
 /**
  * Collect index candidates for the project root (IO, never throws).
  *
@@ -251,18 +272,21 @@ export type ScanSource = 'git' | 'git-unavailable' | 'walk';
  * - `walk`: no git at all - the conservative legacy walk, hardened with
  *   dot-path and sensitive-basename filters.
  */
-export function scanProject(root: string, maxFileKB: number): { entries: ScannedEntry[]; truncated: boolean; source: ScanSource } {
+export function scanProject(root: string, maxFileKB: number, opts: ScanOptions = {}): { entries: ScannedEntry[]; truncated: boolean; source: ScanSource } {
   const maxBytes = maxFileKB * 1024;
   const entries: ScannedEntry[] = [];
   let truncated = false;
-  const gitFiles = gitCandidateFiles(root);
+  const deadline = opts.deadlineMs ?? Number.POSITIVE_INFINITY;
+  const outOfTime = (): boolean => Date.now() >= deadline;
+  const gitFiles = gitCandidateFiles(root, opts.includeGitIgnored === true);
   if (gitFiles !== null) {
+    if (outOfTime()) return { entries: [], truncated: true, source: 'git' };
     for (const relPath of gitFiles) {
-      if (entries.length >= INDEX_MAX_ENTRIES) {
+      if (entries.length >= INDEX_MAX_ENTRIES || outOfTime()) {
         truncated = true;
         break;
       }
-      if (!indexableRelPath(relPath) || skippedPath(relPath) || hasDotSegment(relPath) || sensitiveBasename(relPath)) continue;
+      if (!indexableRelPath(relPath) || skippedPath(relPath) || hasSkipDirSegment(relPath) || hasDotSegment(relPath) || sensitiveBasename(relPath)) continue;
       try {
         const st = statSync(join(root, ...relPath.split('/')));
         if (st.size > maxBytes) continue;
@@ -281,6 +305,10 @@ export function scanProject(root: string, maxFileKB: number): { entries: Scanned
   const stack = [root];
   try {
     while (stack.length > 0 && !truncated) {
+      if (outOfTime()) {
+        truncated = true;
+        break;
+      }
       const dir = stack.pop() as string;
       let names: Dirent[];
       try {
@@ -289,7 +317,7 @@ export function scanProject(root: string, maxFileKB: number): { entries: Scanned
         continue;
       }
       for (const e of names) {
-        if (entries.length >= INDEX_MAX_ENTRIES) {
+        if (entries.length >= INDEX_MAX_ENTRIES || outOfTime()) {
           truncated = true;
           break;
         }
@@ -333,7 +361,16 @@ function removeDocument(state: IndexState, relPath: string): void {
   }
 }
 
-function addDocument(state: IndexState, root: string, entry: ScannedEntry): void {
+function addDocument(state: IndexState, root: string, entry: ScannedEntry, budget?: { remainingBytes: number; exhausted: boolean }): void {
+  // BRK-013: an exhausted aggregate budget leaves the file honestly absent
+  // (the index simply does not know it yet) instead of reading unbounded.
+  if (budget) {
+    if (budget.exhausted) return;
+    if (entry.sizeBytes > budget.remainingBytes) {
+      budget.exhausted = true;
+      return;
+    }
+  }
   removeDocument(state, entry.relPath);
   let text = '';
   try {
@@ -341,6 +378,7 @@ function addDocument(state: IndexState, root: string, entry: ScannedEntry): void
   } catch {
     return; // unreadable at index time - absent from postings is honest
   }
+  if (budget) budget.remainingBytes -= entry.sizeBytes;
   const tokens = tokenize(text);
   const tfByTerm = new Map<string, number>();
   for (const t of tokens) tfByTerm.set(t, (tfByTerm.get(t) ?? 0) + 1);
@@ -369,6 +407,7 @@ export function mergeIntoState(
   root: string,
   entries: ScannedEntry[],
   truncated: boolean,
+  budget?: { remainingBytes: number; exhausted: boolean },
 ): { added: number; updated: number; removed: number } {
   let added = 0;
   let updated = 0;
@@ -377,10 +416,10 @@ export function mergeIntoState(
     seen.add(entry.relPath);
     const old = state.files[entry.relPath];
     if (!old) {
-      addDocument(state, root, entry);
+      addDocument(state, root, entry, budget);
       added++;
     } else if (old.mtimeMs !== entry.mtimeMs || old.sizeBytes !== entry.sizeBytes) {
-      addDocument(state, root, entry);
+      addDocument(state, root, entry, budget);
       updated++;
     }
   }
@@ -435,7 +474,7 @@ function removeLegacyIndexDirs(indexBase: string, currentHash: string): void {
 
 export function ensureFresh(
   root: string,
-  opts: { maxFileKB: number },
+  opts: { maxFileKB: number; includeGitIgnored?: boolean; ttlMs?: number; mergeBudgetBytes?: number },
   dirOverride?: string,
 ): { state: IndexState; delta: { added: number; updated: number; removed: number } } {
   const dir = dirOverride ?? indexDirFor(root);
@@ -450,8 +489,19 @@ export function ensureFresh(
     state.truncated = false;
     state.builtAt = '';
   }
-  const scan = scanProject(root, opts.maxFileKB);
-  const delta = mergeIntoState(state, root, scan.entries, scan.truncated);
+  // BRK-013: serve the existing snapshot within the TTL instead of blocking
+  // on a full metadata rescan before EVERY query. ttlMs=0 (default) keeps
+  // the old always-rescan behavior for rebuild paths and tests.
+  const ttlMs = opts.ttlMs ?? 0;
+  if (ttlMs > 0 && state.builtAt) {
+    const built = Date.parse(state.builtAt);
+    if (Number.isFinite(built) && Date.now() - built < ttlMs) {
+      return { state, delta: { added: 0, updated: 0, removed: 0 } };
+    }
+  }
+  const scan = scanProject(root, opts.maxFileKB, { includeGitIgnored: opts.includeGitIgnored });
+  const budget = { remainingBytes: opts.mergeBudgetBytes ?? DEFAULT_MERGE_BUDGET_BYTES, exhausted: false };
+  const delta = mergeIntoState(state, root, scan.entries, scan.truncated || budget.exhausted, budget);
   if (delta.added > 0 || delta.updated > 0 || delta.removed > 0 || scan.truncated !== state.truncated) {
     state.builtAt = new Date().toISOString();
     saveIndex(dir, state);
