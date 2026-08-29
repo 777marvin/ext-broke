@@ -252,6 +252,8 @@ export default class Broke implements Extension {
    * one afterwards.
    */
   startConfigWatcher(): void {
+    // Idempotent (BRK-006): a second start must not leak a second watcher.
+    if (this.configWatcher) return;
     try {
       this.configWatcher = watch(dirname(CONFIG_PATH), (_event, filename) => {
         // Match the CONFIGURED file name, not a hardcoded 'config.json':
@@ -266,7 +268,7 @@ export default class Broke implements Extension {
         this.configWatcher = null;
       });
     } catch {
-      // best effort - getConfig() still picks up changes within its TTL
+      // best effort - getConfig() still picks up changes via its mtime check
     }
   }
 
@@ -968,11 +970,25 @@ export default class Broke implements Extension {
               // Self-update from GitHub releases. The hooks free the config
               // watcher's directory handle for the folder swap and reopen it
               // afterwards; progress goes to the extension log, not the chat.
+              // BRK-006: onAfterSwap only fires on SUCCESS - a failed update
+              // used to leave the watcher closed forever. Track the close and
+              // always restore afterwards.
+              let watcherClosedByUpdate = false;
               const result = await runUpdate({ mode: cmd.mode, tag: cmd.tag }, {
-                onBeforeSwap: () => ext.closeConfigWatcher(),
-                onAfterSwap: () => ext.startConfigWatcher(),
+                onBeforeSwap: () => {
+                  ext.closeConfigWatcher();
+                  watcherClosedByUpdate = true;
+                },
+                onAfterSwap: () => {
+                  ext.startConfigWatcher();
+                  watcherClosedByUpdate = false;
+                },
                 progress: (line) => context.log(line, 'info'),
               });
+              if (watcherClosedByUpdate) {
+                ext.startConfigWatcher();
+                context.log('broke: config watcher restored after failed update', 'info');
+              }
               return log(result.message);
             }
             case 'errors-clear': {
