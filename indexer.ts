@@ -21,7 +21,8 @@
  * throws into the agent loop.
  */
 
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { Config } from './config';
@@ -52,6 +53,28 @@ export const INDEX_MAX_ENTRIES = 50_000;
 
 /** Terms longer than this are dropped (paths pasted into comments etc.). */
 const MAX_TOKEN_LENGTH = 48;
+
+/**
+ * BRK-002 (external review 2026-08-29): repository content is NOT a trusted
+ * key space. Tokens like `__proto__`, `constructor` or `prototype` come
+ * straight out of indexed files; routing them through plain property writes
+ * polluted `Object.prototype` in the shared host process. All index
+ * dictionaries are therefore null-prototype objects, and every write uses
+ * `defineKey` so even a hand-built normal-prototype state can never hit the
+ * `__proto__` accessor/setter.
+ */
+type Dict<T> = Record<string, T>;
+const nullDict = <T>(): Dict<T> => Object.create(null) as Dict<T>;
+
+/** Create a REAL own key - never a prototype mutation - even for `__proto__`. */
+function defineKey<T>(obj: Dict<T>, key: string, value: T): void {
+  Object.defineProperty(obj, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+/** Own-property check without lib es2022 (`Object.hasOwn`). */
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
 
 /**
  * Minimal stopword list. Enough to keep English prose snippets from ranking
@@ -90,9 +113,10 @@ export interface IndexState {
   builtAt: string;
   /** Truncated by INDEX_MAX_ENTRIES during the last build? */
   truncated: boolean;
-  /** relPath -> meta. */
+  /** relPath -> meta. Null-prototype dictionary (BRK-002), also after loadIndex. */
   files: Record<string, IndexedFile>;
-  /** term -> relPath -> in-document frequency. Contents never persisted. */
+  /** term -> relPath -> in-document frequency. Contents never persisted.
+   *  Null-prototype dictionary of null-prototype postings (BRK-002). */
   postings: Record<string, Record<string, number>>;
 }
 
@@ -140,7 +164,7 @@ export function isConfinedRelPath(relPath: unknown): relPath is string {
 }
 
 export function createEmptyState(projectRoot: string): IndexState {
-  return { version: 1, projectRoot, builtAt: '', truncated: false, files: {}, postings: {} };
+  return { version: 1, projectRoot, builtAt: '', truncated: false, files: nullDict<IndexedFile>(), postings: nullDict<Dict<number>>() };
 }
 
 function indexableRelPath(relPath: string): boolean {
@@ -154,6 +178,53 @@ function skippedPath(relPath: string): boolean {
   return /(^|[\\/])(node_modules|vendor)([\\/]|$)/.test(lower);
 }
 
+/**
+ * BRK-003 (external review 2026-08-29): dot-paths (IDE/tool config, cache
+ * dirs, .env-style files) never enter the index - the README claims this and
+ * private content routinely lives there.
+ */
+function hasDotSegment(relPath: string): boolean {
+  return relPath.split('/').some((seg) => seg.startsWith('.'));
+}
+
+/**
+ * BRK-003: conventionally private basenames are never indexed, regardless of
+ * git status. Deliberately conservative (a tracked `secrets.ts` is skipped
+ * too) - a false "not searchable" costs less than a leaked credential.
+ */
+function sensitiveBasename(relPath: string): boolean {
+  const base = relPath.slice(relPath.lastIndexOf('/') + 1).toLowerCase();
+  if (base.startsWith('.env')) return true;
+  if (/^id_(rsa|dsa|ecdsa|ed25519)(\.\w+)?$/.test(base)) return true;
+  if (/\.(pem|key|p12|pfx)$/.test(base)) return true;
+  return /(secret|credential|password|passwd)/.test(base);
+}
+
+/**
+ * BRK-003: git-aware candidate list - tracked plus untracked-but-not-ignored
+ * files (`git ls-files -co --exclude-standard`), i.e. exactly the project
+ * surface the user chose to keep visible to git. Returns null when git is
+ * missing or fails; the caller then decides the fallback. `-z` keeps paths
+ * raw (no core.quotePath escaping), NUL-separated.
+ */
+function gitCandidateFiles(root: string): string[] | null {
+  try {
+    const out = execFileSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], {
+      cwd: root,
+      timeout: 15_000,
+      windowsHide: true,
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out
+      .toString('utf-8')
+      .split('\0')
+      .filter((p) => p.length > 0);
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Scan + incremental merge
 // ---------------------------------------------------------------------------
@@ -164,14 +235,49 @@ interface ScannedEntry {
   sizeBytes: number;
 }
 
+export type ScanSource = 'git' | 'git-unavailable' | 'walk';
+
 /**
- * Walk the project root collecting candidate metadata (IO, never throws).
- * Returns null-padded with a truncated flag when INDEX_MAX_ENTRIES trips.
+ * Collect index candidates for the project root (IO, never throws).
+ *
+ * BRK-003 policy, in order of preference:
+ * - `git`: a git repository is scanned from `git ls-files -co
+ *   --exclude-standard` - gitignored files (a local secrets.json) are
+ *   structurally invisible to the index, matching user expectation that
+ *   gitignore separates repo surface from private local data.
+ * - `git-unavailable`: a `.git` entry exists but git failed (broken
+ *   worktree pointer, busy/corrupt repo). Fail SAFE: index nothing rather
+ *   than walking a tree whose ignore rules could not be evaluated.
+ * - `walk`: no git at all - the conservative legacy walk, hardened with
+ *   dot-path and sensitive-basename filters.
  */
-export function scanProject(root: string, maxFileKB: number): { entries: ScannedEntry[]; truncated: boolean } {
+export function scanProject(root: string, maxFileKB: number): { entries: ScannedEntry[]; truncated: boolean; source: ScanSource } {
   const maxBytes = maxFileKB * 1024;
   const entries: ScannedEntry[] = [];
   let truncated = false;
+  const gitFiles = gitCandidateFiles(root);
+  if (gitFiles !== null) {
+    for (const relPath of gitFiles) {
+      if (entries.length >= INDEX_MAX_ENTRIES) {
+        truncated = true;
+        break;
+      }
+      if (!indexableRelPath(relPath) || skippedPath(relPath) || hasDotSegment(relPath) || sensitiveBasename(relPath)) continue;
+      try {
+        const st = statSync(join(root, ...relPath.split('/')));
+        if (st.size > maxBytes) continue;
+        entries.push({ relPath, mtimeMs: st.mtimeMs, sizeBytes: st.size });
+      } catch {
+        // raced file - skip
+      }
+    }
+    return { entries, truncated, source: 'git' };
+  }
+  if (existsSync(join(root, '.git'))) {
+    // Git repo, but git could not answer. A blind walk here would index
+    // exactly the files the user asked git to hide.
+    return { entries: [], truncated: false, source: 'git-unavailable' };
+  }
   const stack = [root];
   try {
     while (stack.length > 0 && !truncated) {
@@ -189,11 +295,11 @@ export function scanProject(root: string, maxFileKB: number): { entries: Scanned
         }
         const abs = join(dir, e.name);
         if (e.isDirectory()) {
-          if (!SKIP_DIRS.has(e.name)) stack.push(abs);
+          if (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) stack.push(abs);
           continue;
         }
         if (!e.isFile()) continue;
-        if (!indexableRelPath(e.name) || skippedPath(e.name)) continue;
+        if (!indexableRelPath(e.name) || skippedPath(e.name) || e.name.startsWith('.') || sensitiveBasename(e.name)) continue;
         try {
           const st = statSync(abs);
           if (st.size > maxBytes) continue;
@@ -206,7 +312,7 @@ export function scanProject(root: string, maxFileKB: number): { entries: Scanned
   } catch {
     // walking must never throw upward
   }
-  return { entries, truncated };
+  return { entries, truncated, source: 'walk' };
 }
 
 /** Normalize to forward slashes so on-disk keys are OS-portable. */
@@ -218,7 +324,9 @@ function removeDocument(state: IndexState, relPath: string): void {
   delete state.files[relPath];
   for (const term of Object.keys(state.postings)) {
     const posting = state.postings[term];
-    if (posting && relPath in posting) {
+    // Object.hasOwn, not `in`: inherited properties (Object.prototype on a
+    // hand-built state) must never pass for a real posting entry.
+    if (posting && hasOwn(posting, relPath)) {
       delete posting[relPath];
       if (Object.keys(posting).length === 0) delete state.postings[term];
     }
@@ -236,11 +344,18 @@ function addDocument(state: IndexState, root: string, entry: ScannedEntry): void
   const tokens = tokenize(text);
   const tfByTerm = new Map<string, number>();
   for (const t of tokens) tfByTerm.set(t, (tfByTerm.get(t) ?? 0) + 1);
-  state.files[entry.relPath] = { mtimeMs: entry.mtimeMs, sizeBytes: entry.sizeBytes, tokenCount: tokens.length };
+  defineKey(state.files, entry.relPath, { mtimeMs: entry.mtimeMs, sizeBytes: entry.sizeBytes, tokenCount: tokens.length });
   for (const [term, tf] of tfByTerm) {
-    const posting = state.postings[term] ?? {};
-    posting[entry.relPath] = tf;
-    state.postings[term] = posting;
+    // BRK-002: hasOwn + defineKey - for the term '__proto__' on a
+    // normal-prototype state, `state.postings[term]` resolves to
+    // Object.prototype and a plain assignment would hit the prototype
+    // setter instead of creating a real entry.
+    let posting = state.postings[term];
+    if (posting === undefined || !hasOwn(state.postings, term)) {
+      posting = nullDict<number>();
+      defineKey(state.postings, term, posting);
+    }
+    defineKey(posting, entry.relPath, tf);
   }
 }
 
@@ -329,8 +444,8 @@ export function ensureFresh(
   if (!sameProjectRoot(state.projectRoot, root)) {
     // Foreign/stale root (moved project, copied store, tampered file): the
     // persisted state says nothing about THIS tree - rebuild from scratch.
-    state.files = {};
-    state.postings = {};
+    state.files = nullDict<IndexedFile>();
+    state.postings = nullDict<Dict<number>>();
     state.projectRoot = root;
     state.truncated = false;
     state.builtAt = '';
@@ -556,11 +671,22 @@ export function indexDirFor(projectRoot: string): string {
  * small integers, entries capped at INDEX_MAX_ENTRIES.
  */
 export function saveIndex(dir: string, state: IndexState): void {
-  mkdirSync(dir, { recursive: true });
+  // BRK-003 hardening: the index holds paths and terms of the local project,
+  // so it is owner-only on POSIX (ignored where modes do not apply).
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, 'index.json');
   const tmp = `${target}.tmp`;
-  writeFileSync(tmp, JSON.stringify(state), 'utf-8');
+  writeFileSync(tmp, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
   renameSync(tmp, target);
+}
+
+/** Load a persisted index. Anything suspicious becomes null (rebuild later). */
+function rebuildDict<T>(source: Record<string, T>, mapValue?: (value: T) => T): Dict<T> {
+  const out = nullDict<T>();
+  for (const [key, value] of Object.entries(source)) {
+    defineKey(out, key, mapValue ? mapValue(value) : value);
+  }
+  return out;
 }
 
 /** Load a persisted index. Anything suspicious becomes null (rebuild later). */
@@ -590,7 +716,19 @@ export function loadIndex(dir: string): IndexState | null {
         if (!isConfinedRelPath(relPath)) return null;
       }
     }
-    return { version: 1, projectRoot: raw.projectRoot, builtAt: raw.builtAt ?? '', truncated: raw.truncated === true, files: raw.files, postings: raw.postings };
+    return {
+      version: 1,
+      projectRoot: raw.projectRoot,
+      builtAt: raw.builtAt ?? '',
+      truncated: raw.truncated === true,
+      // BRK-002: rebuild both dictionaries as null-prototype objects. A
+      // JSON-parsed object carries Object.prototype, so a term like
+      // '__proto__' (JSON.parse DOES create it as a real own key) would
+      // otherwise resolve through the prototype chain during queries and
+      // merges. Rebuilding also drops any exotic inherited lookups.
+      files: rebuildDict<IndexedFile>(raw.files),
+      postings: rebuildDict<Dict<number>>(raw.postings, (posting) => rebuildDict<number>(posting)),
+    };
   } catch {
     return null;
   }

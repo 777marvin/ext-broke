@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Search index: tokens derived from repository content (e.g. identifiers
+  named `__proto__`, `constructor`, `prototype`) can no longer pollute
+  JavaScript global built-ins. Index dictionaries are null-prototype
+  objects, every write goes through a safe key definition, and persisted
+  indexes are rebuilt into safe dictionaries on load (external review
+  BRK-002).
+- Search index scan policy (privacy): git repositories are now indexed
+  from `git ls-files -co --exclude-standard`, so gitignored files (local
+  secrets, credentials) are structurally invisible to the index; dot-
+  directories and conventionally private basenames (.env*, key material,
+  *secret*/*credential*/*password*) are never indexed in any mode. When a
+  `.git` entry exists but git cannot answer, the scan fails safe (indexes
+  nothing) instead of blindly walking a tree whose ignore rules could not
+  be evaluated. Persisted index files/dirs are owner-only on POSIX
+  (external review BRK-003).
 - Summarize cache: after an incremental reuse (summary + freshly appended
   tool messages) the cache boundary is no longer advanced over messages
   that were never summarized. The previous behavior silently dropped those
