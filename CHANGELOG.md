@@ -28,7 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chars each; config `search.maxChars` has a hard documented range
   (500-50,000) and `search.maxFileKB` a hard ceiling (2048 KB) - a
   hand-edited config is no longer a trusted resource budget.
-
+- Snapshot hardening (external review BRK-019): `taskName` and `files` are
+  now secret-masked like every other persisted record field, task
+  directories get a stable hash suffix so distinct task IDs can no longer
+  collide (and same-millisecond snapshots can no longer overwrite each
+  other's record/undo files), `readHistory` refuses history files with
+  unexpected names, paths escaping the record's directory, non-message
+  content or oversized files, and a failed record write no longer leaves
+  an orphaned undo file behind.
+- Interface slicing fails open (external review BRK-020): placeholder-removed
 - Search index: tokens derived from repository content (e.g. identifiers
   named `__proto__`, `constructor`, `prototype`) can no longer pollute
   JavaScript global built-ins. Index dictionaries are null-prototype

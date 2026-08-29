@@ -451,7 +451,7 @@ Savings appear as an estimate under `slice:` in `/broke stats`.
 Long sessions pile up intermediate steps the agent no longer needs. Broke's
 F3 records **milestone snapshots** - compact, human-inspectable JSON files
 (`goal`, `achieved`, changed `files`, optional commit hash, a masked text
-summary) under `snapshots/<taskId>/` next to the extension. They are written
+summary) under `snapshots/<taskId-slug>-<hash>/` next to the extension. They are written
 automatically after every successful commit (`snapshot.onCommit`, default
 on), optionally on detected test-green tool results (`snapshot.onTestPass`,
 default off), and manually via `/broke snapshot [label]`.

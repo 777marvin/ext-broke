@@ -12,8 +12,9 @@
  * exist on disk.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join, sep } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { maskSecrets } from './compress';
 
@@ -24,13 +25,14 @@ import { maskSecrets } from './compress';
 export const SnapshotRecordSchema = z.object({
   version: z.literal(1),
   taskId: z.string().min(1),
-  /** Task display name at snapshot time (best effort, may be empty). */
+  /** Task display name at snapshot time (best effort, may be empty). Masked. */
   taskName: z.string(),
   createdAt: z.string().min(1),
   /** First user turn of the task, truncated to GOAL_MAX_CHARS. */
   goal: z.string(),
   achieved: z.string(),
-  /** getUpdatedFiles() result (relative paths). */
+  /** getUpdatedFiles() result (relative paths). Masked like all
+   *  conversation-derived fields (BRK-019). */
   files: z.array(z.string()),
   commit: z.string().optional(),
   /** Compact text summary - secrets already masked. */
@@ -144,11 +146,14 @@ export function makeSnapshotRecord(
   return SnapshotRecordSchema.parse({
     version: SNAPSHOT_VERSION,
     taskId: input.taskId,
-    taskName: input.taskName ?? '',
+    // BRK-019: taskName and files are conversation-derived too - they go
+    // through the same masking as goal/summary, keeping the "secrets never
+    // persist" claim true for EVERY persisted field.
+    taskName: maskSecrets(input.taskName ?? ''),
     createdAt,
     goal: truncateGoal(maskSecrets(input.goal)),
     achieved: truncateGoal(maskSecrets(input.achieved ?? '')),
-    files: input.files ?? [],
+    files: (input.files ?? []).map((f) => maskSecrets(f)),
     // Absent vs present matters: an absent key keeps JSON.stringify(state)
     // byte-stable and avoids noise like "commit": null/undefined.
     ...(input.commit ? { commit: maskSecrets(input.commit) } : {}),
@@ -262,7 +267,16 @@ interface IoPaths {
 }
 
 function taskDir(paths: IoPaths, taskId: string): string {
-  return join(paths.root, safeLabel(taskId));
+  // BRK-019: sanitized labels alone can collide (truncation, ID
+  // normalization) - a stable short hash suffix makes distinct task IDs
+  // never share one directory.
+  const hash = createHash('sha256').update(taskId).digest('hex').slice(0, 12);
+  return join(paths.root, `${safeLabel(taskId).slice(0, 24)}-${hash}`);
+}
+
+/** The on-disk directory holding a task's snapshots (BRK-019 hashed naming). */
+export function snapshotTaskDir(root: string, taskId: string): string {
+  return taskDir({ root }, taskId);
 }
 
 /**
@@ -315,7 +329,10 @@ export function persistSnapshot(
   let historyFile: string | undefined;
   let historyPath: string | undefined;
   let historySkipped: 'oversized' | undefined;
-  const base = `${isoFilename(record.createdAt)}_${safeLabel(opts?.label ?? 'manual')}`;
+  // BRK-019: a random suffix guarantees unique filenames even when two
+  // snapshots share label AND millisecond timestamp - previously the second
+  // record silently overwrote the first (undo file included).
+  const base = `${isoFilename(record.createdAt)}_${safeLabel(opts?.label ?? 'manual')}_${randomUUID().slice(0, 8)}`;
   if (opts?.keepHistory !== false && history.length > 0) {
     const serialized = JSON.stringify(history);
     if (Buffer.byteLength(serialized, 'utf-8') > (opts?.historyBytesCap ?? MAX_HISTORY_FILE_BYTES)) {
@@ -334,7 +351,20 @@ export function persistSnapshot(
 
   const stamped: SnapshotRecord = historyFile ? { ...record, historyFile } : record;
   const recordPath = join(dir, `${base}.json`);
-  writeFileSync(recordPath, JSON.stringify(stamped, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  try {
+    writeFileSync(recordPath, JSON.stringify(stamped, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  } catch (err) {
+    // BRK-019: the record never materialized - an orphaned undo file would
+    // claim an unrestoreable state. Remove the just-written history, rethrow.
+    if (historyPath) {
+      try {
+        rmSync(historyPath, { force: true });
+      } catch {
+        // cleanup is best effort - the original error matters more
+      }
+    }
+    throw err instanceof Error ? err : new Error(String(err));
+  }
 
   rotateTaskDir(dir);
   return { recordPath, historyPath, historySkipped };
@@ -364,11 +394,14 @@ export function listSnapshots(taskId: string, opts?: { dir?: string }): Snapshot
     } catch {
       record = null;
     }
-    // <iso>_<label>.json - iso block length is fixed (17 chars).
+    // <iso>_<label>[_<uuid8>].json - iso block length is fixed (17 chars).
     const labelStart = isoPatternLength(name) + 1;
+    const rawLabel = name.slice(labelStart, -'.json'.length);
     entries.push({
       file: name,
-      label: name.slice(labelStart, -'.json'.length),
+      // Strip the uniqueness suffix (BRK-019) for display; a label that
+      // legitimately ends in 8 hex chars may lose it - cosmetic only.
+      label: rawLabel.replace(/_[0-9a-f]{8}$/, ''),
       createdAt: record?.createdAt,
       record,
       bytes,
@@ -396,12 +429,43 @@ export function resolveSnapshot(taskId: string, n: number, opts?: { dir?: string
   return { path: join(taskDir({ root: snapshotsRoot(opts) }, taskId), entry.file), entry };
 }
 
+/**
+ * History sidecar names persistSnapshot can produce:
+ * `<iso>_<label>[_<uuid8>].history.json` (BRK-019). Anything else - in
+ * particular anything containing separators or dot segments - is refused.
+ */
+const HISTORY_NAME_RE = /^\d{8}T\d{9}Z_[A-Za-z0-9_-]{1,40}(_[0-9a-f]{8})?\.history\.json$/;
+
+/** History content shape: an array of message OBJECTS (role/content/...). */
+const HistorySchema = z.array(z.object({}).passthrough());
+
 export function readHistory(recordPath: string, record: SnapshotRecord): unknown[] | undefined {
   if (!record.historyFile) return undefined;
-  const p = join(join(recordPath, '..'), record.historyFile);
-  if (!existsSync(p)) return undefined;
-  const parsed: unknown = JSON.parse(readFileSync(p, 'utf-8'));
-  return Array.isArray(parsed) ? parsed : undefined;
+  const name = record.historyFile;
+  // BRK-019: the record is locally editable data, and its historyFile is
+  // joined onto the record's directory - so the stored name must be a plain
+  // expected basename, the resolved file must really live inside that
+  // directory (symlink/realpath containment), and the content must look
+  // like history this extension wrote. Anything else: honest undefined.
+  if (name.includes('/') || name.includes('\\') || !HISTORY_NAME_RE.test(name)) return undefined;
+  const dir = join(recordPath, '..');
+  let realFile: string;
+  try {
+    const realDir = realpathSync(dir);
+    realFile = realpathSync(join(realDir, name));
+    if (!realFile.startsWith(realDir + sep)) return undefined;
+  } catch {
+    return undefined; // missing/unresolvable - same as before hardening
+  }
+  const p = join(dir, name);
+  try {
+    if (statSync(p).size > MAX_HISTORY_FILE_BYTES) return undefined;
+    const parsed: unknown = JSON.parse(readFileSync(p, 'utf-8'));
+    const checked = HistorySchema.safeParse(parsed);
+    return checked.success ? (checked.data as unknown[]) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
