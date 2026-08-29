@@ -27,6 +27,7 @@ import {
   type SummarizeDeps,
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, saveConfig, type Config } from './config';
+import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
 import {
   createEmptyState,
@@ -227,6 +228,14 @@ export default class Broke implements Extension {
 
   onLoad(context: ExtensionContext): void {
     this.context = context;
+    // BRK-016: before anything reads a runtime path, move legacy artifacts
+    // out of the installation tree into the versioned runtime root (once,
+    // best-effort, marker-guarded).
+    try {
+      migrateLegacyRuntimeData();
+    } catch {
+      // never block loading - the modules fall back to defaults
+    }
     const config = getConfig();
     context.log(
       `Broke loaded - level: ${config.level}, maxContextChars: ${config.maxContextChars.toLocaleString('en-US')}, summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (${config.summarize.localModel})` : ''}`,

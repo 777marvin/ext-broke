@@ -2,13 +2,14 @@ import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, r
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { runtimeDir } from './paths';
 
 /**
  * Config file location. BROKE_CONFIG_PATH overrides the default (read at
  * module load): tests and parallel extension instances need isolation
  * from the real config.json.
  */
-export const CONFIG_PATH = process.env.BROKE_CONFIG_PATH ?? join(__dirname, 'config.json');
+export const CONFIG_PATH = process.env.BROKE_CONFIG_PATH ?? join(runtimeDir(), 'config.json');
 
 /**
  * Broke configuration. All values have defaults, so a missing or partial

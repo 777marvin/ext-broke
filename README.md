@@ -148,9 +148,14 @@ Unsigned or tampered releases are refused outright - which also means
 releases older than 0.8.0 can no longer be (re-)installed this way;
 roll back to the last signed version instead.
 
-The update preserves your `config.json`, stats/measure ledgers, the
-errors archive and `node_modules`, refreshes dependencies when the
-lockfile changed, and swaps the installation atomically: transient file
+Runtime data lives OUTSIDE the swappable code tree, under a versioned
+`<extension>/../.broke-data/v1/` root (`config.json`, `ledgers/`,
+`snapshots/`, `index/`, `errors/`; `BROKE_DATA_DIR` overrides it) - a
+one-time migration moves artifacts from earlier releases there on first
+load. The update therefore carries no runtime state out of the
+installation tree (there is nothing left to preserve) and rebuilds
+dependencies with `npm ci` from the verified lockfile - `node_modules` is
+never reused (BRK-009). It swaps the installation atomically: transient file
 locks are retried, every payload file is verified after the copy before
 the update declares success, and any failure rolls back to the previous
 installation completely. Interrupted updates recover on the next run: a
@@ -451,7 +456,7 @@ Savings appear as an estimate under `slice:` in `/broke stats`.
 Long sessions pile up intermediate steps the agent no longer needs. Broke's
 F3 records **milestone snapshots** - compact, human-inspectable JSON files
 (`goal`, `achieved`, changed `files`, optional commit hash, a masked text
-summary) under `snapshots/<taskId-slug>-<hash>/` next to the extension. They are written
+summary) under the data root (`snapshots/<taskId-slug>-<hash>/`, outside the swappable extension tree). They are written
 automatically after every successful commit (`snapshot.onCommit`, default
 on), optionally on detected test-green tool results (`snapshot.onTestPass`,
 default off), and manually via `/broke snapshot [label]`.
@@ -488,7 +493,7 @@ came from.
 
 Honest positioning against what AiderDesk already ships: Broke's index is
 **offline** (no embedding model needed), persisted per project under
-`<extension>/index/`, re-indexed incrementally by mtime/size diffing
+the data root (`index/<projectHash>/`, BRK-016), re-indexed incrementally by mtime/size diffing
 (triggered on commits and re-checked before queries once the 60s freshness window expires), and strictly budgeted.
 It complements rather than replaces `power---semantic_search` or the repo
 map.
@@ -527,7 +532,7 @@ summarizer's output, it only stores it as history. Switching
 it only changes which model sees the untrusted text first.
 
 Snapshots (F3) persist small JSON records and optional raw-history undo
-files **locally** under the extension directory. Every record field derived
+files **locally** under the data root (outside the swappable extension tree). Every record field derived
 from conversation content passes through the same secret masking as all
 broke artifacts; they are bounded by count (50 records per task) and by
 bytes (25 MB per task, individual undo files capped at 10 MB, oldest

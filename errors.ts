@@ -10,9 +10,10 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { runtimeDir } from './paths';
 
 /** Directory where full tool outputs are archived when errors.toolLevel is on. */
-export const ERRORS_DIR = process.env.BROKE_ERRORS_DIR ?? join(__dirname, 'errors');
+export const ERRORS_DIR = process.env.BROKE_ERRORS_DIR ?? join(runtimeDir(), 'errors');
 
 /** Total archive cap: full tool outputs are debug data, they must not grow unbounded. */
 export const MAX_ERRORS_DIR_BYTES = 100 * 1024 * 1024;

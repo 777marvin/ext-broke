@@ -3,11 +3,12 @@ import { join } from 'node:path';
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { CompressReport } from './compress';
 import { partText } from './output';
+import { runtimeDir } from './paths';
 
 // BROKE_STATS_PATH / BROKE_MEASURE_PATH override the defaults (read at
 // module load): tests need isolation from the real ledgers.
-export const STATS_PATH = process.env.BROKE_STATS_PATH ?? join(__dirname, 'stats.jsonl');
-export const MEASURE_PATH = process.env.BROKE_MEASURE_PATH ?? join(__dirname, 'measure.jsonl');
+export const STATS_PATH = process.env.BROKE_STATS_PATH ?? join(runtimeDir(), 'ledgers', 'stats.jsonl');
+export const MEASURE_PATH = process.env.BROKE_MEASURE_PATH ?? join(runtimeDir(), 'ledgers', 'measure.jsonl');
 
 /**
  * Token estimation. chars/4 is a deliberately crude heuristic (English prose

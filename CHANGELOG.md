@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Runtime data relocated out of the swappable installation tree (external
+  review BRK-016): config, ledgers, snapshots, search index and error
+  archive now live under a versioned data root as a SIBLING of the
+  installation (`<extension>/../.broke-data/v1/` holding `config.json`,
+  `ledgers/stats.jsonl` + `ledgers/measure.jsonl`, `snapshots/`,
+  `index/`, `errors/`), so an updater/deploy swap of the install
+  directory can no longer touch user data; `BROKE_DATA_DIR` overrides
+  the root. A one-time, marker-guarded best-effort migration on first
+  load moves legacy artifacts into the new layout - it never overwrites
+  newer data already at the target, falls back to copy-then-remove for
+  files when a rename crosses devices, and leaves anything it cannot
+  move in place for a later retry. The `BROKE_*_PATH`/`BROKE_*_DIR`
+  overrides keep working on top for tests and host isolation. `/broke
+  update` no longer needs its runtime-state preserve list: there is
+  nothing left in the installation tree to carry over (`node_modules`
+  was already never reused - `npm ci` rebuilds dependencies from the
+  verified lockfile).
 - Search index metadata honesty (external review BRK-017): a truncation
   flag that cleared between builds is now persisted (the previous
   post-mutation compare could never observe the flip), a manual rebuild

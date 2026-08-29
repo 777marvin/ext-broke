@@ -17,6 +17,7 @@ import { join, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { maskSecrets } from './compress';
+import { runtimeDir } from './paths';
 
 // ---------------------------------------------------------------------------
 // Record schema
@@ -242,7 +243,7 @@ export const MAX_HISTORY_FILE_BYTES = 10 * 1024 * 1024;
 /** Root for snapshots: explicit override > env var (tests/host contract) >
  * default next to the extension entry module (like stats.jsonl). */
 export function snapshotsRoot(overrides?: { dir?: string }): string {
-  return overrides?.dir ?? process.env.BROKE_SNAPSHOTS_DIR ?? join(__dirname, SNAPSHOT_DIR_NAME);
+  return overrides?.dir ?? process.env.BROKE_SNAPSHOTS_DIR ?? join(runtimeDir(), SNAPSHOT_DIR_NAME);
 }
 
 /** Filename-safe label fragment: alphanumerics, dash and underscore only. */

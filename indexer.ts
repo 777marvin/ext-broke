@@ -26,6 +26,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, rea
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { Config } from './config';
+import { runtimeDir } from './paths';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -743,7 +744,7 @@ export function estimateBulkReadAvoided(
 export function indexDirFor(projectRoot: string): string {
   // Env override mirrors the BROKE_CONFIG_PATH isolation pattern - tests must
   // never write into the real extension directory.
-  const base = process.env.BROKE_INDEX_DIR || __dirname;
+  const base = process.env.BROKE_INDEX_DIR || join(runtimeDir(), 'index');
   return join(base, 'index', projectHash(projectRoot));
 }
 
