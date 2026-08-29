@@ -1,25 +1,32 @@
-# Release pipeline (review R1): builds a signed source artifact for every
-# vX.Y.Z tag and publishes it as a GitHub release. The self-updater refuses
-# releases whose SHA256SUMS / signature assets are missing or invalid, so
-# this workflow is the ONLY supported release path.
+# Release pipeline (BRK-007/BRK-008 rework): a tag push only TRIGGERS the
+# release - the heavyweight decisions live in workflows this tag cannot
+# alter:
+#
+# 1. `gate` runs the FULL CI suite (CodeQL, UI validation, deploy smokes,
+#    deps-current, typecheck, tests, audit) on the exact tagged commit via
+#    the reusable ci.yml workflow (same ref).
+# 2. `sign-and-publish` calls the reusable release-sign-and-publish workflow
+#    PINNED TO `main`: the signing code that receives
+#    BROKE_RELEASE_SIGNING_KEY comes from protected main, never from the
+#    tag (BRK-008 - the signing key is no longer in the trust area of the
+#    tag). The environment `release` still requires the maintainer approval
+#    BEFORE any secret is exposed. The workflow additionally verifies that
+#    the tag is an ancestor of protected main.
 #
 # Trust model:
-# - The artifact is a byte-stable `git archive` tarball (NOT GitHub's
-#   auto-generated one, which is not guaranteed to be reproducible).
+# - The artifact is a byte-stable `git archive` tarball of the tagged commit,
+#   built by the trusted workflow.
 # - SHA256SUMS is signed with Ed25519; the private key lives only in the
-#   BROKE_RELEASE_SIGNING_KEY repository secret. The updater embeds the
-#   matching public key and verifies signature + checksum before extracting.
-# - CI gate (review F-03): typecheck, tests, dependency audit and the
-#   version/tag consistency check run INLINE on the exact tagged commit
-#   BEFORE anything is signed or published; the full CI suite (CodeQL, UI
-#   validation, deploy smokes, deps-current) runs in parallel on the same
-#   commit via the main-push CI run. (A reusable `uses: ci.yml` gate was
-#   attempted first - GitHub refused to even start the workflow on tag
-#   pushes, startup_failure with zero jobs - so the gate lives inline.)
-#   Signing is the last privileged transformation.
-# - Dependency-free by design: the only third-party actions are checkout /
-#   setup-node, pinned to the SAME immutable commit SHAs as ci.yml
-#   (review F-04).
+#   BROKE_RELEASE_SIGNING_KEY repository secret and is only ever touched by
+#   code checked out from protected main.
+# - The self-updater refuses releases whose SHA256SUMS / signature assets
+#   are missing or invalid, so this pipeline remains the ONLY supported
+#   release path.
+# - Least privilege: the caller's token CAPS the callee's - the full gate
+#   (CodeQL) needs security-events:write and the publish job needs
+#   contents:write, so both are granted here; every local/called job then
+#   narrows to what it actually uses (ci.yml's jobs opt in individually).
+
 name: release
 
 on:
@@ -28,71 +35,17 @@ on:
 
 permissions:
   contents: write
+  security-events: write
 
 jobs:
-  release:
-    name: Verify, build, sign and publish
-    runs-on: ubuntu-latest
-    # D6: the "release" environment (repo settings) carries a required
-    # reviewer + a tags-only deployment policy - without this line the
-    # approval gate would never fire.
-    environment: release
-    steps:
-      - name: Checkout the tagged commit (with tags)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          fetch-tags: true
+  gate:
+    name: Full CI gate (tagged commit)
+    uses: ./.github/workflows/ci.yml
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Verify tag == package version (F-05/F-16 invariant)
-        run: node scripts/check-version.mjs
-
-      - name: CI gate - install
-        run: npm ci
-
-      - name: CI gate - typecheck
-        run: npm run typecheck
-
-      - name: CI gate - tests
-        run: npm test
-
-      - name: CI gate - dependency audit
-        run: npm audit --audit-level=high
-
-      - name: Build the source artifact (byte-stable git archive)
-        run: git archive --format=tar.gz --output="broke-${{ github.ref_name }}.tar.gz" "${{ github.ref_name }}"
-
-      - name: Sign SHA256SUMS
-        env:
-          BROKE_RELEASE_SIGNING_KEY: ${{ secrets.BROKE_RELEASE_SIGNING_KEY }}
-        run: node scripts/sign-release.mjs "broke-${{ github.ref_name }}.tar.gz"
-
-      - name: Publish the GitHub release (duplicate-safe)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Lost/replayed push events (e.g. after an Actions outage) can fire
-          # this workflow twice for the same tag. Either way the release stays
-          # consistent: create when missing, otherwise refresh the three
-          # signed assets on the existing release. Rebuilds are byte-stable,
-          # so --clobber cannot change what users already verified.
-          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
-            gh release upload "${{ github.ref_name }}" \
-              "broke-${{ github.ref_name }}.tar.gz" \
-              SHA256SUMS \
-              SHA256SUMS.sig \
-              --clobber
-          else
-            gh release create "${{ github.ref_name }}" \
-              "broke-${{ github.ref_name }}.tar.gz" \
-              SHA256SUMS \
-              SHA256SUMS.sig \
-              --verify-tag \
-              --title "${{ github.ref_name }}" \
-              --generate-notes
-          fi
+  sign-and-publish:
+    name: Sign and publish (main-controlled, approval-gated)
+    needs: [gate]
+    uses: 777marvin/ext-broke/.github/workflows/release-sign-and-publish.yml@main
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
