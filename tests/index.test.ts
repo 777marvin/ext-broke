@@ -604,7 +604,11 @@ describe('ST-slicing hooks (fake host)', () => {
       context,
     );
 
-    const result = await ext.onToolFinished(readEvent('SRC\\BILLING.TS', TS_READ_PAYLOAD), context);
+    // BRK-020: focus matching folds case on WINDOWS only. The Windows read
+    // uses a different case + separator style; POSIX reads the exact path
+    // through backslash normalization.
+    const readPath = process.platform === 'win32' ? 'SRC\\BILLING.TS' : 'src\\billing.ts';
+    const result = await ext.onToolFinished(readEvent(readPath, TS_READ_PAYLOAD), context);
     const text = JSON.stringify(result?.output ?? '');
     assert.ok(text.includes('focus file'), 'the focus marker must be present');
     assert.ok(text.includes('Math.round(cents * rate)'), 'the focus file keeps its full body');

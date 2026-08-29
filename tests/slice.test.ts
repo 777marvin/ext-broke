@@ -212,7 +212,10 @@ describe('sliceWithFocus', () => {
   });
 
   it('returns the full file untouched when this file is the focus (no symbol)', () => {
-    const view = sliceWithFocus(TS_FIXTURE, 'ts', { file: 'SRC\\A.TS' }, 'src/a.ts');
+    // BRK-020: focus matching folds case on Windows only - Windows proves
+    // case-insensitivity, POSIX proves separator-normalized exact matching.
+    const focusFile = process.platform === 'win32' ? 'SRC\\A.TS' : 'src\\a.ts';
+    const view = sliceWithFocus(TS_FIXTURE, 'ts', { file: focusFile }, 'src/a.ts');
     assert.equal(view.text, TS_FIXTURE);
     assert.equal(view.keptLines, view.originalLines);
   });
@@ -349,17 +352,27 @@ describe('tool detection', () => {
 });
 
 describe('slicePathKey (D5: relative resolution against the task dir)', () => {
+  // BRK-020: separators normalize everywhere, case folds on WINDOWS ONLY -
+  // expectations are computed per platform so CI on POSIX asserts the same
+  // documented rule instead of assuming folding.
+  const fold = (s: string): string => (process.platform === 'win32' ? s.toLowerCase() : s);
+
   it('resolves relative paths against the task dir', () => {
-    assert.equal(slicePathKey('src/a.ts', 'C:\\proj'), 'c:/proj/src/a.ts');
+    assert.equal(slicePathKey('src/a.ts', 'C:\\proj'), fold('C:/proj/src/a.ts'));
   });
 
-  it('keeps absolute paths normalized but unchanged', () => {
-    assert.equal(slicePathKey('D:\\Repo\\SRC\\a.TS', 'c:/other'), 'd:/repo/src/a.ts');
+  it('keeps absolute paths normalized, case folded on Windows only', () => {
+    assert.equal(slicePathKey('D:\\Repo\\SRC\\a.TS', 'c:/other'), fold('D:/Repo/SRC/a.TS'));
   });
 
   it('matches a relative tool path against an absolute stored focus', () => {
     assert.equal(sameSlicePath('src/a.ts', 'C:\\proj\\src\\a.ts', 'c:\\proj'), true);
-    assert.equal(sameSlicePath('C:/proj/src/a.ts', 'src\\A.TS', 'C:\\Proj'), true);
+    if (process.platform === 'win32') {
+      assert.equal(sameSlicePath('C:/proj/src/a.ts', 'src\\A.TS', 'C:\\Proj'), true, 'Windows matching stays case-insensitive');
+    } else {
+      assert.equal(sameSlicePath('C:/proj/src/a.ts', 'src/a.ts', 'C:\\Proj'), true, 'POSIX matching is case-sensitive but separator-normalized');
+      assert.equal(sameSlicePath('C:/proj/src/a.ts', 'src\\A.TS', 'C:\\Proj'), false, 'case-sensitive filesystems must not fold');
+    }
   });
 
   it('does not match when the base produces a different file', () => {
@@ -367,7 +380,12 @@ describe('slicePathKey (D5: relative resolution against the task dir)', () => {
   });
 
   it('behaves like before when no base is available', () => {
-    assert.equal(sameSlicePath('SRC/A.ts', 'src\\a.ts'), true);
+    if (process.platform === 'win32') {
+      assert.equal(sameSlicePath('SRC/A.ts', 'src\\a.ts'), true, 'Windows matching stays case-insensitive');
+    } else {
+      assert.equal(sameSlicePath('SRC/A.ts', 'SRC/A.ts'), true);
+      assert.equal(sameSlicePath('SRC/A.ts', 'src\\a.ts'), false, 'case-sensitive filesystems must not fold');
+    }
   });
 });
 
