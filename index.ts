@@ -199,6 +199,8 @@ export default class Broke implements Extension {
    */
   private readonly optimizingTasks = new Set<string>();
   private ollamaStatusCache: { at: number; status: OllamaStatus } | null = null;
+  /** In-flight status probe - concurrent callers share one request (BRK-029). */
+  private ollamaProbe: Promise<OllamaStatus | null> | null = null;
   /**
    * ST-slicing state (F2), all task-scoped and bounded. The last edit target
    * becomes the task focus (focusAuto); explicit focus comes from
@@ -869,15 +871,47 @@ export default class Broke implements Extension {
     }
   }
 
-  /** Cached Ollama reachability for the badge (30 s TTL, 3 s check timeout). */
-  private async cachedOllamaStatus(config: Config): Promise<OllamaStatus | null> {
-    if (config.summarize.via !== 'local') return null;
+  /**
+   * BRK-029: the optional local backend is probed ONLY while it is actually
+   * active - extension enabled, level 'summarize', via 'local'. Every other
+   * configuration (off, structural/truncate, cloud) must not generate
+   * localhost traffic: an inactive, optional service owns no code path.
+   */
+  private localSummarizerActive(config: Config): boolean {
+    return config.enabled && config.level === 'summarize' && config.summarize.via === 'local';
+  }
+
+  /** Fresh-cache read without probing - for log lines that must not wait. */
+  private freshOllamaStatus(config: Config): OllamaStatus | null {
+    if (!this.localSummarizerActive(config)) return null;
     if (this.ollamaStatusCache && Date.now() - this.ollamaStatusCache.at < OLLAMA_STATUS_TTL_MS) {
       return this.ollamaStatusCache.status;
     }
-    const status = await ollamaStatus(config.summarize.ollamaUrl);
-    this.ollamaStatusCache = { at: Date.now(), status };
-    return status;
+    return null;
+  }
+
+  /**
+   * Cached Ollama reachability for the badge (30 s TTL, 3 s check timeout).
+   * When the TTL has expired, concurrent callers share ONE in-flight probe
+   * instead of each opening their own request (BRK-029) - a slow or dead
+   * Ollama must not accumulate parallel HTTP checks.
+   */
+  private async cachedOllamaStatus(config: Config): Promise<OllamaStatus | null> {
+    if (!this.localSummarizerActive(config)) return null;
+    if (this.ollamaStatusCache && Date.now() - this.ollamaStatusCache.at < OLLAMA_STATUS_TTL_MS) {
+      return this.ollamaStatusCache.status;
+    }
+    if (!this.ollamaProbe) {
+      const probe = ollamaStatus(config.summarize.ollamaUrl).then((status) => {
+        this.ollamaStatusCache = { at: Date.now(), status };
+        return status;
+      });
+      this.ollamaProbe = probe;
+      void probe.finally(() => {
+        if (this.ollamaProbe === probe) this.ollamaProbe = null;
+      });
+    }
+    return this.ollamaProbe;
   }
 
   // Visibility: tell the user the extension is active on every new task.
@@ -896,16 +930,24 @@ export default class Broke implements Extension {
 
   private async taskInitialized(event: TaskInitializedEvent, context: ExtensionContext): Promise<void> {
     const config = getConfig();
-    // Status checks use a short timeout (3 s) so a dead remote Ollama never
-    // blocks task initialization.
-    const ollama = config.summarize.via === 'local' ? await ollamaStatus(config.summarize.ollamaUrl) : null;
-    if (ollama) this.ollamaStatusCache = { at: Date.now(), status: ollama };
+    // BRK-029: the optional local backend never sits in the task-critical
+    // path. When the local summarizer is active, START the status probe in
+    // the background (the badge tooltip reports the result once it lands);
+    // the init line logs from the fresh cache when one exists and says so
+    // honestly when the check is still running. Inactive local
+    // configurations are not probed at all.
+    void this.cachedOllamaStatus(config).catch(() => undefined);
+    const fresh = this.freshOllamaStatus(config);
     const ollamaNote =
-      config.summarize.via === 'local'
-        ? ollama?.reachable
-          ? `ollama reachable (${ollama.models.length} models)`
-          : `ollama NOT reachable - local summaries inactive (ollama serve)`
-        : `cloud summarizer (${config.summarize.cloudModelId || 'task model'})`;
+      !this.localSummarizerActive(config)
+        ? config.summarize.via === 'local'
+          ? 'local summarizer inactive - Ollama is not probed'
+          : `cloud summarizer (${config.summarize.cloudModelId || 'task model'})`
+        : fresh
+          ? fresh.reachable
+            ? `ollama reachable (${fresh.models.length} models)`
+            : `ollama NOT reachable - local summaries inactive (ollama serve)`
+          : 'ollama status check running in the background - the badge reports the result';
     const remotePlaintext = config.summarize.via === 'local' && isPlaintextRemoteUrl(config.summarize.ollamaUrl);
     const remoteBlocked =
       config.summarize.via === 'local' && isRemoteOllamaHost(config.summarize.ollamaUrl) && !config.summarize.allowRemoteHost;

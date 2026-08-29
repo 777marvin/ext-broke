@@ -90,6 +90,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gear dialog gains the missing safety-relevant fields (snapshot
   onCommit/onTestPass/keepHistory, flush confirm/undo,
   summarize.maxSummaryChars, truncate.maxInputChars).
+- The optional local summarizer backend no longer owns any task-critical
+  or polling path (external review BRK-029): Ollama is probed ONLY while
+  the local summarizer is actually active (extension enabled, level
+  `summarize`, backend `local`) - with the default `truncate` level or a
+  cloud backend, opening a task no longer waits up to 3 s and no
+  localhost traffic is generated at all. When the backend is active, the
+  status probe runs in the background (task initialization logs from the
+  fresh cache or honestly reports the check as still running; the badge
+  tooltip shows the result once it lands), concurrent badge refreshes
+  share one in-flight request instead of stacking parallel checks, and
+  the badge's 10 s poll stops entirely when no summarizer backend is
+  active.
 - The UI type check can no longer silently degrade to `any` (external
   review BRK-024): a minimal, versioned host UI contract
   (`scripts/host-ui-contract.d.ts`, pinned to the compiled

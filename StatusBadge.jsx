@@ -2,12 +2,18 @@
   // Polling fallback: re-fetches the data every 10s even if a push event
   // (triggerUIDataRefresh after a compression run) was missed by the
   // renderer - same pattern as the ext-savemytoken badge.
+  // BRK-029: the poll runs ONLY while a summarizer backend is actually
+  // active (level 'summarize' with a configured backend). Without one the
+  // data is static between user actions - push events cover those - and
+  // an idle interval would only keep the renderer busy.
+  const activeBackend = data?.level === 'summarize' && data?.summarizerConfigured !== 'none';
   React.useEffect(() => {
+    if (!activeBackend) return undefined;
     const p = setInterval(() => {
       executeExtensionAction?.('refresh').catch?.(() => {});
     }, 10000);
     return () => clearInterval(p);
-  }, []);
+  }, [activeBackend]);
 
   // Always render: until the first data fetch arrives the badge shows 0
   // instead of disappearing entirely.
