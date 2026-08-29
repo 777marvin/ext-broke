@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,6 +8,7 @@ import {
   DEFAULT_CONFIG,
   loadConfigFile,
   mergeConfig,
+  saveConfig,
   updateConfigPaths,
   type Config,
 } from '../config';
@@ -67,12 +68,43 @@ describe('loadConfigFile', () => {
     }
   });
 
-  it('falls back to defaults when the file is missing', () => {
+  it('missing file is a silent first run (BRK-023)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'broke-config-'));
     try {
       const { config, warning } = loadConfigFile(join(dir, 'missing.json'));
       assert.deepEqual(config, DEFAULT_CONFIG);
-      assert.ok(warning);
+      assert.equal(warning, null, 'ENOENT is the normal first run - it must not warn');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns with full paths about unknown keys and keeps known values (BRK-023)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-config-'));
+    const file = join(dir, 'config.json');
+    try {
+      writeFileSync(file, JSON.stringify({ maxContexChars: 99999, search: { maxChars: 1234, typoKey: true } }), 'utf-8');
+      const { config, warning } = loadConfigFile(file);
+      assert.ok(warning, 'unknown keys must produce a warning');
+      assert.match(warning ?? '', /maxContexChars/);
+      assert.match(warning ?? '', /search\.typoKey/);
+      assert.equal(config.maxContextChars, DEFAULT_CONFIG.maxContextChars, 'the typo must fall back to the default');
+      assert.equal(config.search.maxChars, 1234, 'known values still apply alongside the warning');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('saveConfig survives a sabotaged legacy temp path via unique temp names (BRK-010)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-config-'));
+    const file = join(dir, 'config.json');
+    try {
+      // A stale/locked fixed-name temp must not break saving: unique temp
+      // names (pid + randomness) cannot collide with leftovers.
+      mkdirSync(`${file}.tmp`);
+      saveConfig(mergeConfig({ maxContextChars: 555 }), file);
+      assert.equal(JSON.parse(readFileSync(file, 'utf-8')).maxContextChars, 555);
+      assert.equal(existsSync(`${file}.tmp`), true, 'the unrelated directory stays untouched');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

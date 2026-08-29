@@ -65,8 +65,15 @@ export function validateContext(messages: ContextMessage[]): ValidationFailure[]
   }
 
   // Orphaned calls: a call whose result was removed makes AI_MissingToolResultsError.
+  // BRK-015 (external review 2026-08-29): set membership cannot prove the
+  // documented SEQUENCE invariant - with the stored indexes we also enforce
+  // that every result comes AFTER its call (a provider can reject
+  // result-before-call streams).
   for (const [id, idx] of callIds) {
     if (!resultIds.has(id)) failures.push({ index: idx, reason: `tool-call '${id}' has no matching tool-result` });
+    else if ((resultIds.get(id) as number) < idx) {
+      failures.push({ index: resultIds.get(id) as number, reason: `tool-result '${id}' appears before its tool-call` });
+    }
   }
   // Orphaned results: a result whose producing call is gone fails the same way.
   for (const [id, idx] of resultIds) {

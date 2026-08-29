@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   compareSemver,
+  mapUpdateFailure,
   MAX_PRESERVED_ERRORS_BYTES,
   MAX_PRESERVED_INDEX_BYTES,
   MAX_PRESERVED_SNAPSHOT_BYTES,
@@ -839,7 +840,76 @@ describe('streamResponseToFileWithCap (review F-11)', () => {
   it('refuses HTTP errors and empty bodies like the old buffered path', async () => {
     const dest = join(tmp, `stream-err-${Math.random().toString(36).slice(2)}.bin`);
     await assert.rejects(streamResponseToFileWithCap({ ...res(null), ok: false, status: 404 }, dest, 10), /HTTP 404/);
-    await assert.rejects(streamResponseToFileWithCap(res(null), dest, 10), /empty response body/);
+    await assert.rejects(streamResponseToFileWithCap({ ...res(null) }, dest, 10), /empty response body/);
     assert.equal(existsSync(dest), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BRK-005 (external review 2026-08-29): a failure AFTER the commit marker
+// must never be reported as "the installed version is unchanged".
+// ---------------------------------------------------------------------------
+
+describe('post-commit failure honesty (BRK-005)', () => {
+  it('reports COMMITTED when the marker of THIS run exists and a post-commit step failed', () => {
+    const install = fakeInstall('0.5.1');
+    writeFileSync(join(install, '.update-state.json'), '{"committed":true,"tag":"v0.6.0"}\n', 'utf-8');
+    const res = mapUpdateFailure(new Error('cleanup exploded'), install, '0.5.1', 'v0.6.0');
+    assert.equal(res.ok, true, 'a committed update is not a failed update');
+    assert.equal(res.updated, true);
+    assert.equal(res.targetVersion, '0.6.0');
+    assert.match(res.message, /COMMITTED/);
+    assert.match(res.message, /cleanup exploded/);
+  });
+
+  it('reports unchanged when no marker of this run exists (pre-commit failure)', () => {
+    const install = fakeInstall('0.5.1');
+    // A marker from a PREVIOUS update (old tag) does not count for this run.
+    writeFileSync(join(install, '.update-state.json'), '{"committed":true,"tag":"v0.5.0"}\n', 'utf-8');
+    const res = mapUpdateFailure(new Error('download died'), install, '0.5.1', 'v0.6.0');
+    assert.equal(res.ok, false);
+    assert.equal(res.updated, false);
+    assert.match(res.message, /unchanged/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BRK-010: cross-process update lock.
+// ---------------------------------------------------------------------------
+
+describe('update lock (BRK-010)', () => {
+  it('fails when another live process holds the lock', async () => {
+    const install = fakeInstall('0.5.1');
+    writeFileSync(join(install, '.update.lock'), `${process.pid}\n`, 'utf-8');
+    const res = await runUpdate({ mode: 'install' }, {}, makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD), install);
+    assert.equal(res.ok, false);
+    assert.match(res.message, /another broke update/i);
+    assert.match(readFileSync(join(install, 'index.ts'), 'utf-8'), /^\/\/ v0\.5\.1$/, 'nothing was touched');
+  });
+
+  it('takes over a stale lock from a dead process', async () => {
+    const install = fakeInstall('0.5.1');
+    writeFileSync(join(install, '.update.lock'), '999999999\n', 'utf-8');
+    const res = await runUpdate({ mode: 'install' }, {}, makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD), install);
+    assert.ok(res.ok, res.message);
+  });
+
+  it('removes its own lock after a successful update', async () => {
+    const install = fakeInstall('0.5.1');
+    const res = await runUpdate({ mode: 'install' }, {}, makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD), install);
+    assert.ok(res.ok, res.message);
+    assert.equal(existsSync(join(install, '.update.lock')), false, 'the lock must not linger');
+  });
+
+  it('never reuses the old node_modules (BRK-009): npm ci always rebuilds them', async () => {
+    const install = fakeInstall('0.5.1');
+    // Old node_modules with a planted artifact that must NOT survive.
+    writeFileSync(join(install, 'node_modules', 'stale-payload.txt'), 'old install artifact', 'utf-8');
+    const calls: FakeCalls = { downloads: [], npmCiDirs: [] };
+    const res = await runUpdate({ mode: 'install' }, {}, makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD, { calls }), install);
+    assert.ok(res.ok, res.message);
+    assert.equal(calls.npmCiDirs.length, 1, 'npm ci runs on every install, lockfile change or not');
+    assert.equal(existsSync(join(install, 'node_modules', 'stale-payload.txt')), false, 'old node_modules must not survive');
+    assert.equal(existsSync(join(install, 'node_modules', 'fresh.js')), true, 'fresh dependencies installed');
   });
 });

@@ -506,10 +506,10 @@ function preserveRuntimeState(oldInstall: string, stagedPayload: string, warning
       // A missing/raced file is not worth failing the update over.
     }
   }
-  // node_modules are reused so the swap stays fast; refreshed by npm ci
-  // below whenever the lockfile changed.
-  const nm = join(oldInstall, 'node_modules');
-  if (existsSync(nm)) cpSync(nm, join(stagedPayload, 'node_modules'), { recursive: true });
+  // BRK-009: node_modules are deliberately NOT reused - npm ci always
+  // rebuilds them in the staged payload from the verified lockfile, so
+  // tampered/corrupted dependencies from the old installation cannot survive
+  // an update.
   const errDir = join(oldInstall, 'errors');
   if (existsSync(errDir)) {
     if (dirSizeBytes(errDir) <= MAX_PRESERVED_ERRORS_BYTES) {
@@ -538,14 +538,6 @@ function preserveRuntimeState(oldInstall: string, stagedPayload: string, warning
     } else {
       moveOversizedToRecovery(oldInstall, 'index', '64 MB', warnings);
     }
-  }
-}
-
-function filesDiffer(a: string, b: string): boolean {
-  try {
-    return !readFileSync(a).equals(readFileSync(b));
-  } catch {
-    return true; // unreadable/missing counts as "changed" - refresh deps
   }
 }
 
@@ -685,11 +677,16 @@ function writeCommitMarker(installDir: string, tag: string): void {
 }
 
 function isCommittedInstall(installDir: string): boolean {
+  return commitMarkerTag(installDir) !== null;
+}
+
+/** The committed tag from .update-state.json, or null (uncommitted/missing). */
+function commitMarkerTag(installDir: string): string | null {
   try {
-    const raw = JSON.parse(readFileSync(join(installDir, UPDATE_STATE_FILE), 'utf-8')) as { committed?: unknown };
-    return raw.committed === true;
+    const raw = JSON.parse(readFileSync(join(installDir, UPDATE_STATE_FILE), 'utf-8')) as { committed?: unknown; tag?: unknown };
+    return raw.committed === true && typeof raw.tag === 'string' ? raw.tag : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -961,8 +958,82 @@ export interface UpdateResult {
 /** Module-level mutex: two concurrent self-updates would corrupt the swap. */
 let updateInFlight = false;
 
+/**
+ * BRK-010 (external review 2026-08-29): the in-process mutex does not protect
+ * against a SECOND AiderDesk instance updating the same installation. The
+ * lock file carries the owning PID; a lock is stale when its PID is dead AND
+ * its age exceeds a grace window, in which case it is taken over.
+ */
+const UPDATE_LOCK_FILE = '.update.lock';
+const UPDATE_LOCK_STALE_MS = 15 * 60_000;
+
+function acquireUpdateLock(installDir: string): { ok: boolean; reason?: string } {
+  const lockPath = join(installDir, UPDATE_LOCK_FILE);
+  try {
+    writeFileSync(lockPath, `${process.pid}\n`, { encoding: 'utf-8', flag: 'wx' });
+    return { ok: true };
+  } catch {
+    // Lock exists - evaluate staleness.
+  }
+  try {
+    const raw = readFileSync(lockPath, 'utf-8').trim();
+    const pid = Number.parseInt(raw, 10);
+    const ageMs = Date.now() - statSync(lockPath).mtimeMs;
+    if (Number.isInteger(pid) && pid > 0) {
+      let alive = false;
+      try {
+        process.kill(pid, 0);
+        alive = true;
+      } catch {
+        alive = false; // ESRCH: dead. EPERM would also land here - conservative is fine.
+      }
+      if (alive) {
+        return { ok: false, reason: `held by live pid ${raw}` };
+      }
+      // Dead pid: stale regardless of age - a dead process will never clean up.
+    } else if (ageMs < UPDATE_LOCK_STALE_MS) {
+      // Unparseable owner: conservative grace window before taking over.
+      return { ok: false, reason: `unparseable lock owner '${raw}' (age: ${Math.round(ageMs / 1000)}s)` };
+    }
+    rmSync(lockPath, { force: true });
+    writeFileSync(lockPath, `${process.pid}\n`, { encoding: 'utf-8', flag: 'wx' });
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: 'the lock file exists but cannot be evaluated' };
+  }
+}
+
+function releaseUpdateLock(installDir: string): void {
+  try {
+    rmSync(join(installDir, UPDATE_LOCK_FILE), { force: true });
+  } catch {
+    // best effort - a lingering lock becomes stale via the PID/age check
+  }
+}
+
 function fail(message: string, currentVersion?: string): UpdateResult {
   return { ok: false, updated: false, message, currentVersion };
+}
+
+/**
+ * BRK-005 (external review 2026-08-29): a throw AFTER the commit marker was
+ * written must never surface as "the installed version is unchanged" - the
+ * marker of THIS run proves the swap committed. The result is then an
+ * honest "committed, but a post-commit step failed".
+ */
+export function mapUpdateFailure(err: unknown, installDir: string, currentVersion: string, targetTag: string): UpdateResult {
+  const reason = reasonOf(err);
+  if (commitMarkerTag(installDir) === targetTag) {
+    return {
+      ok: true,
+      updated: true,
+      currentVersion,
+      targetVersion: targetTag.slice(1),
+      warnings: [`Post-commit step failed: ${reason}`],
+      message: `broke update: v${currentVersion} → ${targetTag} is COMMITTED, but a post-commit step failed (${reason}). Restart AiderDesk to load the new version.`,
+    };
+  }
+  return fail(`broke update failed - ${reason}. The installed version is unchanged.`, currentVersion);
 }
 
 function reasonOf(err: unknown): string {
@@ -1000,6 +1071,8 @@ export async function runUpdate(
   }
 
   updateInFlight = true;
+  let lockHeld = false;
+  let targetTag = '';
   try {
     const io: UpdateDeps = {
       fetchJson: deps.fetchJson ?? defaultFetchJson,
@@ -1047,10 +1120,17 @@ export async function runUpdate(
     }
 
     hooks.progress?.(`resolving ${targetTag}...`);
-    // Install mode resolves the RELEASE OBJECT (not just the tag): the
-    // signed artifacts live as release assets. Strict trust model (R1):
-    // releases without the full signed-asset set are refused - installing
-    // unsigned code is exactly the attack this gate exists for.
+    // BRK-010: cross-process lock - a second AiderDesk instance must not
+    // update the same installation concurrently with this one.
+    const lock = acquireUpdateLock(installDir);
+    if (!lock.ok) {
+      return fail(`broke update refused: another broke update appears to be running (${lock.reason}). Close the other instance or remove ${join(installDir, UPDATE_LOCK_FILE)} if you are sure it is stale.`, currentVersion);
+    }
+    lockHeld = true;
+    // Release fetch (above) reads the release OBJECT: the signed artifacts
+    // live as release assets. Strict trust model (R1): releases without the
+    // full signed-asset set are refused - installing unsigned code is
+    // exactly the attack this gate exists for.
     const release = await fetchRelease(io.fetchJson, targetTag);
     const artifactName = releaseAssetName(release.tag);
     const artifactUrl = release.assets.get(artifactName);
@@ -1091,15 +1171,12 @@ export async function runUpdate(
       const warnings: string[] = [];
       preserveRuntimeState(installDir, payload, warnings);
 
-      let refreshedDeps = false;
-      if (
-        filesDiffer(join(payload, 'package-lock.json'), join(installDir, 'package-lock.json')) ||
-        filesDiffer(join(payload, 'package.json'), join(installDir, 'package.json'))
-      ) {
-        hooks.progress?.('lockfile changed - refreshing dependencies (npm ci --omit=dev)...');
-        await io.runNpmCi(payload);
-        refreshedDeps = true;
-      }
+    // BRK-009 (external review 2026-08-29): node_modules are NEVER carried
+    // over from the old installation - npm ci always rebuilds them from
+    // the verified lockfile in the staged payload, so a tampered or
+    // corrupted existing node_modules cannot survive an update.
+    hooks.progress?.('installing dependencies (npm ci --omit=dev)...');
+    await io.runNpmCi(payload);
 
       hooks.onBeforeSwap?.();
       const swapped = swapInstallDirectory(installDir, payload, targetTag);
@@ -1126,19 +1203,28 @@ export async function runUpdate(
 
       const verb = cmp > 0 ? 'updated' : cmp === 0 ? 'reinstalled' : 'downgraded';
       const lines = [
-        `broke ${verb}: v${currentVersion} → ${targetTag}${refreshedDeps ? ' (dependencies refreshed)' : ''}`,
+        `broke ${verb}: v${currentVersion} → ${targetTag} (dependencies refreshed)`,
         'Restart AiderDesk to load the new version - this instance still runs the previously loaded code.',
       ];
       for (const w of warnings) lines.push(`Note: ${w}`);
       return { ok: true, updated: true, currentVersion, targetVersion, warnings, message: lines.join('\n') };
     } finally {
-      rmSync(work, { recursive: true, force: true });
+      // BRK-005: temp-dir cleanup is best effort - a locked temp dir (e.g. an
+      // AV scan) must not turn a committed update into a reported failure.
+      try {
+        rmSync(work, { recursive: true, force: true });
+      } catch {
+        // the OS temp cleaner owns leftovers
+      }
     }
   } catch (err) {
     // Every failure path above either never touched the installation or
-    // restored it from the backup before throwing.
-    return fail(`broke update failed - ${reasonOf(err)}. The installed version is unchanged.`, currentVersion);
+    // restored it from the backup before throwing. BRK-005: when the commit
+    // marker of THIS run exists anyway, report the truth (committed) instead
+    // of a false "unchanged".
+    return mapUpdateFailure(err, installDir, currentVersion, targetTag);
   } finally {
+    if (lockHeld) releaseUpdateLock(installDir);
     updateInFlight = false;
   }
 }

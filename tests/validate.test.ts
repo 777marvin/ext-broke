@@ -59,6 +59,36 @@ describe('validateContext', () => {
     assert.match(failures[0].reason, /tool-call 'lost-call' has no matching tool-result/);
   });
 
+  it('flags a tool-result that appears BEFORE its tool-call (BRK-015 order invariant)', () => {
+    // Reverse-ordered pair: both halves exist, so the old set-membership
+    // checks passed - but the documented invariant is call-before-result.
+    const c1 = 'call-reversed';
+    const msgs: ContextMessage[] = [user('task'), toolFor(c1), assistant('answering early'), assistantWithCalls([c1])];
+    const failures = validateContext(msgs);
+    assert.ok(failures.length >= 1, 'a reversed pair must not validate');
+    assert.ok(
+      failures.some((f) => /before its tool-call/.test(f.reason)),
+      `expected an order failure, got: ${JSON.stringify(failures.map((f) => f.reason))}`,
+    );
+  });
+
+  it('accepts interleaved conversations where every result follows its call (BRK-015)', () => {
+    const c1 = 'call-a';
+    const c2 = 'call-b';
+    const c3 = 'call-c';
+    const msgs: ContextMessage[] = [
+      user('task'),
+      assistantWithCalls([c1, c2]),
+      toolFor(c1, 'out-1'),
+      assistant('partial'),
+      toolFor(c2, 'out-2'),
+      assistantWithCalls([c3]),
+      toolFor(c3, 'out-3'),
+      assistant('done'),
+    ];
+    assert.deepEqual(validateContext(msgs), [], 'interleaved but ordered pairs are valid');
+  });
+
   it('flags duplicated tool-call ids across messages', () => {
     const msgs: ContextMessage[] = [
       user('task'),
