@@ -1012,8 +1012,27 @@ describe('summarizePass', () => {
     };
     const r = await summarizePass(msgs, 1, summarizeConfig(), failingDeps, state, 'task-sum-7');
     assert.equal(r.failed, true);
-    assert.equal(r.summarizeCalls, 0, 'a throwing call never completed - no call is counted (honest cost side)');
+    assert.equal(
+      r.summarizeCalls,
+      1,
+      'the provider ACCEPTED (and may bill) the request before throwing - the attempted call counts (BRK-021)',
+    );
     assert.equal(r.messages, msgs); // untouched
+  });
+
+  it('meters the EXACT strings sent - prompt wrapper and system prompt included (BRK-021)', async () => {
+    const msgs = summaryConversation();
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const r = await summarizePass(msgs, 1, summarizeConfig(), deps, state, 'task-sum-meter');
+    const dispatched = calls.inputs.reduce((n, p) => n + p.length, 0);
+    assert.equal(
+      r.summarizerInputChars,
+      dispatched,
+      'summarizerInputChars must equal the exact dispatched prompt bytes, not just the conversation payload',
+    );
+    assert.ok(r.summarizerInputChars > 0);
   });
 
   it('keeps regions with rich parts (images/files) untouched', async () => {

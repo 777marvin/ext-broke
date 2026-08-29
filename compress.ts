@@ -1014,10 +1014,17 @@ export async function summarizePass(
   let summary: string | undefined;
   let summarizer: 'local' | 'cloud' = 'local';
 
+  const CLOUD_SYSTEM_PROMPT = 'You are a precise, loss-minimizing context compressor for coding conversations.';
   const callSummarizer = async (prompt: string): Promise<string | undefined> => {
+    // BRK-021: the provider ACCEPTS (and may bill) a request that later
+    // throws - the attempt is counted BEFORE dispatch, and the metered
+    // input is the EXACT string sent (prompt + cloud system prompt), not
+    // just the conversation payload.
+    callsMade++;
+    inputCharsTotal += prompt.length + (config.summarize.via === 'cloud' ? CLOUD_SYSTEM_PROMPT.length : 0);
     if (config.summarize.via === 'cloud') {
       summarizer = 'cloud';
-      return deps.generateCloud('You are a precise, loss-minimizing context compressor for coding conversations.', prompt);
+      return deps.generateCloud(CLOUD_SYSTEM_PROMPT, prompt);
     }
     return deps.generateLocal(config.summarize.localModel, prompt);
   };
@@ -1035,9 +1042,7 @@ export async function summarizePass(
   try {
     if (raw.length <= MAX_SUMMARIZER_INPUT_CHARS) {
       const safeInput = maskSecrets(raw);
-      inputCharsTotal = safeInput.length;
       summary = await callSummarizer(`${SUMMARY_PROMPT}\n\n<conversation>\n${safeInput}\n</conversation>`);
-      callsMade = 1;
       outputCharsTotal = summary?.length ?? 0;
     } else {
       // Hierarchical path (review F-07): chunk at message boundaries, one
@@ -1064,11 +1069,9 @@ export async function summarizePass(
       const partSummaries: string[] = [];
       for (let i = 0; i < usable.length; i++) {
         const safeChunk = maskSecrets(usable[i].text);
-        inputCharsTotal += safeChunk.length;
         const partSummary = await callSummarizer(
           `${SUMMARY_PROMPT}\n\nThis is part ${i + 1} of ${usable.length} of one longer conversation. Summarize ONLY the part below, preserving file paths, symbol names, decisions and errors verbatim.\n\n<conversation>\n${safeChunk}\n</conversation>`,
         );
-        callsMade++;
         if (!partSummary || !partSummary.trim()) return failed(true);
         outputCharsTotal += partSummary.length;
         partSummaries.push(partSummary);
@@ -1088,11 +1091,9 @@ export async function summarizePass(
           })
           .join('\n\n'),
       );
-      inputCharsTotal += metaInput.length;
       summary = await callSummarizer(
         `${SUMMARY_PROMPT}\n\nBelow are ${usable.length} part-summaries of ONE conversation. Combine them into the single dense summary the instructions describe. Keep every file path, symbol name, decision and open question. Do NOT invent anything that is not in the parts.\n\n<conversation>\n${metaInput}\n</conversation>`,
       );
-      callsMade++;
       outputCharsTotal = outputCharsTotal + (summary?.length ?? 0);
       if (!summary || !summary.trim()) return failed(true);
       // BRK-014: coverage was computed from the coverage contract above -

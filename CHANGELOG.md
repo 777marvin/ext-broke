@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signatures stay in the view (private state does not), path matching is
   case-folded only on Windows, and focus symbols containing regex
   metacharacters no longer crash slicing.
+- Summarizer metering honesty (external review BRK-021): an attempted LLM
+  call is counted the moment it is DISPATCHED, not only after a successful
+  response - a provider that accepts (and may bill) a request and then
+  throws no longer reports `summarizeCalls: 0`. `summarizerInputChars` now
+  measures the EXACT strings sent (SUMMARY_PROMPT, XML wrapper, part
+  instructions, cloud system prompt) instead of the bare conversation
+  payload, so the cost side matches what actually left the process.
 - Search index: tokens derived from repository content (e.g. identifiers
   named `__proto__`, `constructor`, `prototype`) can no longer pollute
   JavaScript global built-ins. Index dictionaries are null-prototype
