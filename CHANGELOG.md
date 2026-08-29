@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Search index: tokens derived from repository content (e.g. identifiers
+  named `__proto__`, `constructor`, `prototype`) can no longer pollute
+  JavaScript global built-ins. Index dictionaries are null-prototype
+  objects, every write goes through a safe key definition, and persisted
+  indexes are rebuilt into safe dictionaries on load (external review
+  BRK-002).
 - Summarize cache: after an incremental reuse (summary + freshly appended
   tool messages) the cache boundary is no longer advanced over messages
   that were never summarized. The previous behavior silently dropped those

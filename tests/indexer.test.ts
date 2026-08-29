@@ -380,3 +380,74 @@ describe('index hardening: persisted-state trust boundary (review F-09)', () => 
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// BRK-002 (external review 2026-08-29): tokens come from repository content,
+// which is NOT a trusted key space. Index dictionaries must never route
+// '__proto__' / 'constructor' / 'prototype' writes into global built-ins.
+// ---------------------------------------------------------------------------
+
+describe('BRK-002: index dictionaries are prototype-pollution-proof', () => {
+  const pollutionProject = (): string => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-pollution-'));
+    tmpRoots.push(root);
+    writeFile(
+      root,
+      ['src', 'evil.ts'],
+      [
+        'const __proto__ = 1;',
+        'const constructor = 2;',
+        'const prototype = 3;',
+        'const toString = 4;',
+        'export const evilValue = __proto__;',
+      ].join('\n'),
+    );
+    writeFile(root, ['src', 'clean.ts'], 'export const alphaFindClean = 1;');
+    return root;
+  };
+
+  it('indexing repo content never writes into global built-ins', () => {
+    const root = pollutionProject();
+    const baselineProtoKeys = Object.getOwnPropertyNames(Object.prototype).length;
+    const baselineCtorKeys = Object.getOwnPropertyNames(Object).length;
+    // Deliberately a HAND-BUILT normal-prototype state (like the emptyState
+    // helper): the production code must be safe even for states it did not
+    // create itself.
+    const state = emptyState();
+    const scan = scanProject(root, 512);
+    mergeIntoState(state, root, scan.entries, scan.truncated);
+    assert.equal(
+      Object.getOwnPropertyNames(Object.prototype).length,
+      baselineProtoKeys,
+      'Object.prototype gained own keys - prototype pollution via postings',
+    );
+    assert.equal(Object.getOwnPropertyNames(Object).length, baselineCtorKeys, 'the Object constructor gained own keys');
+  });
+
+  it('keeps dangerous terms FUNCTIONAL: they stay searchable', () => {
+    const root = pollutionProject();
+    const state = emptyState();
+    const scan = scanProject(root, 512);
+    mergeIntoState(state, root, scan.entries, scan.truncated);
+    for (const term of ['__proto__', 'constructor', 'prototype', 'tostring']) {
+      assert.ok(
+        rankQuery(state, [term]).some((h) => h.relPath === 'src/evil.ts'),
+        `term '${term}' must be indexed and rankable, not silently dropped`,
+      );
+    }
+  });
+
+  it('a persisted index with dangerous terms round-trips safely through loadIndex', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-indexer-load-'));
+    tmpRoots.push(dir);
+    const state = createEmptyState(join(tmpdir(), 'broke-pollution-root'));
+    state.files['src/evil.ts'] = { mtimeMs: 1, sizeBytes: 10, tokenCount: 4 };
+    state.postings['__proto__'] = { 'src/evil.ts': 2 };
+    state.postings['constructor'] = { 'src/evil.ts': 2 };
+    saveIndex(dir, state);
+    const loaded = loadIndex(dir);
+    assert.ok(loaded, 'index loads');
+    assert.ok(Object.prototype.hasOwnProperty.call(loaded.postings, '__proto__'), "'__proto__' survives as a real own key");
+    assert.ok(rankQuery(loaded, ['__proto__']).some((h) => h.relPath === 'src/evil.ts'), 'dangerous term ranks after reload');
+  });
+});

@@ -54,6 +54,28 @@ export const INDEX_MAX_ENTRIES = 50_000;
 const MAX_TOKEN_LENGTH = 48;
 
 /**
+ * BRK-002 (external review 2026-08-29): repository content is NOT a trusted
+ * key space. Tokens like `__proto__`, `constructor` or `prototype` come
+ * straight out of indexed files; routing them through plain property writes
+ * polluted `Object.prototype` in the shared host process. All index
+ * dictionaries are therefore null-prototype objects, and every write uses
+ * `defineKey` so even a hand-built normal-prototype state can never hit the
+ * `__proto__` accessor/setter.
+ */
+type Dict<T> = Record<string, T>;
+const nullDict = <T>(): Dict<T> => Object.create(null) as Dict<T>;
+
+/** Create a REAL own key - never a prototype mutation - even for `__proto__`. */
+function defineKey<T>(obj: Dict<T>, key: string, value: T): void {
+  Object.defineProperty(obj, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+/** Own-property check without lib es2022 (`Object.hasOwn`). */
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+/**
  * Minimal stopword list. Enough to keep English prose snippets from ranking
  * their filler words; deliberately NOT configurable - tuning this is the
  * vector backend's job in v2.
@@ -90,9 +112,10 @@ export interface IndexState {
   builtAt: string;
   /** Truncated by INDEX_MAX_ENTRIES during the last build? */
   truncated: boolean;
-  /** relPath -> meta. */
+  /** relPath -> meta. Null-prototype dictionary (BRK-002), also after loadIndex. */
   files: Record<string, IndexedFile>;
-  /** term -> relPath -> in-document frequency. Contents never persisted. */
+  /** term -> relPath -> in-document frequency. Contents never persisted.
+   *  Null-prototype dictionary of null-prototype postings (BRK-002). */
   postings: Record<string, Record<string, number>>;
 }
 
@@ -140,7 +163,7 @@ export function isConfinedRelPath(relPath: unknown): relPath is string {
 }
 
 export function createEmptyState(projectRoot: string): IndexState {
-  return { version: 1, projectRoot, builtAt: '', truncated: false, files: {}, postings: {} };
+  return { version: 1, projectRoot, builtAt: '', truncated: false, files: nullDict<IndexedFile>(), postings: nullDict<Dict<number>>() };
 }
 
 function indexableRelPath(relPath: string): boolean {
@@ -164,10 +187,6 @@ interface ScannedEntry {
   sizeBytes: number;
 }
 
-/**
- * Walk the project root collecting candidate metadata (IO, never throws).
- * Returns null-padded with a truncated flag when INDEX_MAX_ENTRIES trips.
- */
 export function scanProject(root: string, maxFileKB: number): { entries: ScannedEntry[]; truncated: boolean } {
   const maxBytes = maxFileKB * 1024;
   const entries: ScannedEntry[] = [];
@@ -218,7 +237,9 @@ function removeDocument(state: IndexState, relPath: string): void {
   delete state.files[relPath];
   for (const term of Object.keys(state.postings)) {
     const posting = state.postings[term];
-    if (posting && relPath in posting) {
+    // Object.hasOwn, not `in`: inherited properties (Object.prototype on a
+    // hand-built state) must never pass for a real posting entry.
+    if (posting && hasOwn(posting, relPath)) {
       delete posting[relPath];
       if (Object.keys(posting).length === 0) delete state.postings[term];
     }
@@ -236,11 +257,18 @@ function addDocument(state: IndexState, root: string, entry: ScannedEntry): void
   const tokens = tokenize(text);
   const tfByTerm = new Map<string, number>();
   for (const t of tokens) tfByTerm.set(t, (tfByTerm.get(t) ?? 0) + 1);
-  state.files[entry.relPath] = { mtimeMs: entry.mtimeMs, sizeBytes: entry.sizeBytes, tokenCount: tokens.length };
+  defineKey(state.files, entry.relPath, { mtimeMs: entry.mtimeMs, sizeBytes: entry.sizeBytes, tokenCount: tokens.length });
   for (const [term, tf] of tfByTerm) {
-    const posting = state.postings[term] ?? {};
-    posting[entry.relPath] = tf;
-    state.postings[term] = posting;
+    // BRK-002: hasOwn + defineKey - for the term '__proto__' on a
+    // normal-prototype state, `state.postings[term]` resolves to
+    // Object.prototype and a plain assignment would hit the prototype
+    // setter instead of creating a real entry.
+    let posting = state.postings[term];
+    if (posting === undefined || !hasOwn(state.postings, term)) {
+      posting = nullDict<number>();
+      defineKey(state.postings, term, posting);
+    }
+    defineKey(posting, entry.relPath, tf);
   }
 }
 
@@ -329,8 +357,8 @@ export function ensureFresh(
   if (!sameProjectRoot(state.projectRoot, root)) {
     // Foreign/stale root (moved project, copied store, tampered file): the
     // persisted state says nothing about THIS tree - rebuild from scratch.
-    state.files = {};
-    state.postings = {};
+    state.files = nullDict<IndexedFile>();
+    state.postings = nullDict<Dict<number>>();
     state.projectRoot = root;
     state.truncated = false;
     state.builtAt = '';
@@ -564,6 +592,15 @@ export function saveIndex(dir: string, state: IndexState): void {
 }
 
 /** Load a persisted index. Anything suspicious becomes null (rebuild later). */
+function rebuildDict<T>(source: Record<string, T>, mapValue?: (value: T) => T): Dict<T> {
+  const out = nullDict<T>();
+  for (const [key, value] of Object.entries(source)) {
+    defineKey(out, key, mapValue ? mapValue(value) : value);
+  }
+  return out;
+}
+
+/** Load a persisted index. Anything suspicious becomes null (rebuild later). */
 export function loadIndex(dir: string): IndexState | null {
   try {
     const raw = JSON.parse(readFileSync(join(dir, 'index.json'), 'utf-8')) as Partial<IndexState>;
@@ -590,7 +627,19 @@ export function loadIndex(dir: string): IndexState | null {
         if (!isConfinedRelPath(relPath)) return null;
       }
     }
-    return { version: 1, projectRoot: raw.projectRoot, builtAt: raw.builtAt ?? '', truncated: raw.truncated === true, files: raw.files, postings: raw.postings };
+    return {
+      version: 1,
+      projectRoot: raw.projectRoot,
+      builtAt: raw.builtAt ?? '',
+      truncated: raw.truncated === true,
+      // BRK-002: rebuild both dictionaries as null-prototype objects. A
+      // JSON-parsed object carries Object.prototype, so a term like
+      // '__proto__' (JSON.parse DOES create it as a real own key) would
+      // otherwise resolve through the prototype chain during queries and
+      // merges. Rebuilding also drops any exotic inherited lookups.
+      files: rebuildDict<IndexedFile>(raw.files),
+      postings: rebuildDict<Dict<number>>(raw.postings, (posting) => rebuildDict<number>(posting)),
+    };
   } catch {
     return null;
   }
