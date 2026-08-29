@@ -1,5 +1,6 @@
-import { closeSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 /**
@@ -160,6 +161,13 @@ const SearchSchema = z.object({
   contextLines: z.number().int().min(1).max(20).default(6),
   /** Files larger than this never enter the index. */
   maxFileKB: z.number().int().positive().default(512),
+  /**
+   * Opt-in (BRK-003, external review 2026-08-29): when true, git-ignored
+   * files are indexed too. The dot-path and sensitive-basename filters stay
+   * ON regardless - this flag only widens the git surface to the ignored
+   * remainder, never to conventionally private files.
+   */
+  includeGitIgnored: z.boolean().default(false),
 });
 const searchDefault = SearchSchema.parse({});
 
@@ -239,6 +247,7 @@ export function mergeConfig(...parts: unknown[]): Config {
 }
 
 let cachedConfig: Config | null = null;
+let cachedConfigMtimeMs: number | null = null;
 let configWarning: string | null = null;
 
 /**
@@ -250,11 +259,65 @@ export function getConfigWarning(): string | null {
   return configWarning;
 }
 
+/**
+ * BRK-023 (external review 2026-08-29): a typo'd key (maxContexChars vs
+ * maxContextChars) must not vanish silently - unknown keys are collected
+ * with their FULL dotted path, reported, and stripped so the known values
+ * around them still apply.
+ */
+function collectUnknownKeys(candidate: unknown, defaults: unknown, prefix = '', out: string[] = []): string[] {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return out;
+  if (!defaults || typeof defaults !== 'object' || Array.isArray(defaults)) {
+    out.push(prefix);
+    return out;
+  }
+  for (const [key, value] of Object.entries(candidate as Record<string, unknown>)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const defaultRecord = defaults as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(defaultRecord, key)) out.push(path);
+    else collectUnknownKeys(value, defaultRecord[key], path, out);
+  }
+  return out;
+}
+
+/** Deep-remove the reported unknown keys so the parse still applies known values. */
+function stripUnknownKeys(candidate: unknown, defaults: unknown): unknown {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return candidate;
+  if (!defaults || typeof defaults !== 'object' || Array.isArray(defaults)) return undefined;
+  const out: Record<string, unknown> = {};
+  const defaultRecord = defaults as Record<string, unknown>;
+  for (const [key, value] of Object.entries(candidate as Record<string, unknown>)) {
+    if (!Object.prototype.hasOwnProperty.call(defaultRecord, key)) continue;
+    out[key] = stripUnknownKeys(value, defaultRecord[key]);
+  }
+  return out;
+}
+
 /** Read + validate one config file (no cache). Corrupted files fall back to defaults. */
 export function loadConfigFile(filePath: string): { config: Config; warning: string | null } {
+  let raw: string;
   try {
-    const raw = readFileSync(filePath, 'utf-8');
-    return { config: mergeConfig(JSON.parse(raw)), warning: null };
+    raw = readFileSync(filePath, 'utf-8');
+  } catch (err) {
+    // BRK-023: a MISSING file is the normal first run, not an anomaly -
+    // only unreadable/corrupted files warn.
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { config: DEFAULT_CONFIG, warning: null };
+    return {
+      config: DEFAULT_CONFIG,
+      warning: `config.json unreadable (${err instanceof Error ? err.message : String(err)}) - running on defaults`,
+    };
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const unknownKeys = collectUnknownKeys(parsed, DEFAULT_CONFIG);
+    if (unknownKeys.length > 0) {
+      const cleaned = stripUnknownKeys(parsed, DEFAULT_CONFIG);
+      return {
+        config: mergeConfig(cleaned),
+        warning: `config.json contains unknown key(s): ${unknownKeys.join(', ')} - check for typos; they were ignored, all known keys still apply`,
+      };
+    }
+    return { config: mergeConfig(parsed), warning: null };
   } catch (err) {
     return {
       config: DEFAULT_CONFIG,
@@ -263,16 +326,36 @@ export function loadConfigFile(filePath: string): { config: Config; warning: str
   }
 }
 
+/**
+ * Cached config read (BRK-006 belt-and-braces): the cache is invalidated by
+ * BOTH invalidateConfigCache() (watcher events) and the file's mtime, so an
+ * externally edited config is picked up even when no watcher is running
+ * (e.g. right after a failed update that closed it). A stat error keeps the
+ * cached value - never worse than before.
+ */
 export function getConfig(): Config {
-  if (cachedConfig) return cachedConfig;
+  if (cachedConfig) {
+    try {
+      const mtime = statSync(CONFIG_PATH).mtimeMs;
+      if (mtime === cachedConfigMtimeMs) return cachedConfig;
+    } catch {
+      return cachedConfig; // transient stat failure - serve the cache
+    }
+  }
   const loaded = loadConfigFile(CONFIG_PATH);
   cachedConfig = loaded.config;
   configWarning = loaded.warning;
+  try {
+    cachedConfigMtimeMs = existsSync(CONFIG_PATH) ? statSync(CONFIG_PATH).mtimeMs : null;
+  } catch {
+    cachedConfigMtimeMs = null;
+  }
   return cachedConfig;
 }
 
 export function invalidateConfigCache(): void {
   cachedConfig = null;
+  cachedConfigMtimeMs = null;
   configWarning = null;
 }
 
@@ -281,18 +364,48 @@ export function invalidateConfigCache(): void {
  * corrupt config.json and a power loss cannot leave the renamed file
  * empty (fsync flushes the data to disk before the rename).
  */
+/**
+ * Atomic write (BRK-010): UNIQUE temp file (pid + randomness) + file fsync +
+ * rename + parent-directory fsync (POSIX), so a crash mid-write cannot
+ * corrupt config.json, concurrent writers cannot collide on one temp name,
+ * and a power loss cannot leave the renamed file empty. On failure the temp
+ * file is cleaned up.
+ */
 export function saveConfig(config: Config, filePath: string = CONFIG_PATH): void {
-  const tmpPath = `${filePath}.tmp`;
-  // mode 0o600 (POSIX): config can hold summarizer endpoints; owner-only is
-  // the least-surprise default for sensitive local state (review R8).
-  writeFileSync(tmpPath, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 });
-  const fd = openSync(tmpPath, 'r+');
+  const tmpPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
+    // mode 0o600 (POSIX): config can hold summarizer endpoints; owner-only is
+    // the least-surprise default for sensitive local state (review R8).
+    writeFileSync(tmpPath, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    const fd = openSync(tmpPath, 'r+');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmpPath, filePath);
+  } catch (err) {
+    try {
+      rmSync(tmpPath, { force: true });
+    } catch {
+      // cleanup is best effort - the original error matters more
+    }
+    throw err;
   }
-  renameSync(tmpPath, filePath);
+  // Parent-directory fsync (POSIX only - Windows cannot open directories):
+  // makes the rename itself durable, completing the atomic-write contract.
+  if (process.platform !== 'win32') {
+    try {
+      const dfd = openSync(dirname(filePath), 'r');
+      try {
+        fsyncSync(dfd);
+      } finally {
+        closeSync(dfd);
+      }
+    } catch {
+      // best effort - the file fsync above already bounds the damage
+    }
+  }
   if (filePath === CONFIG_PATH) invalidateConfigCache();
 }
 
