@@ -3,13 +3,66 @@ import { describe, it } from 'node:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from '../pricing';
+import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from '../pricing';
 import { appendJsonLine, clearTaskStats, createStatsLoader, emptyStats, loadTaskStats, persistStats } from '../tokens';
 
 const price = (inputPerMToken: number | null): TaskModelPrice => ({
   modelId: 'gpt-4o',
   providerId: 'openai',
   inputPerMToken,
+});
+
+/** Minimal ExtensionContext shape resolveTaskModelPrice touches. */
+const fakeContext = (
+  models: Array<{ providerId: string; id: string; inputCostPerToken?: number }>,
+  provider: string,
+  model: string,
+): import('@aiderdesk/extensions').ExtensionContext =>
+  ({
+    getTaskContext: () => ({
+      getTaskAgentProfile: async () => ({ provider, model }),
+    }),
+    getModelConfigs: async () => models,
+  }) as never;
+
+describe('resolveTaskModelPrice provider matching (BRK-022)', () => {
+  it('prefers the exact provider+model match', async () => {
+    const price2 = await resolveTaskModelPrice(
+      fakeContext(
+        [
+          { providerId: 'openai', id: 'exact-4o', inputCostPerToken: 0.000003 },
+          { providerId: 'azure', id: 'exact-4o', inputCostPerToken: 0.00003 },
+        ],
+        'openai',
+        'exact-4o',
+      ),
+    );
+    assert.equal(price2?.providerId, 'openai');
+    assert.equal(price2?.inputPerMToken, 3);
+  });
+
+  it('falls back to a UNIQUE bare-id match', async () => {
+    const solo = await resolveTaskModelPrice(
+      fakeContext([{ providerId: 'other-provider', id: 'solo-model', inputCostPerToken: 0.000007 }], 'prov-a', 'solo-model'),
+    );
+    assert.equal(solo?.providerId, 'other-provider');
+    assert.equal(solo?.inputPerMToken, 7);
+  });
+
+  it('reports the price as UNKNOWN when the bare id is ambiguous across providers', async () => {
+    const ambiguous = await resolveTaskModelPrice(
+      fakeContext(
+        [
+          { providerId: 'provider-x', id: 'dup-model', inputCostPerToken: 0.000001 },
+          { providerId: 'provider-y', id: 'dup-model', inputCostPerToken: 0.000099 },
+        ],
+        'prov-b',
+        'dup-model',
+      ),
+    );
+    assert.equal(ambiguous?.inputPerMToken, null, 'a wrong-provider price is worse than an honest unknown');
+    assert.equal(ambiguous?.modelId, 'dup-model');
+  });
 });
 
 describe('savedCostUsd', () => {

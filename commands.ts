@@ -430,7 +430,7 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
     `broke stats - ${stats.passes} compression run(s)`,
     measured !== null
       ? `  saved actual:   ${fmtChars(measured)} (measured: per-run input before - after, summed)`
-      : `  saved total:    ${fmtChars(passSum)} (pass-sum - records predate size measurement)`,
+      : `  saved total:    ${fmtChars(passSum)} (pass-sum of MEASURED passes - records predate size measurement)`,
     ...(money ? [`  estimated cost saved: ${money} (${priceLabel(price)})`] : []),
     `  structural:    ${fmtChars(stats.savedChars.structural)} (content-preserving)`,
     `  error:         ${fmtChars(stats.savedChars.error)} (stack-trace/log compression)`,
@@ -491,7 +491,7 @@ export function formatMeasure(summary: MeasureSummary | null): string {
   const lines = [
     `broke measure - ${summary.runs} run(s) across ${summary.tasks} task(s)${summary.spanMs > 0 ? ` over ${spanDays} day(s)` : ''}`,
     `  input per run:   ${fmtChars(summary.charsBefore)} (sum over runs - the same conversation is compressed on every model call, NOT a cumulative context claim)`,
-    `  output per run:  ${fmtChars(summary.charsAfter)} (${reduction}% smaller on average across runs)`,
+    `  output per run:  ${fmtChars(summary.charsAfter)} (${reduction}% smaller, byte-weighted across runs)`,
     `  saved total:     ${fmtChars(summary.savedChars)}`,
     `  saved per run:   mean ${fmtChars(summary.meanSavedCharsPerRun)} | median ${fmtChars(summary.medianSavedCharsPerRun)} | max ${fmtChars(summary.maxSavedCharsPerRun)}`,
     `  summarizer calls: ${summary.summarizeCalls} (true cost side - cache reuse not counted)`,

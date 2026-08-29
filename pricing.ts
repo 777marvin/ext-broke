@@ -49,15 +49,22 @@ export async function resolveTaskModelPrice(context: ExtensionContext): Promise<
     let price: TaskModelPrice | null = null;
     try {
       const models = await context.getModelConfigs();
-      const model =
-        models.find((m) => m.providerId === profile.provider && m.id === profile.model) ??
-        models.find((m) => m.id === profile.model);
+      // BRK-022: provider+model must match EXACTLY. A bare model-id match is
+      // only usable when it is UNIQUE - two providers carrying the same id
+      // (openai/gpt-4o vs azure/gpt-4o) would otherwise price this task with
+      // the WRONG provider's rate. Ambiguous -> honest unknown price.
+      const exact = models.find((m) => m.providerId === profile.provider && m.id === profile.model);
+      let resolved: (typeof models)[number] | undefined = exact;
+      if (!exact) {
+        const byId = models.filter((m) => m.id === profile.model);
+        resolved = byId.length === 1 ? byId[0] : undefined;
+      }
       price = {
-        modelId: model?.id ?? profile.model,
-        providerId: model?.providerId ?? profile.provider,
+        modelId: resolved?.id ?? profile.model,
+        providerId: resolved?.providerId ?? profile.provider,
         inputPerMToken:
-          typeof model?.inputCostPerToken === 'number' && model.inputCostPerToken > 0
-            ? model.inputCostPerToken * 1_000_000
+          typeof resolved?.inputCostPerToken === 'number' && resolved.inputCostPerToken > 0
+            ? resolved.inputCostPerToken * 1_000_000
             : null,
       };
     } catch {

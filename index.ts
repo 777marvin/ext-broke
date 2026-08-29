@@ -1524,7 +1524,14 @@ export default class Broke implements Extension {
     const taskId = context.getTaskContext()?.data.id ?? '';
     const stats = this.statsFor(context);
     const observation = this.lastObservation.get(taskId) ?? null;
-    const totalTokens = stats ? estimateTokens(totalSavedChars(stats)) : 0;
+    // BRK-022: the badge headline is the MEASURED reduction (per-run input
+    // before - after, summed) - same definition as /broke stats. Legacy
+    // records without size data fall back to the measured pass sum; the
+    // slice counterfactual is excluded in both cases (it lives in
+    // `estimates` below, clearly labeled).
+    const measuredChars =
+      stats && stats.totalCharsBefore > 0 ? Math.max(stats.totalCharsBefore - stats.totalCharsAfter, 0) : null;
+    const totalTokens = stats ? estimateTokens(measuredChars ?? totalSavedChars(stats)) : 0;
     const ollama = await this.cachedOllamaStatus(config);
     // Money is always computed from the price of the task's CURRENT model.
     const price = await resolveTaskModelPrice(context);
@@ -1554,11 +1561,12 @@ export default class Broke implements Extension {
           }
         : null,
       savedTokens: {
+        // BRK-022: measured passes ONLY - slice moved fully to the
+        // counterfactual `estimates` block below.
         structural: stats ? estimateTokens(stats.savedChars.structural) : 0,
         error: stats ? estimateTokens(stats.savedChars.error) : 0,
         truncate: stats ? estimateTokens(stats.savedChars.truncate) : 0,
         summarize: stats ? estimateTokens(stats.savedChars.summarize) : 0,
-        slice: stats ? estimateTokens(stats.savedChars.slice) : 0,
       },
       // Counterfactual/one-shot estimates - the badge tooltip labels them
       // explicitly as NOT counted in totalSavedTokens above (E5 honesty).

@@ -27,6 +27,8 @@ let DEFAULT_CONFIG: (typeof import('../config'))['DEFAULT_CONFIG'];
 let emptyStats: (typeof import('../tokens'))['emptyStats'];
 let loadTaskStats: (typeof import('../tokens'))['loadTaskStats'];
 let persistStats: (typeof import('../tokens'))['persistStats'];
+let totalSavedChars: (typeof import('../tokens'))['totalSavedChars'];
+let modeledCounterfactualChars: (typeof import('../tokens'))['modeledCounterfactualChars'];
 
 before(async () => {
   ({
@@ -39,7 +41,7 @@ before(async () => {
     parseBrokeCommand,
   } = await import('../commands'));
   ({ DEFAULT_CONFIG } = await import('../config'));
-  ({ emptyStats, loadTaskStats, persistStats } = await import('../tokens'));
+  ({ emptyStats, loadTaskStats, modeledCounterfactualChars, persistStats, totalSavedChars } = await import('../tokens'));
 });
 
 after(() => {
@@ -315,6 +317,48 @@ describe('formatStats', () => {
     // The per-pass breakdown stays as supporting detail.
     assert.ok(out.includes('structural'));
     assert.ok(out.includes('summarize'));
+  });
+
+  it('keeps the measured/counterfactual categories apart (BRK-022)', () => {
+    const stats = {
+      ...emptyStats('t'),
+      passes: 1,
+      savedChars: { structural: 100, error: 0, truncate: 0, summarize: 0, slice: 9000 },
+      estimates: { flush: 500, search: 700 },
+    };
+    // Category helpers (BRK-022): measured pass sum EXCLUDES the slice
+    // counterfactual; the modeled counterfactual bundles slice + flush + search.
+    assert.equal(totalSavedChars(stats), 100, 'slice must not ride along in the measured pass sum');
+    assert.equal(modeledCounterfactualChars(stats), 10_200);
+
+    // Legacy fallback headline (no measured sizes): the 9,000-char slice
+    // counterfactual must not inflate it.
+    const out = formatStats(DEFAULT_CONFIG, stats);
+    assert.ok(out.includes('predate'), 'legacy label expected');
+    assert.ok(!/saved total:.*9/.test(out), `headline must exclude the slice counterfactual:\n${out}`);
+    assert.ok(out.includes('slice:'), 'slice still shown, clearly separated');
+  });
+
+  it('labels the measure reduction as byte-weighted, not as an average (BRK-022)', () => {
+    const out = formatMeasure({
+      runs: 2,
+      tasks: 1,
+      spanMs: 0,
+      charsBefore: 20000,
+      charsAfter: 15000,
+      savedChars: 5000,
+      savedTokens: 1250,
+      meanSavedCharsPerRun: 2500,
+      medianSavedCharsPerRun: 2500,
+      maxSavedCharsPerRun: 3000,
+      summarizeCalls: 0,
+      summarizerInputChars: 0,
+      summarizerOutputChars: 0,
+      byTask: [],
+    });
+    assert.ok(out.includes('25%'));
+    assert.ok(out.includes('byte-weighted'), 'the reduction is weighted by run size, not a mean of per-run rates');
+    assert.ok(!out.includes('on average across runs'));
   });
 
   it('labels the pass-sum fallback for legacy records without size data', () => {

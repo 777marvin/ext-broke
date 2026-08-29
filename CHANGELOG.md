@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signatures stay in the view (private state does not), path matching is
   case-folded only on Windows, and focus symbols containing regex
   metacharacters no longer crash slicing.
+- Metrics categories separated (external review BRK-022): `totalSavedChars`
+  is now the MEASURED pass sum and excludes the slice counterfactual; the
+  badge headline shows the measured per-run input reduction (same
+  definition as /broke stats) with slice/flush/search in the explicitly
+  labeled counterfactual block; /broke measure labels its reduction as
+  byte-weighted instead of an "average across runs"; model prices resolve
+  by exact provider+model match and fall back to a bare id only when it is
+  UNIQUE - ambiguous ids report an honest unknown price instead of a
+  possibly wrong provider's rate.
 - Summarizer metering honesty (external review BRK-021): an attempted LLM
   call is counted the moment it is DISPATCHED, not only after a successful
   response - a provider that accepts (and may bill) a request and then

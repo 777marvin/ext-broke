@@ -39,12 +39,13 @@ let loadRunRecords: (typeof import('../tokens'))['loadRunRecords'];
 let loadTaskStats: (typeof import('../tokens'))['loadTaskStats'];
 let messagesChars: (typeof import('../tokens'))['messagesChars'];
 let emptyStats: (typeof import('../tokens'))['emptyStats'];
+let persistStats: (typeof import('../tokens'))['persistStats'];
 let buildSyntheticMessages: (typeof import('../selftest'))['buildSyntheticMessages'];
 
 before(async () => {
   ({ default: Broke } = await import('../index'));
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
-  ({ loadRunRecords, loadTaskStats, messagesChars, emptyStats } = await import('../tokens'));
+  ({ loadRunRecords, loadTaskStats, messagesChars, emptyStats, persistStats } = await import('../tokens'));
   ({ buildSyntheticMessages } = await import('../selftest'));
 });
 
@@ -262,6 +263,25 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.equal(data.summarizerConfigured, 'cloud');
     assert.equal(data.ollama, null, 'no Ollama status check for the cloud summarizer');
     assert.equal(data.passes, 0, 'no compression run yet');
+  });
+
+  it('badge totals are MEASURED only - the slice counterfactual stays out (BRK-022)', async () => {
+    writeConfig({ level: 'truncate' });
+    const stats = emptyStats('task-brk22');
+    stats.passes = 1;
+    stats.totalCharsBefore = 1000;
+    stats.totalCharsAfter = 600; // measured reduction: 400 chars
+    stats.savedChars.slice = 9000; // modeled counterfactual - must NOT inflate the badge
+    persistStats(stats, join(tmp, 'stats.jsonl'));
+    const ext = new Broke();
+    const { context } = makeHost('task-brk22', () => 'stub');
+
+    const data = (await ext.getUIExtensionData('broke-status', context)) as {
+      totalSavedTokens: number;
+      estimates: { slice: number } | null;
+    };
+    assert.equal(data.totalSavedTokens, 100, '400 measured chars / 4 - the 9000-char slice estimate must not appear here');
+    assert.equal(data.estimates?.slice, 2250, 'slice stays available as a labeled counterfactual (9000/4)');
   });
 
   it('refreshes the status badge when the renderer polls via the UI action', async () => {

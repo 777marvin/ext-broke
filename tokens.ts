@@ -48,11 +48,12 @@ export interface SavedTokens {
 }
 
 /**
- * Counterfactual/one-shot estimates that are deliberately KEPT OUT of
- * totalSavedChars and every official headline (E5 honesty): they answer
- * "roughly what did slice/flush/search avoid" without pretending to be
- * measured compression runs. Slice numbers live in savedChars.slice; this
- * object carries only flush (measured once per flush, reverted on undo)
+ * Counterfactual/one-shot estimates (E5 honesty): they answer "roughly what
+ * did slice/flush/search avoid" without pretending to be measured
+ * compression runs, and they are never mixed into the measured totals
+ * (BRK-022). Slice numbers live in savedChars.slice but are categorized as
+ * modeled counterfactual by totalSavedChars/modeledCounterfactualChars;
+ * this object carries flush (measured once per flush, reverted on undo)
  * and search (whole-file-read alternative avoided - a counterfactual).
  */
 export interface EstimateExtras {
@@ -112,14 +113,25 @@ export function emptyStats(taskId: string): TaskStats {
   };
 }
 
+/**
+ * MEASURED per-pass char savings only (BRK-022): structural, error,
+ * truncate and summarize are recorded from real compression runs. `slice`
+ * is a MODELED counterfactual (full file vs. interface view) and is
+ * deliberately EXCLUDED - mixing it into the same sum made the badge,
+ * /broke stats and /broke measure numbers non-comparable. Use
+ * modeledCounterfactualChars() for the slice/flush/search category.
+ */
 export function totalSavedChars(stats: TaskStats): number {
-  return (
-    stats.savedChars.structural +
-    stats.savedChars.error +
-    stats.savedChars.truncate +
-    stats.savedChars.summarize +
-    stats.savedChars.slice
-  );
+  return stats.savedChars.structural + stats.savedChars.error + stats.savedChars.truncate + stats.savedChars.summarize;
+}
+
+/**
+ * Modeled counterfactual chars (BRK-022): slice estimates plus the
+ * one-shot flush/search figures. Honest labels only - this number never
+ * appears under a "measured" heading anywhere.
+ */
+export function modeledCounterfactualChars(stats: TaskStats): number {
+  return stats.savedChars.slice + (stats.estimates?.flush ?? 0) + (stats.estimates?.search ?? 0);
 }
 
 const MAX_STATS_FILE_BYTES = 5 * 1024 * 1024;

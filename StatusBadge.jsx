@@ -11,7 +11,7 @@
 
   // Always render: until the first data fetch arrives the badge shows 0
   // instead of disappearing entirely.
-  const s = data?.savedTokens ?? { structural: 0, error: 0, truncate: 0, summarize: 0, slice: 0 };
+  const s = data?.savedTokens ?? { structural: 0, error: 0, truncate: 0, summarize: 0 };
   const total = data?.totalSavedTokens ?? 0;
   const level = data?.level ?? 'off';
   const configured = data?.summarizerConfigured ?? 'none';
@@ -20,9 +20,8 @@
   const ollama = data?.ollama ?? null;
   const cost = data?.cost ?? { savedUsd: null, modelLabel: null };
   const disabled = data?.summarizeDisabled ?? false;
-  // Counterfactual/one-shot estimates (E5 honesty): flush and search savings
-  // are modeled figures that never enter totalSavedTokens; slice is an
-  // estimate but already part of the pass sums.
+  // Counterfactual/one-shot estimates (E5 honesty, BRK-022): slice, flush
+  // and search are MODELED figures that never enter totalSavedTokens.
   const est = data?.estimates ?? null;
   const showEstimates =
     !!est && ((est.slice ?? 0) > 0 || (est.flush ?? 0) > 0 || (est.search ?? 0) > 0);
@@ -63,7 +62,7 @@
     cost.modelLabel ? `  at current task model: ${cost.modelLabel}` : '',
     `  structural: ${(s.structural ?? 0).toLocaleString('en-US')} | error: ${(s.error ?? 0).toLocaleString('en-US')} | truncate: ${(s.truncate ?? 0).toLocaleString('en-US')} | summarize: ${(s.summarize ?? 0).toLocaleString('en-US')}`,
     showEstimates
-      ? `  estimates: slice ${(est.slice ?? 0).toLocaleString('en-US')} (part of pass totals) · flush ${(est.flush ?? 0).toLocaleString('en-US')} / search ${(est.search ?? 0).toLocaleString('en-US')} - counterfactual, NOT counted above (/broke estimate)`
+      ? `  estimates: slice ${(est.slice ?? 0).toLocaleString('en-US')} (modeled) · flush ${(est.flush ?? 0).toLocaleString('en-US')} / search ${(est.search ?? 0).toLocaleString('en-US')} - counterfactual, NOT counted above (/broke estimate)`
       : '',
     `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` - ${failed} failure(s)` : ''}${disabled ? ' - auto-disabled after repeated failures (/broke reset re-enables)' : ''}`,
     ollamaNote ? `  ${ollamaNote}` : '',
