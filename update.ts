@@ -9,9 +9,11 @@
  *   that folder, so the swap asks the host to close such handles first and
  *   falls back to replacing files one-by-one if some other handle still
  *   pins the directory. Both paths keep a backup and restore it on failure.
- * - Runtime state survives every update: config.json, the stats/measure
- *   ledgers incl. rotated files, the errors/ archive (size-capped) and
- *   node_modules - mirroring deploy.ps1's preserve list.
+ * - Runtime data lives OUTSIDE the installation (BRK-016: the versioned
+ *   .broke-data/v1 root), so a swap cannot touch it. The legacy
+ *   preserveRuntimeState list stays as a fallback for pre-migration
+ *   installs; node_modules is never carried - npm ci rebuilds it from the
+ *   verified lockfile (BRK-009).
  * - Only tagged releases (vMAJOR.MINOR.PATCH) are ever installed, never a
  *   moving branch: what lands on disk is exactly what CI tested.
  * - Trust model (R1): releases are installed ONLY from signed artifacts -

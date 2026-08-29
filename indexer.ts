@@ -740,7 +740,7 @@ export function estimateBulkReadAvoided(
 // Persistence (atomic, bounded, corruption-tolerant)
 // ---------------------------------------------------------------------------
 
-/** Extension-directory location: survives deploys/updates via preserve lists. */
+/** Runtime-data location: under the versioned data root, outside the swap path (BRK-016). */
 export function indexDirFor(projectRoot: string): string {
   // Env override mirrors the BROKE_CONFIG_PATH isolation pattern - tests must
   // never write into the real extension directory.
