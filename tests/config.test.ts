@@ -256,4 +256,16 @@ describe('search config block (F4)', () => {
     assert.equal(updated.slice.minChars, 5000);
     assert.equal(updated.search.enabled, DEFAULT_CONFIG.search.enabled);
   });
+
+  it('enforces hard ceilings on resource budgets regardless of what was persisted (BRK-018)', () => {
+    // In-range values pass through...
+    const inRange = mergeConfig({ search: { maxChars: 50_000, maxFileKB: 2048 } });
+    assert.equal(inRange.search.maxChars, 50_000);
+    assert.equal(inRange.search.maxFileKB, 2048);
+    // ...out-of-range values are rejected at the schema boundary (a
+    // hand-edited config is not a trusted resource budget).
+    assert.throws(() => mergeConfig({ search: { maxChars: 400 } }), /maxChars/i);
+    assert.throws(() => mergeConfig({ search: { maxChars: 100_000 } }), /maxChars/i);
+    assert.throws(() => mergeConfig({ search: { maxFileKB: 4096 } }), /maxFileKB/i);
+  });
 });

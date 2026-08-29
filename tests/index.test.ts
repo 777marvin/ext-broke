@@ -763,6 +763,56 @@ describe('project-scoped indexing via execution contexts (regression: "no open p
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('footer reports the EFFECTIVE k from tool input, not the configured default (BRK-017)', async () => {
+    writeConfig({ search: { ...DEFAULT_CONFIG.search, enabled: true } });
+    const ext = new Broke();
+    const root = makeProject();
+    const { context } = makeScopedHost(root);
+    const [tool] = ext.getTools(context, 'agent', {}).filter((t) => t.name === 'broke-search');
+
+    const output = String(await tool.execute({ query: 'needle', k: 3 }, undefined, context, {}));
+    assert.ok(
+      output.includes('budget 3 hits/'),
+      `footer must show the effective k=3, got: ${output.slice(-200)}`,
+    );
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('keeps the WHOLE tool output (hits + footer) under the configured maxChars budget (BRK-017)', async () => {
+    writeConfig({ search: { ...DEFAULT_CONFIG.search, enabled: true, maxChars: 800 } });
+    const ext = new Broke();
+    const root = mkdtempSync(join(tmpdir(), 'broke-budget-'));
+    // Three needle-rich files, each big enough that one snippet nearly fills the budget.
+    for (const name of ['one.ts', 'two.ts', 'three.ts']) {
+      writeFileSync(join(root, name), `export const ${name} = needle;\n// ${'filler text '.repeat(60)}needle marker\n`);
+    }
+    const { context } = makeScopedHost(root);
+    const [tool] = ext.getTools(context, 'agent', {}).filter((t) => t.name === 'broke-search');
+
+    const output = String(await tool.execute({ query: 'needle' }, undefined, context, {}));
+    assert.ok(output.length <= 800, `output blew the budget: ${output.length} chars (cap 800)`);
+    assert.ok(output.includes('broke-search:'), 'budgeted footer still present');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('rejects oversized tool arguments before any indexing work happens (BRK-018)', async () => {
+    writeConfig({ search: { ...DEFAULT_CONFIG.search, enabled: true } });
+    const ext = new Broke();
+    const root = makeProject();
+    const { context } = makeScopedHost(root);
+    const [tool] = ext.getTools(context, 'agent', {}).filter((t) => t.name === 'broke-search');
+
+    const tooLongQuery = String(await tool.execute({ query: 'x'.repeat(501) }, undefined, context, {}));
+    assert.equal(tooLongQuery, 'broke-search: invalid arguments');
+    const tooManyFilters = String(
+      await tool.execute({ query: 'ok', files: Array.from({ length: 101 }, (_, i) => `f${i}.ts`) }, undefined, context, {}),
+    );
+    assert.equal(tooManyFilters, 'broke-search: invalid arguments');
+    const oneHugeFilter = String(await tool.execute({ query: 'ok', files: ['x'.repeat(513)] }, undefined, context, {}));
+    assert.equal(oneHugeFilter, 'broke-search: invalid arguments');
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('degrades honestly when no execution context can supply a project dir', async () => {
     writeConfig({ search: { ...DEFAULT_CONFIG.search, enabled: true } });
     const ext = new Broke();

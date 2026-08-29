@@ -67,7 +67,7 @@ function makeProject(): string {
   return root;
 }
 
-const emptyState = (): IndexState => ({ version: 1, projectRoot: '', builtAt: '', truncated: false, files: {}, postings: {} });
+const emptyState = (): IndexState => ({ version: 1, projectRoot: '', builtAt: '', scannedAt: '', truncated: false, files: {}, postings: {} });
 
 describe('tokenize', () => {
   it('splits identifiers and numbers, lowercases everything', () => {
@@ -131,6 +131,7 @@ describe('rankQuery BM25 ranking', () => {
     version: 1,
     projectRoot: '',
     builtAt: '',
+    scannedAt: '',
     truncated: false,
     files: {
       'dense.ts': { mtimeMs: 1, sizeBytes: 100, tokenCount: 20 },
@@ -210,6 +211,17 @@ describe('runSearch budget and filtering', () => {
     const none = runSearch(state!, root!, 'qqxxzz', { k: 8, maxChars: 6000, contextLines: 4 });
     assert.deepEqual(none.hits, []);
   });
+
+  it('reserves footer room from the budget so hits + footer fit the tool cap together (BRK-017)', () => {
+    const opts = { k: 50, maxChars: 400, contextLines: 8, footerReserve: 256 };
+    const result = runSearch(state!, root!, 'alphafind betafind invoice totalcents', opts);
+    const joined = result.hits.map((h) => h.text).join('\n\n');
+    const footer = formatSearchFooter(result.hits.length, 3, { k: 50, maxChars: 400, contextLines: 8 }, 1);
+    assert.ok(
+      joined.length + 2 + footer.length <= opts.maxChars,
+      `hits (${joined.length}) + footer (${footer.length}) must fit the ${opts.maxChars}-char budget`,
+    );
+  });
 });
 
 describe('persistence round-trip and corruption tolerance', () => {
@@ -261,6 +273,60 @@ describe('ensureFresh with dir override (isolation pattern)', () => {
 
     assert.equal(loadIndex(store)!.builtAt, builtAt);
   });
+
+  it('advances scannedAt on zero-delta rescans while builtAt stays put (BRK-017)', () => {
+    const root = makeProject();
+    const store = join(mkdtempSync(join(tmpdir(), 'broke-fresh-scan-')), 'idx');
+    tmpRoots.push(store);
+
+    const first = ensureFresh(root, { maxFileKB: 512 }, store);
+    const builtAt = first.state.builtAt;
+    assert.ok(first.state.scannedAt.length > 0, 'a completed rescan is a freshness check');
+
+    const second = ensureFresh(root, { maxFileKB: 512 }, store);
+    assert.deepEqual(second.delta, { added: 0, updated: 0, removed: 0 });
+    assert.equal(second.state.builtAt, builtAt, 'no content change - builtAt must not move');
+    assert.ok(second.state.scannedAt >= first.state.scannedAt, 'the freshness check itself happened just now');
+
+    const persisted = loadIndex(store)!;
+    assert.equal(persisted.builtAt, builtAt);
+    assert.equal(persisted.scannedAt, second.state.scannedAt, 'the freshness marker must reach disk, not just memory');
+  });
+
+  it('measures the TTL window from the last freshness check, not the last content change (BRK-017)', () => {
+    const root = makeProject();
+    const store = join(mkdtempSync(join(tmpdir(), 'broke-fresh-ttl-')), 'idx');
+    tmpRoots.push(store);
+
+    const scanned = scanProject(root, 512);
+    const s = createEmptyState(root);
+    mergeIntoState(s, root, scanned.entries, scanned.truncated);
+    s.builtAt = new Date().toISOString(); // content "just changed" ...
+    s.scannedAt = new Date(Date.now() - 10 * 60_000).toISOString(); // ...but the last check is 10 minutes old
+    saveIndex(store, s);
+
+    const fresh = ensureFresh(root, { maxFileKB: 512, ttlMs: 60_000 }, store);
+    const checkedMs = Date.parse(fresh.state.scannedAt);
+    assert.ok(Number.isFinite(checkedMs) && Date.now() - checkedMs < 5_000, 'an overdue freshness check must run, not be served from TTL');
+  });
+
+  it('persists a pure truncation flip (truncated -> clean) and refreshes builtAt (BRK-017)', () => {
+    const root = makeProject();
+    const store = join(mkdtempSync(join(tmpdir(), 'broke-fresh-trunc-')), 'idx');
+    tmpRoots.push(store);
+
+    const scanned = scanProject(root, 512);
+    const s = createEmptyState(root);
+    mergeIntoState(s, root, scanned.entries, true); // simulate a previously truncated build
+    s.builtAt = '2026-01-01T00:00:00.000Z';
+    s.scannedAt = s.builtAt;
+    saveIndex(store, s);
+
+    const fresh = ensureFresh(root, { maxFileKB: 512 }, store);
+    assert.equal(fresh.state.truncated, false, 'in-memory state reflects the clean scan');
+    assert.equal(loadIndex(store)!.truncated, false, 'the flag change must reach disk - not be eaten by the post-mutation compare');
+    assert.notEqual(loadIndex(store)!.builtAt, '2026-01-01T00:00:00.000Z', 'a truncation flip is a real index event -> builtAt refreshes');
+  });
 });
 
 describe('footer and hash helpers', () => {
@@ -280,9 +346,9 @@ describe('footer and hash helpers', () => {
     }
   });
 
-  it('footer carries result count, file count and the budget numbers', () => {
-    const footer = formatSearchFooter(3, 1200, { k: 8, maxChars: 6000, contextLines: 6 }, 42);    assert.match(footer, /^broke-search: 3 result\(s\) \| .* files indexed \| budget 8 hits\/.* chars \| index refreshed 42ms ago$/);
-    assert.match(footer, /1[,.\u2009]?200/); // thousand separator is locale-flavored - stay lenient
+  it('footer carries result count, file count and the budget numbers (age = last freshness check)', () => {
+    const footer = formatSearchFooter(3, 1200, { k: 8, maxChars: 6000, contextLines: 6 }, 42);    assert.match(footer, /^broke-search: 3 result\(s\) \| .* files indexed \| budget 8 hits\/.* chars \| index scanned 42ms ago$/);
+    assert.match(footer, /1[,.\\u2009]?200/); // thousand separator is locale-flavored - stay lenient
   });
 });
 

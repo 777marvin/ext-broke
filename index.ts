@@ -218,6 +218,12 @@ export default class Broke implements Extension {
    */
   private readonly indexByProject = new Map<string, { state: IndexState; at: number }>();
   private static readonly INDEX_REFRESH_TTL_MS = 60_000;
+  /**
+   * Chars runSearch keeps free for the footer appended below (BRK-017):
+   * hits + separators + footer + truncation note must stay inside
+   * search.maxChars, so the budget is enforced as maxChars minus this reserve.
+   */
+  private static readonly SEARCH_FOOTER_RESERVE_CHARS = 256;
 
   onLoad(context: ExtensionContext): void {
     this.context = context;
@@ -1074,9 +1080,12 @@ export default class Broke implements Extension {
    * at runtime the host reads plain properties from this JS object.
    */
   private static readonly BROKE_SEARCH_SCHEMA = z.object({
-    query: z.string().min(1),
+    // BRK-018 (external review): model-generated tool arguments are not a
+    // trusted resource budget. Hard ceilings independent of config - a query
+    // is a keyword lookup, not a document dump.
+    query: z.string().min(1).max(500),
     k: z.number().int().min(1).max(50).optional(),
-    files: z.array(z.string()).optional(),
+    files: z.array(z.string().min(1).max(512)).max(100).optional(),
   });
 
   getTools(_context: ExtensionContext, _mode: string, _agentProfile: unknown): ToolDefinition[] {
@@ -1121,11 +1130,17 @@ export default class Broke implements Extension {
       });
       boundedMapSet(this.indexByProject, projectHash(root), { state: fresh.state, at: Date.now() });
       const resolved = resolveSearchOptions(config.search);
-      const result = runSearch(fresh.state, root, input.query, { ...resolved.options, k: input.k ?? resolved.options.k }, input.files);
-      const builtMs = Date.parse(fresh.state.builtAt);
-      const ageMs = Number.isFinite(builtMs) ? Math.max(0, Date.now() - builtMs) : 0;
+      // BRK-017: ONE effective-options object feeds runSearch AND the footer -
+      // a tool-input k override used to be applied to the search but the
+      // footer still advertised the configured default.
+      const effective = { ...resolved.options, k: input.k ?? resolved.options.k, footerReserve: Broke.SEARCH_FOOTER_RESERVE_CHARS };
+      const result = runSearch(fresh.state, root, input.query, effective, input.files);
+      // "scanned" age = the last freshness check (BRK-017), falling back to
+      // builtAt for indexes persisted before scannedAt existed.
+      const stampMs = Date.parse(fresh.state.scannedAt || fresh.state.builtAt);
+      const ageMs = Number.isFinite(stampMs) ? Math.max(0, Date.now() - stampMs) : 0;
       const footer =
-        formatSearchFooter(result.hits.length, Object.keys(fresh.state.files).length, resolved.options, ageMs) +
+        formatSearchFooter(result.hits.length, Object.keys(fresh.state.files).length, effective, ageMs) +
         (result.truncated ? ' | INDEX TRUNCATED at cap' : '');
       if (result.hits.length === 0) return `no matches for "${input.query}"\n${footer}`;
       // Counterfactual estimate only (E5 honesty): never shown to the agent
@@ -1153,6 +1168,11 @@ export default class Broke implements Extension {
       const scan = scanProject(root, config.search.maxFileKB);
       const state = createEmptyState(root);
       const delta = mergeIntoState(state, root, scan.entries, scan.truncated);
+      // BRK-017: a manual rebuild IS a completed freshness check over fresh
+      // content - stamp both times or the index reports an unknown/ancient
+      // age and every subsequent TTL window starts expired.
+      state.scannedAt = new Date().toISOString();
+      state.builtAt = state.scannedAt;
       saveIndex(indexDirFor(root), state);
       boundedMapSet(this.indexByProject, projectHash(root), { state, at: Date.now() });
       return (

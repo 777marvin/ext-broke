@@ -565,9 +565,9 @@ every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
 | slice.focusAuto | on | derive focus from edit-tool calls / updated files |
 | search.enabled | on | register the broke-search agent tool (offline keyword index) |
 | search.backend | `keyword` | v1 ships keyword BM25 only; vector/hybrid reserved for v2 |
-| search.maxResults / maxChars | 8 / 6000 | top-k results and TOTAL char budget per query |
+| search.maxResults / maxChars | 8 / 6000 | top-k results and TOTAL char budget per query (maxChars hard range 500-50,000; the footer counts toward the budget) |
 | search.contextLines | 6 | context lines kept around each best match |
-| search.maxFileKB | 512 | files larger than this never enter the index |
+| search.maxFileKB | 512 | files larger than this never enter the index (hard ceiling 2048) |
 | summarize.via | `local` | local (Ollama) / cloud |
 | summarize.localModel | `qwen2.5-coder:3b` | Ollama model tag |
 | summarize.ollamaUrl | `http://127.0.0.1:11434` | Ollama base URL |

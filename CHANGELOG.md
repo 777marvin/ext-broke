@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Search index metadata honesty (external review BRK-017): a truncation
+  flag that cleared between builds is now persisted (the previous
+  post-mutation compare could never observe the flip), a manual rebuild
+  stamps build/freshness times, and the persisted index gains a separate
+  `scannedAt` (last freshness check) next to `builtAt` (last content
+  change) - the search footer's "index scanned Xms ago" and the TTL
+  window now measure actual freshness instead of content age. `saveIndex`
+  really implements the atomic write it documented: unique temp name,
+  file fsync, rename, parent-directory fsync on POSIX.
+- broke-search budget honesty (external review BRK-017): the footer is
+  formatted from the EFFECTIVE options (a tool-input `k` override used to
+  apply to the search while the footer still advertised the default) and
+  is carved out of the `maxChars` budget, so hits + footer together can
+  no longer exceed the documented cap.
+- broke-search input ceilings (external review BRK-018): queries are
+  limited to 1-500 chars, `files` to at most 100 filters of at most 512
+  chars each; config `search.maxChars` has a hard documented range
+  (500-50,000) and `search.maxFileKB` a hard ceiling (2048 KB) - a
+  hand-edited config is no longer a trusted resource budget.
+
 - Search index: tokens derived from repository content (e.g. identifiers
   named `__proto__`, `constructor`, `prototype`) can no longer pollute
   JavaScript global built-ins. Index dictionaries are null-prototype

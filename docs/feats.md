@@ -573,8 +573,10 @@ snippets there would pollute it.
   keyword when Ollama is offline, same pattern as the summarizer).
 
 **Tool (index.ts, `getTools`):** `broke-search`, zod schema
-`{ query: string; k?: number; files?: string[] }`; returns the snippet
-summary text (plus one-line footer with index stats). Chat convenience:
+`{ query: string (1-500 chars); k?: number; files?: string[] (<=100 filters, each <=512 chars) }`
+- model-generated arguments are untrusted, so the ceilings are schema-hard
+(BRK-018); returns the snippet summary text (plus one-line footer with index
+stats, which counts toward the char budget). Chat convenience:
 `/broke search <query>`.
 
 **Commands (commands.ts):** `/broke index [rebuild]`, `/broke index status`
@@ -588,17 +590,18 @@ const SearchSchema = z.object({
   enabled: z.boolean().default(true),
   backend: z.enum(['keyword', 'vector', 'hybrid']).default('keyword'),
   maxResults: z.number().int().min(1).max(50).default(8),
-  /** Total snippet budget per query - the token control. */
-  maxChars: z.number().int().positive().default(6000),
+  /** Total snippet budget per query - the token control (hard range 500-50k, BRK-018). */
+  maxChars: z.number().int().min(500).max(50_000).default(6000),
   contextLines: z.number().int().min(1).max(20).default(6),
-  maxFileKB: z.number().int().positive().default(512),
+  maxFileKB: z.number().int().min(1).max(2048).default(512),
 });
 ```
 
 ### Acceptance criteria
 
 - [x] `broke-search` returns ≤ `maxResults` results with `path:line`,
-      snippet windows and match counts, total ≤ `maxChars` chars.
+      snippet windows and match counts, total ≤ `maxChars` chars
+      including the footer (BRK-017).
 - [x] Incremental rebuild re-indexes only changed files (mtime/size);
       index survives extension reload; S3 confirms deploy preservation.
 - [x] Query while a file changed since last build returns fresh results
