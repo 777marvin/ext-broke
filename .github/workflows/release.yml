@@ -36,6 +36,10 @@ on:
 permissions:
   contents: write
   security-events: write
+  # ci.yml's dependency-review job requests pull-requests: read - the
+  # caller's grant caps the whole workflow_call chain, so it must be listed
+  # here or the release run dies at startup (v1.1.0 first tag attempt).
+  pull-requests: read
 
 jobs:
   gate:
