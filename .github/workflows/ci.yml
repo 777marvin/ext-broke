@@ -15,7 +15,15 @@ permissions:
 
 jobs:
   test:
-    name: Typecheck & tests
+    name: Typecheck & tests (Node ${{ matrix.node }})
+    # BRK-026: run the suite on the MINIMUM supported Node (22, the engines
+    # floor) AND current LTS (24). @types/node tracks a newer major, so the
+    # typecheck alone can pass on APIs Node 22 does not have - only a real
+    # 22 run proves the floor.
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
     runs-on: ubuntu-latest
     steps:
       # fetch-tags: check:version verifies the release tag at HEAD when this
@@ -27,12 +35,28 @@ jobs:
           fetch-tags: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run check:version
       - run: npm run typecheck
       - run: npm test
+
+  coverage:
+    name: Coverage gate (branch thresholds, critical modules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # BRK-026: line coverage hid weak BRANCH coverage of the central
+      # orchestrator. Per-file branch gates on the critical modules -
+      # thresholds sit slightly under the measured baseline (compress 85.3,
+      # indexer 86.1, update 76.0, index 62.9) so regressions fail the gate.
+      - run: npm run coverage
 
   ui-validation:
     name: Extension UI component validation

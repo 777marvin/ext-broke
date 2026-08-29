@@ -12,7 +12,11 @@ npm test             # tsx --test, pure-function tests
 ```
 
 Both checks must pass before a change is ready. There are no lint rules
-beyond TypeScript itself (`tsconfig.json`).
+beyond TypeScript itself (`tsconfig.json`) - an ESLint/format gate was
+deliberately deferred during the 2026-08-29 review remediation (BRK-026):
+the setup cost outweighed the benefit while the critical-module branch
+coverage gate (`npm run coverage`) was still being established. Revisit
+once the test suite grows beyond its current shape.
 
 ## What to work on
 

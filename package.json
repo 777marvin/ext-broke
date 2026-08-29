@@ -23,6 +23,7 @@
   "homepage": "https://github.com/777marvin/ext-broke#readme",
   "scripts": {
     "test": "tsx --test \"tests/*.test.ts\"",
+    "coverage": "c8 --check-coverage --per-file --branches 82 --lines 0 --statements 0 --functions 0 --include compress.ts --include indexer.ts npm test && c8 --check-coverage --per-file --branches 72 --lines 0 --statements 0 --functions 0 --include update.ts npm test && c8 --check-coverage --per-file --branches 60 --lines 0 --statements 0 --functions 0 --include index.ts npm test",
     "typecheck": "tsc --noEmit",
     "check:version": "node scripts/check-version.mjs",
     "bench": "tsx scripts/bench.ts",
@@ -49,6 +50,7 @@
     "@aiderdesk/extensions": "^0.31.0",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
+    "c8": "^12.0.0",
     "sucrase": "^3.35.0",
     "tsx": "^4.23.11",
     "typescript": "^7.0.2",

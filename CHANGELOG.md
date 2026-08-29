@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by exact provider+model match and fall back to a bare id only when it is
   UNIQUE - ambiguous ids report an honest unknown price instead of a
   possibly wrong provider's rate.
+- CI quality gates (external review BRK-026): the test job now runs on
+  Node 22 AND Node 24 (the minimum supported version is proven, not just
+  typed), a per-file branch-coverage gate protects the critical modules
+  (compress, indexer, update, index) against regressions, and a stray
+  debug output in the test suite is gone. An ESLint/format gate is
+  deliberately deferred and documented in CONTRIBUTING.
 - Packaging metadata (external review BRK-025): the extension declares
   itself private (it is a GitHub/AiderDesk extension, not an npm package -
   no accidental `npm publish`), documents its repository, issue tracker

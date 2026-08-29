@@ -160,7 +160,6 @@ describe('index.ts orchestration (fake host, XF11)', () => {
       { originalMessages: messages, optimizedMessages: messages },
       context,
     )) as { optimizedMessages: ContextMessage[] } | undefined;
-    console.error('DEBUG-147 state.summarizeCalls=', state.summarizeCalls);
     assert.ok(result, 'the hook must return optimized messages');
     assert.ok(messagesChars(result.optimizedMessages) < before, 'compression must shrink the input');
     assert.ok(state.summarizeCalls >= 1, 'the cloud summarizer must have been called');
