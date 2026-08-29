@@ -73,6 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gear dialog gains the missing safety-relevant fields (snapshot
   onCommit/onTestPass/keepHistory, flush confirm/undo,
   summarize.maxSummaryChars, truncate.maxInputChars).
+- The UI type check can no longer silently degrade to `any` (external
+  review BRK-024): a minimal, versioned host UI contract
+  (`scripts/host-ui-contract.d.ts`, pinned to the compiled
+  @aiderdesk/extensions version) replaces the permissive any-fallback when
+  no AiderDesk checkout is present; the vendored contract gives the UI
+  primitives real prop shapes (Checkbox/Input/Select), so the validator
+  now catches actual prop misuse in CI. A contract test pins the vendored
+  version against the installed package.
 - Packaging metadata (external review BRK-025): the extension declares
   itself private (it is a GitHub/AiderDesk extension, not an npm package -
   no accidental `npm publish`), documents its repository, issue tracker
