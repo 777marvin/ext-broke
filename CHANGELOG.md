@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Summarize cache: after an incremental reuse (summary + freshly appended
+  tool messages) the cache boundary is no longer advanced over messages
+  that were never summarized. The previous behavior silently dropped those
+  appended messages on the NEXT compress run (external review BRK-001).
+
 ## [1.0.0] - 2026-08-27
 
 First stable release. What 1.0.0 promises: the four feature pillars -

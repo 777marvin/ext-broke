@@ -932,14 +932,15 @@ export async function summarizePass(
           // XF6: only swap when the cached summary + the new tool messages are
           // smaller than the original region - never grow the context.
           if (removedChars <= 0) return noop;
-          // F-06: the covered portion is unchanged, but the cache now covers
-          // the WHOLE region (throughId = lastId) - re-fingerprint it.
-          const updated: CachedSummary = {
-            ...cached,
-            throughId: lastId,
-            contentFingerprint: regionContentFingerprint(region, region.length - 1),
-          };
-          boundedMapSet(state.cachedSummaryByTask, taskId, updated);
+          // BRK-001 (external review 2026-08-29): the cache boundary must
+          // NOT advance here. The stored summary covers only up to
+          // `cached.throughId` - the appended messages were never sent to a
+          // summarizer. Claiming coverage of the whole region made the NEXT
+          // run treat it as "unchanged" and replace it with the stale
+          // summary, silently dropping the appended messages. Keeping the
+          // boundary lets the incremental path re-derive `sinceThrough` on
+          // every run; only a fresh generate (below) may widen the cache's
+          // semantic coverage.
           const result = [...messages.slice(0, start), cached.message, ...sinceThrough, ...messages.slice(end)];
           return { messages: result, removedChars, summarizedRanges: 1, summarizeCalls: 0, failed: false, summarizer: cached.summarizer, summarizerInputChars: 0, summarizerOutputChars: 0 };
         }

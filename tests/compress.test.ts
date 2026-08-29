@@ -735,6 +735,30 @@ describe('summarizePass', () => {
     assert.ok(r2.messages.some((m) => m.role === 'tool' && JSON.stringify(m.content).includes('status ok')));
   });
 
+  it('keeps appended messages on the run AFTER an incremental reuse (BRK-001 regression)', async () => {
+    const msgs = summaryConversation();
+    const state = createCompressState();
+    const calls = { n: 0, inputs: [] as string[] };
+    const deps = countingDeps(calls);
+    const cfg = summarizeConfig();
+    await summarizePass(msgs, 1, cfg, deps, state, 'task-brk-001');
+    assert.equal(calls.n, 1);
+    // Step 2: a pure tool step arrives - the incremental path must reuse the
+    // cached summary and keep the appended messages verbatim.
+    const extended = [...msgs.slice(0, msgs.length - 1), assistant('Step 4: checking status.'), tool('power---bash', 'status ok'), msgs[msgs.length - 1]];
+    const r2 = await summarizePass(extended, 1, cfg, deps, state, 'task-brk-001');
+    assert.equal(calls.n, 1, 'incremental reuse must not call the summarizer');
+    assert.ok(JSON.stringify(r2.messages).includes('status ok'), 'appended messages survive the incremental pass');
+    // Step 3 (the bug): the SAME region again. The old incremental path
+    // advanced the cache boundary over messages that were never summarized,
+    // so this run hit the "region unchanged" reuse path and replaced the
+    // whole region - appended messages included - with the stale summary.
+    // Silent message loss that only shows up on the third call.
+    const r3 = await summarizePass(extended, 1, cfg, deps, state, 'task-brk-001');
+    assert.equal(calls.n, 1, 'still no fresh summarizer call - the boundary stays at the summarized message');
+    assert.ok(JSON.stringify(r3.messages).includes('status ok'), 'BRK-001: appended messages must survive every subsequent run');
+  });
+
   it('never orphans a tool result when the fallback boundary splits a pair (regression)', async () => {
     // Few user turns force the ACTIVE_TURN_TAIL fallback; its fixed cut can
     // land inside a call/result pair. The summary must shrink to a safe
