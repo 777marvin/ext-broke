@@ -59,6 +59,10 @@ Usage: /broke <subcommand>
   why                           live gate-by-gate verdict: why does this task save 0 (or not)?
   measure                       summarize the per-run measurement ledger (measure.jsonl)
   measure on | off              record every compression run to measure.jsonl (default: ${d.stats.measure ? 'on' : 'off'})
+  config list                   every documented setting with its current value
+  config get <path>             print one setting's value (e.g. flush.confirm)
+  config set <path> <value>     change ANY documented setting, schema-validated
+                                (booleans: on/off; e.g. config set snapshot.onCommit off)
   reset                         clear this task's stats
   selftest                      run the pipeline on synthetic input and log results
   update                        self-update from GitHub releases (installs the latest)
@@ -108,6 +112,9 @@ export type BrokeCommand =
   | { kind: 'why' }
   | { kind: 'measure' }
   | { kind: 'measure-toggle'; enabled: boolean }
+  | { kind: 'config-list' }
+  | { kind: 'config-get'; path: string }
+  | { kind: 'config-set'; path: string; value: string }
   | { kind: 'reset' }
   | { kind: 'selftest' }
   | { kind: 'update'; mode: 'install' | 'check'; tag?: string }
@@ -212,6 +219,17 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
       if (query.length > 0) return { kind: 'search', query };
       return { kind: 'unknown', raw: args.join(' ') };
     }
+    // /broke config list|get <dotted-path>|set <dotted-path> <value> (BRK-028):
+    // makes EVERY documented config option reachable from the command
+    // surface - previously options like snapshot.* / flush.* existed only in
+    // the JSON file.
+    case 'config': {
+      const opt = rest[0];
+      if (opt === 'list' && rest.length === 1) return { kind: 'config-list' };
+      if (opt === 'get' && rest.length >= 2) return { kind: 'config-get', path: rest.slice(1).join(' ') };
+      if (opt === 'set' && rest.length >= 3) return { kind: 'config-set', path: rest[1], value: rest.slice(2).join(' ') };
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
     case 'summarize': {
       const opt = rest[0];
       const value = rest[1];
@@ -295,8 +313,116 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
  * human-readable confirmation. `filePath` defaults to the real config.json
  * and exists so tests can run against a temp file.
  */
+/**
+ * Apply a parsed command to the config; returns the new config and a
+ * human-readable confirmation. `filePath` defaults to the real config.json
+ * and exists so tests can run against a temp file.
+ */
+/**
+ * Apply a parsed command to the config; returns the new config and a
+ * human-readable confirmation. `filePath` defaults to the real config.json
+ * and exists so tests can run against a temp file.
+ */
+/** Own-property-safe dotted-path lookup (BRK-002 lesson: never trust keys). */
+function configValueAt(source: unknown, path: string): unknown {
+  let cur: unknown = source;
+  for (const seg of path.split('.')) {
+    if (typeof cur !== 'object' || cur === null) return undefined;
+    if (!Object.prototype.hasOwnProperty.call(cur, seg)) return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
+/** Every dotted leaf path of the object (arrays are leaves, never walked). */
+function collectLeafPaths(source: Record<string, unknown>, prefix: string, out: string[]): void {
+  for (const key of Object.keys(source)) {
+    const value = source[key];
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      collectLeafPaths(value as Record<string, unknown>, path, out);
+    } else {
+      out.push(path);
+    }
+  }
+}
+
+/** Central settings surface (BRK-028): every documented leaf of DEFAULT_CONFIG. */
+export function configLeafPaths(source: Record<string, unknown> = DEFAULT_CONFIG as unknown as Record<string, unknown>): string[] {
+  const out: string[] = [];
+  collectLeafPaths(source, '', out);
+  return out.sort();
+}
+
+const isKnownConfigPath = (path: string): boolean => {
+  if (path.split('.').some((seg) => seg === '__proto__' || seg === 'constructor' || seg === 'prototype')) return false;
+  return configLeafPaths().includes(path);
+};
+
+const formatConfigValue = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return String(value);
+  return JSON.stringify(value);
+};
+
+/**
+ * Coerce a CLI string against the DEFAULT value's type at `path`
+ * (the central definition doubles as the coercion contract): booleans
+ * accept on/off/true/false, numbers are integer-rounded, everything else
+ * parses as JSON and falls back to a raw string. Zod validation happens
+ * downstream in updateConfigPath.
+ */
+function coerceConfigValue(path: string, raw: string): unknown {
+  const hint = configValueAt(DEFAULT_CONFIG, path);
+  if (typeof hint === 'boolean') {
+    if (raw === 'true' || raw === 'on') return true;
+    if (raw === 'false' || raw === 'off') return false;
+  }
+  if (typeof hint === 'number') {
+    const n = Math.round(Number(raw));
+    if (!Number.isFinite(n)) throw new Error(`'${raw}' is not a number`);
+    return n;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw; // plain strings (enums, model ids, URLs) stay strings
+  }
+}
+
 export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: string): { config: Config; message: string } {
   switch (cmd.kind) {
+    case 'config-list': {
+      const lines = configLeafPaths(config).map((p) => {
+        const value = configValueAt(config, p);
+        const isDefault = value === configValueAt(DEFAULT_CONFIG, p) && typeof value !== 'object';
+        return `  ${p} = ${formatConfigValue(value)}${isDefault ? '' : ' (changed from default)'}`;
+      });
+      return { config, message: `current settings (all settable via /broke config set <path> <value>):\n${lines.join('\n')}` };
+    }
+    case 'config-get': {
+      if (!isKnownConfigPath(cmd.path)) {
+        return { config, message: `no such setting '${cmd.path}' - /broke config list lists every setting` };
+      }
+      const value = configValueAt(config, cmd.path);
+      return { config, message: `${cmd.path} = ${formatConfigValue(value)}` };
+    }
+    case 'config-set': {
+      // BRK-028: schema-validated write to ANY documented dotted path.
+      // Invalid values report honestly instead of throwing into the command
+      // loop; prototype-path writes are refused outright (BRK-002 lesson).
+      if (!isKnownConfigPath(cmd.path)) {
+        return { config, message: `rejected: no such setting '${cmd.path}' - /broke config list lists every setting` };
+      }
+      try {
+        const value = coerceConfigValue(cmd.path, cmd.value);
+        const updated = updateConfigPath(cmd.path, value, filePath);
+        return { config: updated, message: `${cmd.path} <- ${formatConfigValue(value)}` };
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return { config, message: `rejected: ${cmd.path} = ${cmd.value} - ${reason}` };
+      }
+    }
     case 'toggle':
       return { config: updateConfigPath('enabled', cmd.enabled, filePath), message: `broke ${cmd.enabled ? 'enabled' : 'disabled'}` };
     case 'level':
@@ -430,7 +556,7 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
     `broke stats - ${stats.passes} compression run(s)`,
     measured !== null
       ? `  saved actual:   ${fmtChars(measured)} (measured: per-run input before - after, summed)`
-      : `  saved total:    ${fmtChars(passSum)} (pass-sum - records predate size measurement)`,
+      : `  saved total:    ${fmtChars(passSum)} (pass-sum of MEASURED passes - records predate size measurement)`,
     ...(money ? [`  estimated cost saved: ${money} (${priceLabel(price)})`] : []),
     `  structural:    ${fmtChars(stats.savedChars.structural)} (content-preserving)`,
     `  error:         ${fmtChars(stats.savedChars.error)} (stack-trace/log compression)`,
@@ -491,7 +617,7 @@ export function formatMeasure(summary: MeasureSummary | null): string {
   const lines = [
     `broke measure - ${summary.runs} run(s) across ${summary.tasks} task(s)${summary.spanMs > 0 ? ` over ${spanDays} day(s)` : ''}`,
     `  input per run:   ${fmtChars(summary.charsBefore)} (sum over runs - the same conversation is compressed on every model call, NOT a cumulative context claim)`,
-    `  output per run:  ${fmtChars(summary.charsAfter)} (${reduction}% smaller on average across runs)`,
+    `  output per run:  ${fmtChars(summary.charsAfter)} (${reduction}% smaller, byte-weighted across runs)`,
     `  saved total:     ${fmtChars(summary.savedChars)}`,
     `  saved per run:   mean ${fmtChars(summary.meanSavedCharsPerRun)} | median ${fmtChars(summary.medianSavedCharsPerRun)} | max ${fmtChars(summary.maxSavedCharsPerRun)}`,
     `  summarizer calls: ${summary.summarizeCalls} (true cost side - cache reuse not counted)`,

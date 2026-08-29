@@ -148,9 +148,14 @@ Unsigned or tampered releases are refused outright - which also means
 releases older than 0.8.0 can no longer be (re-)installed this way;
 roll back to the last signed version instead.
 
-The update preserves your `config.json`, stats/measure ledgers, the
-errors archive and `node_modules`, refreshes dependencies when the
-lockfile changed, and swaps the installation atomically: transient file
+Runtime data lives OUTSIDE the swappable code tree, under a versioned
+`<extension>/../.broke-data/v1/` root (`config.json`, `ledgers/`,
+`snapshots/`, `index/`, `errors/`; `BROKE_DATA_DIR` overrides it) - a
+one-time migration moves artifacts from earlier releases there on first
+load. The update therefore carries no runtime state out of the
+installation tree (there is nothing left to preserve) and rebuilds
+dependencies with `npm ci` from the verified lockfile - `node_modules` is
+never reused (BRK-009). It swaps the installation atomically: transient file
 locks are retried, every payload file is verified after the copy before
 the update declares success, and any failure rolls back to the previous
 installation completely. Interrupted updates recover on the next run: a
@@ -324,7 +329,7 @@ Shorthand used below: **SHORT** = the conversation never crosses
 | `snapshot.onCommit` (on) | Cheap, harmless | Free milestone trail after each commit | Summary-only by default (privacy review F-01): raw undo files are opt-in via `snapshot.keepHistory`. The destructive flush keeps its undo file via `flush.undo` (on) |
 | `snapshot.onTestPass` (off) | - | False positives on flaky suites made this opt-in | Enable only if your test runner prints a clean `passed`/exit-0 pattern reliably |
 | `stats.measure` (on) | Negligible overhead, records every compression run | These ledger records are your provable numbers (`/broke measure`) | Keep it on; 5 MB rotation bounds the file |
-| `search.enabled` (on) | Dormant cost only: the registered tool ships its JSON schema with every model call even if never used - `/broke search off` drops that for agents that never search | First real payoff: snippets replace whole-file reads when locating code | Compounds: smaller read results flow into every later call; commits trigger a throttled refresh, queries re-scan lazily before returning stale hits |
+| `search.enabled` (on) | Dormant cost only: the registered tool ships its JSON schema with every model call even if never used - `/broke search off` drops that for agents that never search | First real payoff: snippets replace whole-file reads when locating code | Compounds: smaller read results flow into every later call; commits trigger a throttled refresh, queries serve the snapshot within a 60s freshness window and re-scan after it (BRK-013 TTL) |
 | `search.maxChars` (6000) / `contextLines` (6) | Irrelevant while dormant | Tighten toward 4000 chars if result sets feel bloated | Lower budgets buy extra headroom below `maxContextChars`; snippets land there once, then get compressed like any other tool output |
 
 ### Running autonomous agents
@@ -451,7 +456,7 @@ Savings appear as an estimate under `slice:` in `/broke stats`.
 Long sessions pile up intermediate steps the agent no longer needs. Broke's
 F3 records **milestone snapshots** - compact, human-inspectable JSON files
 (`goal`, `achieved`, changed `files`, optional commit hash, a masked text
-summary) under `snapshots/<taskId>/` next to the extension. They are written
+summary) under the data root (`snapshots/<taskId-slug>-<hash>/`, outside the swappable extension tree). They are written
 automatically after every successful commit (`snapshot.onCommit`, default
 on), optionally on detected test-green tool results (`snapshot.onTestPass`,
 default off), and manually via `/broke snapshot [label]`.
@@ -488,8 +493,8 @@ came from.
 
 Honest positioning against what AiderDesk already ships: Broke's index is
 **offline** (no embedding model needed), persisted per project under
-`<extension>/index/`, re-indexed incrementally by mtime/size diffing
-(triggered on commits and lazily before queries), and strictly budgeted.
+the data root (`index/<projectHash>/`, BRK-016), re-indexed incrementally by mtime/size diffing
+(triggered on commits and re-checked before queries once the 60s freshness window expires), and strictly budgeted.
 It complements rather than replaces `power---semantic_search` or the repo
 map.
 
@@ -527,7 +532,7 @@ summarizer's output, it only stores it as history. Switching
 it only changes which model sees the untrusted text first.
 
 Snapshots (F3) persist small JSON records and optional raw-history undo
-files **locally** under the extension directory. Every record field derived
+files **locally** under the data root (outside the swappable extension tree). Every record field derived
 from conversation content passes through the same secret masking as all
 broke artifacts; they are bounded by count (50 records per task) and by
 bytes (25 MB per task, individual undo files capped at 10 MB, oldest
@@ -565,9 +570,9 @@ every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
 | slice.focusAuto | on | derive focus from edit-tool calls / updated files |
 | search.enabled | on | register the broke-search agent tool (offline keyword index) |
 | search.backend | `keyword` | v1 ships keyword BM25 only; vector/hybrid reserved for v2 |
-| search.maxResults / maxChars | 8 / 6000 | top-k results and TOTAL char budget per query |
+| search.maxResults / maxChars | 8 / 6000 | top-k results and TOTAL char budget per query (maxChars hard range 500-50,000; the footer counts toward the budget) |
 | search.contextLines | 6 | context lines kept around each best match |
-| search.maxFileKB | 512 | files larger than this never enter the index |
+| search.maxFileKB | 512 | files larger than this never enter the index (hard ceiling 2048) |
 | summarize.via | `local` | local (Ollama) / cloud |
 | summarize.localModel | `qwen2.5-coder:3b` | Ollama model tag |
 | summarize.ollamaUrl | `http://127.0.0.1:11434` | Ollama base URL |
@@ -582,6 +587,15 @@ every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
 | snapshot.keepHistory | off | raw-history undo files for auto/manual snapshots (privacy opt-in, F-01) |
 | flush.confirm | on | ask before the destructive `/broke flush` |
 | flush.undo | on | raw pre-flush undo file; enables `flush --undo` (abort-safe) |
+| search.includeGitIgnored | off | opt-in: index git-ignored files too (dot-dirs and private-name denylists stay on regardless) |
+| summarize.maxSummaryChars | 4000 | summary text entering the context is capped at this length |
+
+Every setting above is reachable from the chat via
+`/broke config list|get <path>|set <path> <value>` (schema-validated,
+BRK-028) - no JSON hand-editing required. The gear dialog covers the
+day-to-day surface (pipeline, errors, truncation, summarizer, search,
+milestones/flush safety switches); anything not in the dialog is still
+first-class through `config set`.
 
 ## Status
 
@@ -597,6 +611,16 @@ all unscheduled. Suggestions and bug reports are very welcome: just open an
 broke targets AiderDesk's extension API. The compression logic itself is
 plain TypeScript, so porting it to other agent platforms is possible in
 principle, it is simply not planned right now.
+
+## Support
+
+- Usage questions, misbehavior, bug reports: open an
+  [issue](https://github.com/777marvin/ext-broke/issues). Attaching the
+  output of `/broke why`, `/broke stats` or `/broke measure` speeds up
+  diagnosis a lot - none of it contains conversation content.
+- Security issues: never in a public issue - follow
+  [SECURITY.md](SECURITY.md) (private GitHub advisory).
+- Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Contributing
 

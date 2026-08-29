@@ -396,13 +396,15 @@ function sliceTs(lines: string[], opts: SliceOptions): string[] {
       continue;
     }
 
-    // Value constants/lets: short ones survive, long initializers are elided.
+    // Value constants/lets: BRK-020 - kept COMPLETE. The previous
+    // `text[0] + /* ... */;` stub produced syntactically INVALID views for
+    // exported object/array/multi-line initializers (an unclosed `{`), i.e.
+    // an unparseable "interface view" - worse than a bigger view. Fail open.
     if (TS_CONST_RE.test(t)) {
       const st = readBalanced(lines, i);
       pendingDecorators.forEach(push);
       pendingDecorators = [];
-      if (st.text.length <= 2) st.text.forEach(push);
-      else push(`${st.text[0].trimEnd()} /* … */;`);
+      st.text.forEach(push);
       i = st.end + 1;
       continue;
     }
@@ -472,8 +474,16 @@ function scanClassMembers(lines: string[], start: number, push: (l: string) => v
     const keepFull = !!fullSymbol && nameMatch?.[1] === fullSymbol;
 
     if (!stmt.hasBody) {
-      // Property / signature-only member: keep only when decorated (or focus).
-      if (decos.length > 0 || keepFull) {
+      // Signature-only member. BRK-020: keep more than decorated members -
+      // a dropped public/protected field or an overload signature hides real
+      // API surface from the model. A SIGNATURE is a member whose declared
+      // name is directly followed by `<` or `(` (overload/abstract method
+      // decl); visibility-declared fields are contract. Plain private state
+      // stays out - its initializer is implementation, not API.
+      const visible = /^(?:public|protected)\b/.test(t);
+      const sigRe = /^(?:(?:public|private|protected|static|readonly|async|override|abstract|get|set)\s+)*([#\w$]+)\s*[<(]/;
+      const isSignature = sigRe.test(t);
+      if (decos.length > 0 || keepFull || visible || isSignature) {
         decos.forEach(push);
         stmt.text.forEach(push);
       }
@@ -720,14 +730,25 @@ export function sameSlicePath(a: string, b: string, base?: string | null): boole
  * Normalized comparison key for focus matching (D5): tool inputs may carry
  * relative or absolute paths while the stored focus carries the other form.
  * Absolute paths pass through; anything else resolves against the task dir.
- * Output is separator- and case-normalized so Windows matches.
+ * Separator-normalized always; case-folded ONLY on Windows (BRK-020) -
+ * case-sensitive filesystems must not collide `Foo.ts` and `foo.ts`.
  */
 export function slicePathKey(path: string, base?: string | null): string {
   const norm = path.replace(/\\/g, '/');
+  const fold = (s: string): string => (process.platform === 'win32' ? s.toLowerCase() : s);
   const isAbsolute = /^[a-zA-Z]:\//.test(norm) || norm.startsWith('/');
-  if (isAbsolute || !base) return norm.toLowerCase();
+  if (isAbsolute || !base) return fold(norm);
   const cleanBase = base.replace(/\\/g, '/').replace(/\/+$/, '');
-  return `${cleanBase}/${norm}`.toLowerCase();
+  return fold(`${cleanBase}/${norm}`);
+}
+
+/**
+ * Escape a string for literal use inside a RegExp (BRK-020): focus symbols
+ * come from tool input and may contain metacharacters - unescaped they can
+ * throw at RegExp construction or silently match the wrong text.
+ */
+export function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -748,8 +769,9 @@ export function sliceWithFocus(
   const passthrough = (): SlicedView => ({ text: source, originalLines: lines.length, keptLines: lines.length });
   if (!focus.symbol) return passthrough();
 
+  const escapedSymbol = escapeRegExp(focus.symbol);
   const symRe = new RegExp(
-    `(?:\\b(?:function|class|interface|type|enum|const|let|var|def)\\s+${focus.symbol}\\b)|(?:^(?:\\s|(?:private|protected|public|static|async|override|get|set)\\s)+${focus.symbol}\\s*[(<:])`,
+    `(?:\\b(?:function|class|interface|type|enum|const|let|var|def)\\s+${escapedSymbol}\\b)|(?:^(?:\\s|(?:private|protected|public|static|async|override|get|set)\\s)+${escapedSymbol}\\s*[(<:])`,
     'm',
   );
   if (!symRe.test(source)) return passthrough(); // unresolvable symbol -> honest fallback: full file

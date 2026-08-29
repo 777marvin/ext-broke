@@ -370,3 +370,55 @@ describe('slicePathKey (D5: relative resolution against the task dir)', () => {
     assert.equal(sameSlicePath('SRC/A.ts', 'src\\a.ts'), true);
   });
 });
+
+describe('BRK-020: heuristic fail-open hardening (external review 2026-08-29)', () => {
+  it('keeps exported object/const initializers COMPLETE - never emits an unparseable stub', () => {
+    const src = [
+      'export const cfg = {',
+      '  retries: 3,',
+      '  endpoints: { prod: "https://api.example.com" },',
+      '};',
+      'export function useCfg(): number {',
+      '  return cfg.retries;',
+      '}',
+    ].join('\n');
+    const view = sliceInterfaces(src, 'ts');
+    assert.ok(view.text.includes('retries: 3'), 'view must keep the exported object whole: ' + view.text);
+    assert.ok(view.text.trimEnd().includes('};'), 'the object must be closed in the view: ' + view.text);
+    assert.ok(view.text.includes('export function useCfg(): number'), 'later API still present: ' + view.text);
+  });
+
+  it('keeps public/protected class fields and overload signatures, drops private state', () => {
+    const src = [
+      'export class Client {',
+      '  private cache = new Map<string, string>();',
+      '  public retries = 3;',
+      '  protected timeoutMs = 1_000;',
+      '  notify(msg: string): void;',
+      '  notify(msg: number): void;',
+      '  notify(msg: string | number): void {',
+      '    console.log(msg);',
+      '  }',
+      '}',
+    ].join('\n');
+    const view = sliceInterfaces(src, 'ts');
+    assert.ok(view.text.includes('public retries = 3;'), 'public field survives: ' + view.text);
+    assert.ok(view.text.includes('protected timeoutMs'), 'protected field survives: ' + view.text);
+    assert.ok(view.text.includes('notify(msg: string): void;'), 'overload signature survives: ' + view.text);
+    assert.ok(view.text.includes('notify(msg: number): void;'), 'second overload survives: ' + view.text);
+    assert.ok(!view.text.includes('private cache'), 'private state stays out: ' + view.text);
+  });
+
+  it('case-folds path keys on Windows only', () => {
+    const a = slicePathKey('Foo.ts');
+    const b = slicePathKey('foo.ts');
+    if (process.platform === 'win32') assert.equal(a, b, 'Windows matching stays case-insensitive');
+    else assert.notEqual(a, b, 'case-sensitive filesystems must not collide');
+  });
+
+  it('never throws on focus symbols containing regex metacharacters', () => {
+    const src = 'export function probe(): void {}\n';
+    const view = sliceWithFocus(src, 'ts', { file: 'f.ts', symbol: 'probe())[' }, 'f.ts');
+    assert.equal(view.text, src, 'unresolvable symbol -> honest full passthrough');
+  });
+});

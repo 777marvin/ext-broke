@@ -27,6 +27,7 @@ import {
   resolveSnapshot,
   rotateTaskDir,
   safeLabel,
+  snapshotTaskDir,
   writeFlushReduction,
 } from '../snapshot';
 
@@ -220,14 +221,13 @@ describe('persistence round-trip', () => {
   it('evicts oldest pairs until the aggregate byte budget holds (review F-14)', () => {
     const { dir, cleanup } = tmpSnapDir();
     try {
-      const taskDirPath = join(dir, 'rot');
+      const taskDirPath = snapshotTaskDir(dir, 'rot');
       mkdirSync(taskDirPath, { recursive: true });
-      // Three snapshots, each record ~"payload-N" sized + a fat history file.
+      // Three snapshot PAIRS (record + fat history), each ~equal bytes.
       for (let i = 0; i < 3; i++) {
         const iso = `2026-08-26T1${i}:00:00.000Z`;
         const record = makeSnapshotRecord({ taskId: 'rot', goal: `g${i}`, summary: 's' }, iso);
-        writeFileSync(join(taskDirPath, `${isoFilename(iso)}_manual.history.json`), JSON.stringify([user('u1', 'y'.repeat(900))]));
-        const p = persistSnapshot(record, [], { dir, label: 'manual' });
+        const p = persistSnapshot(record, [user('u1', 'y'.repeat(900))], { dir, label: 'manual' });
         assert.ok(p.recordPath);
       }
       const before = listSnapshots('rot', { dir });
@@ -272,11 +272,12 @@ describe('persistence round-trip', () => {
       }
       const entries = listSnapshots('rot', { dir });
       assert.equal(entries.length, MAX_SNAPSHOTS_PER_TASK);
-      const dirFiles = readdirSync(join(dir, 'rot'));
+      const rotDir = snapshotTaskDir(dir, 'rot');
+      const dirFiles = readdirSync(rotDir);
       assert.equal(dirFiles.filter((f) => f.endsWith('.history.json')).length, MAX_SNAPSHOTS_PER_TASK, 'undo files rotate with their records');
-      assert.ok(!existsSync(join(dir, 'rot', dirFiles.find((f) => f.includes('n0.json')) ?? 'never.json')), 'oldest record deleted');
+      assert.ok(!existsSync(join(rotDir, dirFiles.find((f) => f.includes('n0.json')) ?? 'never.json')), 'oldest record deleted');
       // Manual rotation on an already-clean dir is a no-op.
-      assert.equal(rotateTaskDir(join(dir, 'rot')), 0);
+      assert.equal(rotateTaskDir(rotDir), 0);
     } finally {
       cleanup();
     }
@@ -342,6 +343,93 @@ describe('flush reduction bookkeeping', () => {
       // Exactly-once: a second write can never double-credit the estimate.
       writeFlushReduction(recordPath, { regionChars: 99_999, stateMessageChars: 1 });
       assert.deepEqual(readSnapshot(recordPath)?.reduction, { regionChars: 9_000, stateMessageChars: 350 });
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('BRK-019: snapshot hardening (external review 2026-08-29)', () => {
+  it('masks conversation-derived taskName and files like every other field', () => {
+    const record = makeSnapshotRecord({
+      taskId: 'task-brk19',
+      taskName: 'fix the sk-abcdefghijklmnop1234 leak',
+      goal: 'g',
+      files: ['src/ok.ts', 'notes with sk-abcdefghijklmnop1234.txt'],
+      summary: 's',
+    });
+    assert.ok(!record.taskName.includes('sk-abcdefghijklmnop'), 'taskName must be masked');
+    assert.ok(record.files.every((f) => !f.includes('sk-abcdefghijklmnop')), 'files must be masked');
+    assert.equal(record.files[0], 'src/ok.ts', 'benign paths pass through unchanged');
+  });
+
+  it('separates task dirs that collapse into the same sanitized label', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const long = 'a'.repeat(60);
+      const r1 = makeSnapshotRecord({ taskId: long, goal: 'g', summary: 's' });
+      const r2 = makeSnapshotRecord({ taskId: `${long}b`, goal: 'g', summary: 's' });
+      persistSnapshot(r1, [], { dir, label: 'one' });
+      persistSnapshot(r2, [], { dir, label: 'two' });
+      assert.equal(listSnapshots(long, { dir }).length, 1, 'task A sees only its own record');
+      assert.equal(listSnapshots(`${long}b`, { dir }).length, 1, 'task B sees only its own record');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('does not overwrite files when two snapshots share label and millisecond', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const record = makeSnapshotRecord({ taskId: 'task-brk19b', goal: 'g', summary: 's' }, '2026-08-29T10:00:00.000Z');
+      const first = persistSnapshot(record, [], { dir, label: 'same' });
+      const second = persistSnapshot(record, [], { dir, label: 'same' });
+      assert.notEqual(first.recordPath, second.recordPath, 'same-millisecond snapshots must not collide on one file');
+      assert.equal(listSnapshots('task-brk19b', { dir }).length, 2, 'both records exist');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses history files with unexpected names or non-message content', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const record = makeSnapshotRecord({ taskId: 'task-brk19c', goal: 'g', summary: 's' });
+      const p = persistSnapshot(record, [user('u1', 'real history')], { dir, label: 'withhistory' });
+      const parsed = readSnapshot(p.recordPath);
+      assert.ok(parsed);
+      assert.ok(Array.isArray(readHistory(p.recordPath, parsed)), 'a legit history still loads');
+
+      // relative-path games INSIDE the dir name (./ prefix) fail the name contract
+      const dotSlash = { ...parsed, historyFile: `./${parsed.historyFile}` };
+      assert.equal(readHistory(p.recordPath, dotSlash), undefined, './-prefixed names are refused');
+
+      // scalar entries are not message history
+      const scalarBase = `${isoFilename('2026-08-29T10:00:00.000Z')}_scalars`;
+      const histName = `${scalarBase}.history.json`;
+      writeFileSync(join(join(p.recordPath, '..'), histName), JSON.stringify([1, 2, 3]));
+      assert.equal(
+        readHistory(p.recordPath, { ...parsed, historyFile: histName }),
+        undefined,
+        'a history of scalars is refused',
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('removes the history file when the record write fails (no undo orphans)', () => {
+    const { dir, cleanup } = tmpSnapDir();
+    try {
+      const record = makeSnapshotRecord({ taskId: 'task-brk19e', goal: 'g', summary: 's' }, '2026-08-29T11:00:00.000Z');
+      // A poisoned record serializes only when the RECORD write happens -
+      // after the history file is already on disk (history goes first).
+      const poisoned = { ...record, toJSON(): never { throw new Error('boom'); } };
+      assert.throws(() => persistSnapshot(poisoned as never, [user('u1', 'undo payload')], { dir, label: 'sabotage' }));
+      const taskDirPath = snapshotTaskDir(dir, 'task-brk19e');
+      assert.ok(existsSync(taskDirPath), 'task dir exists - the history was written');
+      const leftovers = readdirSync(taskDirPath).filter((n) => n.endsWith('.history.json'));
+      assert.deepEqual(leftovers, [], 'the orphaned history file is cleaned up');
     } finally {
       cleanup();
     }

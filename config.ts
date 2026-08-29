@@ -2,13 +2,14 @@ import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, r
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { runtimeDir } from './paths';
 
 /**
  * Config file location. BROKE_CONFIG_PATH overrides the default (read at
  * module load): tests and parallel extension instances need isolation
  * from the real config.json.
  */
-export const CONFIG_PATH = process.env.BROKE_CONFIG_PATH ?? join(__dirname, 'config.json');
+export const CONFIG_PATH = process.env.BROKE_CONFIG_PATH ?? join(runtimeDir(), 'config.json');
 
 /**
  * Broke configuration. All values have defaults, so a missing or partial
@@ -155,12 +156,17 @@ const SearchSchema = z.object({
   backend: z.enum(['keyword']).default('keyword'),
   /** Top-k snippet results per query. */
   maxResults: z.number().int().min(1).max(50).default(8),
-  /** TOTAL char budget across all results of one query - the token control. */
-  maxChars: z.number().int().positive().default(6000),
+  /**
+   * TOTAL char budget across all results of one query - the token control.
+   * Documented range 500-50_000 (BRK-018): a hand-edited config is not a
+   * trusted resource budget, so the schema enforces hard ceilings no matter
+   * what was persisted.
+   */
+  maxChars: z.number().int().min(500).max(50_000).default(6000),
   /** Context lines kept around each best-matching line. */
   contextLines: z.number().int().min(1).max(20).default(6),
-  /** Files larger than this never enter the index. */
-  maxFileKB: z.number().int().positive().default(512),
+  /** Files larger than this never enter the index. Hard product ceiling 2048 KB (BRK-018). */
+  maxFileKB: z.number().int().min(1).max(2048).default(512),
   /**
    * Opt-in (BRK-003, external review 2026-08-29): when true, git-ignored
    * files are indexed too. The dot-path and sensitive-basename filters stay

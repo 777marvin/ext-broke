@@ -9,6 +9,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Runtime data relocated out of the swappable installation tree (external
+  review BRK-016): config, ledgers, snapshots, search index and error
+  archive now live under a versioned data root as a SIBLING of the
+  installation (`<extension>/../.broke-data/v1/` holding `config.json`,
+  `ledgers/stats.jsonl` + `ledgers/measure.jsonl`, `snapshots/`,
+  `index/`, `errors/`), so an updater/deploy swap of the install
+  directory can no longer touch user data; `BROKE_DATA_DIR` overrides
+  the root. A one-time, marker-guarded best-effort migration on first
+  load moves legacy artifacts into the new layout - it never overwrites
+  newer data already at the target, falls back to copy-then-remove for
+  files when a rename crosses devices, and leaves anything it cannot
+  move in place for a later retry. The `BROKE_*_PATH`/`BROKE_*_DIR`
+  overrides keep working on top for tests and host isolation. `/broke
+  update` no longer needs its runtime-state preserve list: there is
+  nothing left in the installation tree to carry over (`node_modules`
+  was already never reused - `npm ci` rebuilds dependencies from the
+  verified lockfile).
+- Search index metadata honesty (external review BRK-017): a truncation
+  flag that cleared between builds is now persisted (the previous
+  post-mutation compare could never observe the flip), a manual rebuild
+  stamps build/freshness times, and the persisted index gains a separate
+  `scannedAt` (last freshness check) next to `builtAt` (last content
+  change) - the search footer's "index scanned Xms ago" and the TTL
+  window now measure actual freshness instead of content age. `saveIndex`
+  really implements the atomic write it documented: unique temp name,
+  file fsync, rename, parent-directory fsync on POSIX.
+- broke-search budget honesty (external review BRK-017): the footer is
+  formatted from the EFFECTIVE options (a tool-input `k` override used to
+  apply to the search while the footer still advertised the default) and
+  is carved out of the `maxChars` budget, so hits + footer together can
+  no longer exceed the documented cap.
+- broke-search input ceilings (external review BRK-018): queries are
+  limited to 1-500 chars, `files` to at most 100 filters of at most 512
+  chars each; config `search.maxChars` has a hard documented range
+  (500-50,000) and `search.maxFileKB` a hard ceiling (2048 KB) - a
+  hand-edited config is no longer a trusted resource budget.
+- Snapshot hardening (external review BRK-019): `taskName` and `files` are
+  now secret-masked like every other persisted record field, task
+  directories get a stable hash suffix so distinct task IDs can no longer
+  collide (and same-millisecond snapshots can no longer overwrite each
+  other's record/undo files), `readHistory` refuses history files with
+  unexpected names, paths escaping the record's directory, non-message
+  content or oversized files, and a failed record write no longer leaves
+  an orphaned undo file behind.
+- Interface slicing fails open (external review BRK-020): exported
+  object/array initializers are kept COMPLETE instead of emitting a
+  syntactically invalid stub, public/protected class fields and overload
+  signatures stay in the view (private state does not), path matching is
+  case-folded only on Windows, and focus symbols containing regex
+  metacharacters no longer crash slicing.
+- Metrics categories separated (external review BRK-022): `totalSavedChars`
+  is now the MEASURED pass sum and excludes the slice counterfactual; the
+  badge headline shows the measured per-run input reduction (same
+  definition as /broke stats) with slice/flush/search in the explicitly
+  labeled counterfactual block; /broke measure labels its reduction as
+  byte-weighted instead of an "average across runs"; model prices resolve
+  by exact provider+model match and fall back to a bare id only when it is
+  UNIQUE - ambiguous ids report an honest unknown price instead of a
+  possibly wrong provider's rate.
+- CI quality gates (external review BRK-026): the test job now runs on
+  Node 22 AND Node 24 (the minimum supported version is proven, not just
+  typed), a per-file branch-coverage gate protects the critical modules
+  (compress, indexer, update, index) against regressions, and a stray
+  debug output in the test suite is gone. An ESLint/format gate is
+  deliberately deferred and documented in CONTRIBUTING.
+- Documentation truth pass (external review BRK-027): docs/overview.md
+  regenerated against the current tree (version snapshot, module line
+  counts, the reworked release pipeline incl. the main-pinned signing
+  callee, the phase-3 module behaviors), stale "lazy rebuild before every
+  query" claims corrected to the BRK-013 freshness-TTL reality, and
+  docs/review-backlog.md now separates historically closed findings from
+  the currently tracked BRK-016..030 items.
+- Every documented setting is now reachable from the chat (external
+  review BRK-028): new `/broke config list|get <path>|set <path> <value>`
+  commands enumerate the whole settings surface from the central defaults,
+  coerce values against each option's default type, and write through the
+  same Zod validation as every other setter - invalid values report
+  honestly instead of throwing, prototype-path writes are refused. The
+  gear dialog gains the missing safety-relevant fields (snapshot
+  onCommit/onTestPass/keepHistory, flush confirm/undo,
+  summarize.maxSummaryChars, truncate.maxInputChars).
+- The optional local summarizer backend no longer owns any task-critical
+  or polling path (external review BRK-029): Ollama is probed ONLY while
+  the local summarizer is actually active (extension enabled, level
+  `summarize`, backend `local`) - with the default `truncate` level or a
+  cloud backend, opening a task no longer waits up to 3 s and no
+  localhost traffic is generated at all. When the backend is active, the
+  status probe runs in the background (task initialization logs from the
+  fresh cache or honestly reports the check as still running; the badge
+  tooltip shows the result once it lands), concurrent badge refreshes
+  share one in-flight request instead of stacking parallel checks, and
+  the badge's 10 s poll stops entirely when no summarizer backend is
+  active.
+- Open-source governance filled in (external review BRK-030): a
+  SECURITY.md documents the private advisory channel (GitHub private
+  vulnerability reporting), supported versions, response targets and the
+  scope of the security-relevant surfaces; CODEOWNERS names the
+  maintainer for review routing; a pull-request template encodes the
+  verification checklist (full suite, typecheck, UI validation, changelog
+  per finding, version consistency); and a short support section in the
+  README routes questions, bugs and security reports to the right
+  channels.
+- The UI type check can no longer silently degrade to `any` (external
+  review BRK-024): a minimal, versioned host UI contract
+  (`scripts/host-ui-contract.d.ts`, pinned to the compiled
+  @aiderdesk/extensions version) replaces the permissive any-fallback when
+  no AiderDesk checkout is present; the vendored contract gives the UI
+  primitives real prop shapes (Checkbox/Input/Select), so the validator
+  now catches actual prop misuse in CI. A contract test pins the vendored
+  version against the installed package.
+- Packaging metadata (external review BRK-025): the extension declares
+  itself private (it is a GitHub/AiderDesk extension, not an npm package -
+  no accidental `npm publish`), documents its repository, issue tracker
+  and homepage, and carries a `files` manifest describing the runtime
+  payload. CONTRIBUTING now says `npm ci` for reproducible installs.
+- Summarizer metering honesty (external review BRK-021): an attempted LLM
+  call is counted the moment it is DISPATCHED, not only after a successful
+  response - a provider that accepts (and may bill) a request and then
+  throws no longer reports `summarizeCalls: 0`. `summarizerInputChars` now
+  measures the EXACT strings sent (SUMMARY_PROMPT, XML wrapper, part
+  instructions, cloud system prompt) instead of the bare conversation
+  payload, so the cost side matches what actually left the process.
 - Search index: tokens derived from repository content (e.g. identifiers
   named `__proto__`, `constructor`, `prototype`) can no longer pollute
   JavaScript global built-ins. Index dictionaries are null-prototype

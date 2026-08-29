@@ -120,9 +120,16 @@ const resolveEnvironment = () => {
   const typescript = candidate?.ScriptTarget && candidate?.createProgram ? candidate : undefined;
   const reactTypesPkg = loadOptional(() => require.resolve('@types/react/package.json'));
   const reactTypesDir = reactTypesPkg ? path.dirname(reactTypesPkg) : undefined;
-  const repoRoot = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = findRepoRoot(scriptDir);
   const commonTypesAvailable = repoRoot !== undefined && reactTypesDir !== undefined;
-  return { sucrase, typescript, reactTypesDir, repoRoot, commonTypesAvailable };
+  // BRK-024: without a real AiderDesk checkout, the vendored host contract
+  // (scripts/host-ui-contract.d.ts) replaces the old permissive `any`
+  // fallback. It is required for type checking in that mode - a missing
+  // file is a hard error, never a silent degradation.
+  const contractPath = path.join(scriptDir, 'host-ui-contract.d.ts');
+  const vendoredContract = commonTypesAvailable ? undefined : loadOptional(() => fs.readFileSync(contractPath, 'utf8'));
+  return { sucrase, typescript, reactTypesDir, repoRoot, commonTypesAvailable, vendoredContract };
 };
 
 const collectFiles = (targets) => {
@@ -195,16 +202,23 @@ const mapSucraseLocation = (loc) => {
   return { line: templateLine, column };
 };
 
-const buildPropsType = (kind, commonTypesAvailable) => {
-  const typeImports = commonTypesAvailable
-    ? `import type { AgentProfile, Message, Model, ProviderProfile, TaskData } from '@common/types';
-import type { ApplicationAPI } from '@common/api';`
-    : `type AgentProfile = any;
-type Message = any;
-type Model = any;
-type ProviderProfile = any;
-type TaskData = any;
-type ApplicationAPI = any;`;
+const buildPropsType = (kind, env) => {
+  const { commonTypesAvailable, vendoredContract } = env;
+  // BRK-024: without a live AiderDesk repo, the vendored host contract
+  // replaces the old permissive `any` fallback. A missing contract file is
+  // a hard error - the type check must never silently degrade to `any`.
+  if (!commonTypesAvailable) {
+    if (!vendoredContract) {
+      throw new Error(
+        'host UI contract missing: scripts/host-ui-contract.d.ts not found - refusing to type-check against `any` (BRK-024)',
+      );
+    }
+    const alias = kind === 'config' ? 'ConfigComponentProps' : 'UIComponentProps';
+    return `${vendoredContract}\n\ntype __ComponentProps = ${alias};\n`;
+  }
+  // Live AiderDesk repo available: use the real @common types.
+  const typeImports = `import type { AgentProfile, Message, Model, ProviderProfile, TaskData } from '@common/types';
+import type { ApplicationAPI } from '@common/api';`;
 
   const shared = `${typeImports}
 
@@ -292,7 +306,9 @@ type __UIComponents = {
 };
 
 const typeCheckTemplate = (template, kind, env, sourceLines) => {
-  const header = `import * as React from 'react';\n${buildPropsType(kind, env.commonTypesAvailable)}`;
+  // Inlined contract files must not re-import React - the header already does.
+  const contract = (env.vendoredContract ?? '').replace(/^\s*import\s+\*\s+as\s+React\s+from\s+['"]react['"];\s*$/m, '');
+  const header = `import * as React from 'react';\n${buildPropsType(kind, { ...env, vendoredContract: contract })}`;
   const footer = '\nconst __cmp: (props: __ComponentProps) => React.ReactNode = ';
   const fileContent = `${header}${footer}${template};\n`;
 
@@ -454,7 +470,7 @@ const main = () => {
     warnings.push('typescript or @types/react not resolvable — type check skipped (run from the aider-desk repo or install them)');
   }
   if (opts.runTypes && env.typescript && env.reactTypesDir && !env.commonTypesAvailable) {
-    warnings.push('AiderDesk common types not found — checking with permissive (any) prop types');
+    warnings.push('AiderDesk common types not found - checking against the vendored host contract (scripts/host-ui-contract.d.ts)');
   }
   for (const warning of warnings) {
     console.log(`Warning: ${warning}`);

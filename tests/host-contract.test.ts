@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionContext } from '@aiderdesk/extensions';
 import type { Config } from '../config';
+import { snapshotTaskDir } from '../snapshot';
 
 const tmp = mkdtempSync(join(tmpdir(), 'broke-contract-'));
 process.env.BROKE_CONFIG_PATH = join(tmp, 'config.json');
@@ -299,7 +300,7 @@ describe('host contract: F3 snapshots & flush', () => {
     // raw history is opt-in via snapshot.keepHistory; the destructive flush
     // writes its undo file via flush.undo - covered below).
     await assert.doesNotReject(ext.onAfterCommit({ message: 'feat: billing discount\n\nbody text', amend: false }, context));
-    const files = readdirSync(join(tmp, 'snapshots', 'f3-commit'));
+    const files = readdirSync(snapshotTaskDir(join(tmp, 'snapshots'), 'f3-commit'));
     assert.ok(files.some((f) => f.endsWith('.json')), 'record written');
     assert.ok(!files.some((f) => f.endsWith('.history.json')), 'no raw history by default (F-01/D1)');
 

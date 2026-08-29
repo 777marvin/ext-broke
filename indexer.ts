@@ -22,10 +22,11 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { Config } from './config';
+import { runtimeDir } from './paths';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -120,7 +121,15 @@ export interface IndexState {
   version: 1;
   /** Absolute project root the paths below are relative to. */
   projectRoot: string;
+  /** When the index CONTENT last changed (added/updated/removed/truncation flip). */
   builtAt: string;
+  /**
+   * When the last full metadata rescan (freshness CHECK) completed - even a
+   * zero-delta one. This is the honest basis for any "age" display and for
+   * the TTL window (BRK-017): builtAt answers "how stale is the content",
+   * scannedAt answers "how stale is our knowledge".
+   */
+  scannedAt: string;
   /** Truncated by INDEX_MAX_ENTRIES during the last build? */
   truncated: boolean;
   /** relPath -> meta. Null-prototype dictionary (BRK-002), also after loadIndex. */
@@ -174,7 +183,7 @@ export function isConfinedRelPath(relPath: unknown): relPath is string {
 }
 
 export function createEmptyState(projectRoot: string): IndexState {
-  return { version: 1, projectRoot, builtAt: '', truncated: false, files: nullDict<IndexedFile>(), postings: nullDict<Dict<number>>() };
+  return { version: 1, projectRoot, builtAt: '', scannedAt: '', truncated: false, files: nullDict<IndexedFile>(), postings: nullDict<Dict<number>>() };
 }
 
 function indexableRelPath(relPath: string): boolean {
@@ -488,22 +497,39 @@ export function ensureFresh(
     state.projectRoot = root;
     state.truncated = false;
     state.builtAt = '';
+    state.scannedAt = '';
   }
   // BRK-013: serve the existing snapshot within the TTL instead of blocking
   // on a full metadata rescan before EVERY query. ttlMs=0 (default) keeps
   // the old always-rescan behavior for rebuild paths and tests.
+  // BRK-017: the window is measured from the last freshness CHECK
+  // (scannedAt), not from the last content change - otherwise a state whose
+  // rescans keep finding "no changes" would be re-checked on every query
+  // once its builtAt aged past the TTL.
   const ttlMs = opts.ttlMs ?? 0;
-  if (ttlMs > 0 && state.builtAt) {
-    const built = Date.parse(state.builtAt);
-    if (Number.isFinite(built) && Date.now() - built < ttlMs) {
+  const ttlStamp = state.scannedAt || state.builtAt;
+  if (ttlMs > 0 && ttlStamp) {
+    const lastCheck = Date.parse(ttlStamp);
+    if (Number.isFinite(lastCheck) && Date.now() - lastCheck < ttlMs) {
       return { state, delta: { added: 0, updated: 0, removed: 0 } };
     }
   }
   const scan = scanProject(root, opts.maxFileKB, { includeGitIgnored: opts.includeGitIgnored });
   const budget = { remainingBytes: opts.mergeBudgetBytes ?? DEFAULT_MERGE_BUDGET_BYTES, exhausted: false };
-  const delta = mergeIntoState(state, root, scan.entries, scan.truncated || budget.exhausted, budget);
-  if (delta.added > 0 || delta.updated > 0 || delta.removed > 0 || scan.truncated !== state.truncated) {
-    state.builtAt = new Date().toISOString();
+  // BRK-017: compare the truncation flag BEFORE mergeIntoState mutates it -
+  // the previous post-mutation compare could never observe a flip.
+  const previousTruncated = state.truncated;
+  const previousScannedAt = state.scannedAt;
+  const mergedTruncated = scan.truncated || budget.exhausted;
+  const delta = mergeIntoState(state, root, scan.entries, mergedTruncated, budget);
+  const contentChanged =
+    delta.added > 0 || delta.updated > 0 || delta.removed > 0 || previousTruncated !== mergedTruncated;
+  state.scannedAt = new Date().toISOString();
+  if (contentChanged) state.builtAt = state.scannedAt;
+  // Persist the freshness marker too, so the TTL window survives restarts
+  // (otherwise every query after TTL expiry would rescan without ever
+  // narrowing the window). The write is small, bounded and TTL-throttled.
+  if (contentChanged || state.scannedAt !== previousScannedAt) {
     saveIndex(dir, state);
   }
   return { state, delta };
@@ -605,6 +631,13 @@ export interface SearchRunOptions {
   k: number;
   maxChars: number;
   contextLines: number;
+  /**
+   * Chars carved out of maxChars for the footer the CALLER will append
+   * (BRK-017): hit budgeting must leave room for it, or the final tool
+   * output exceeds the documented cap. The footer is well under 256 chars
+   * even with pathological numbers plus the truncation note.
+   */
+  footerReserve?: number;
 }
 
 /**
@@ -636,9 +669,10 @@ export function runSearch(
   const hits: SearchResultHit[] = [];
   let usedChars = 0;
   const wanted = new Set(terms);
+  const budget = Math.max(1, opts.maxChars - Math.max(0, opts.footerReserve ?? 0));
   for (const cand of ranked) {
     if (hits.length >= opts.k) break;
-    if (usedChars >= opts.maxChars) break;
+    if (usedChars >= budget) break;
     // Defense in depth (review F-09): postings keys are validated at load
     // time, but the read boundary re-checks confinement before touching the
     // filesystem - an in-memory state can always be hand-built wrong.
@@ -656,10 +690,10 @@ export function runSearch(
     const snippet = renderSnippet(textLines, mergeWindows([line0], opts.contextLines, textLines.length));
     const header = `${cand.relPath}:${line0 + 1} (${matchCount} match(es))`;
     const block = `${header}\n${snippet}`;
-    if (usedChars + block.length > opts.maxChars && hits.length > 0) break;
-    if (block.length > opts.maxChars) {
+    if (usedChars + block.length > budget && hits.length > 0) break;
+    if (block.length > budget) {
       // Single oversize result: hard-trim to budget rather than dropping.
-      hits.push({ path: cand.relPath, line: line0 + 1, matches: matchCount, text: block.slice(0, opts.maxChars) });
+      hits.push({ path: cand.relPath, line: line0 + 1, matches: matchCount, text: block.slice(0, budget) });
       break;
     }
     hits.push({ path: cand.relPath, line: line0 + 1, matches: matchCount, text: block });
@@ -670,7 +704,7 @@ export function runSearch(
 
 /** One-line footer with honest numbers (the "where did these come from" receipt). */
 export function formatSearchFooter(hits: number, filesIndexed: number, opts: SearchRunOptions, ageMs: number): string {
-  return `${SEARCH_MARKER_FOOTER_PREFIX} ${hits} result(s) | ${filesIndexed.toLocaleString('en-US')} files indexed | budget ${opts.k} hits/${opts.maxChars.toLocaleString('en-US')} chars | index refreshed ${Math.round(ageMs)}ms ago`;
+  return `${SEARCH_MARKER_FOOTER_PREFIX} ${hits} result(s) | ${filesIndexed.toLocaleString('en-US')} files indexed | budget ${opts.k} hits/${opts.maxChars.toLocaleString('en-US')} chars | index scanned ${Math.round(ageMs)}ms ago`;
 }
 
 /**
@@ -706,28 +740,59 @@ export function estimateBulkReadAvoided(
 // Persistence (atomic, bounded, corruption-tolerant)
 // ---------------------------------------------------------------------------
 
-/** Extension-directory location: survives deploys/updates via preserve lists. */
+/** Runtime-data location: under the versioned data root, outside the swap path (BRK-016). */
 export function indexDirFor(projectRoot: string): string {
   // Env override mirrors the BROKE_CONFIG_PATH isolation pattern - tests must
   // never write into the real extension directory.
-  const base = process.env.BROKE_INDEX_DIR || __dirname;
+  const base = process.env.BROKE_INDEX_DIR || join(runtimeDir(), 'index');
   return join(base, 'index', projectHash(projectRoot));
 }
 
 /**
- * Atomic write (tmp + rename, fsynced pattern from config.saveConfig).
- * Failures THROW here by contract; callers wrap (ensureFresh persists via
- * its own catch, commands report). Bounded by construction: postings are
- * small integers, entries capped at INDEX_MAX_ENTRIES.
+ * Atomic write (BRK-017, same pattern as config.saveConfig): UNIQUE temp
+ * name (pid + randomness, so concurrent writers cannot collide), file fsync,
+ * rename, parent-directory fsync on POSIX. Failures THROW here by contract;
+ * callers wrap (ensureFresh persists via its own catch, commands report).
+ * Bounded by construction: postings are small integers, entries capped at
+ * INDEX_MAX_ENTRIES.
  */
 export function saveIndex(dir: string, state: IndexState): void {
   // BRK-003 hardening: the index holds paths and terms of the local project,
   // so it is owner-only on POSIX (ignored where modes do not apply).
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, 'index.json');
-  const tmp = `${target}.tmp`;
-  writeFileSync(tmp, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
-  renameSync(tmp, target);
+  const tmp = `${target}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
+    const fd = openSync(tmp, 'r+');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, target);
+  } catch (err) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // cleanup is best effort - the original error matters more
+    }
+    throw err;
+  }
+  // Parent-directory fsync (POSIX only - Windows cannot open directories):
+  // makes the rename itself durable, completing the atomic-write contract.
+  if (process.platform !== 'win32') {
+    try {
+      const dfd = openSync(dir, 'r');
+      try {
+        fsyncSync(dfd);
+      } finally {
+        closeSync(dfd);
+      }
+    } catch {
+      // best effort - the file fsync above already bounds the damage
+    }
+  }
 }
 
 /** Load a persisted index. Anything suspicious becomes null (rebuild later). */
@@ -770,6 +835,9 @@ export function loadIndex(dir: string): IndexState | null {
       version: 1,
       projectRoot: raw.projectRoot,
       builtAt: raw.builtAt ?? '',
+      // Legacy files may predate scannedAt (BRK-017) - empty is honest then,
+      // the next rescan fills it in.
+      scannedAt: typeof raw.scannedAt === 'string' ? raw.scannedAt : '',
       truncated: raw.truncated === true,
       // BRK-002: rebuild both dictionaries as null-prototype objects. A
       // JSON-parsed object carries Object.prototype, so a term like
