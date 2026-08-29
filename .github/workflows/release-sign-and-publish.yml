@@ -1,0 +1,96 @@
+# Trusted release signing + publishing (BRK-008 rework).
+#
+# This workflow is called BY release.yml on a tag push, but it is PINNED to
+# `main`: the tag cannot alter these steps, so the code that receives
+# BROKE_RELEASE_SIGNING_KEY always comes from protected main. The workflow:
+#
+#   1. verifies the tag is an ancestor of protected main,
+#   2. checks out the TAGGED commit and builds the byte-stable git archive,
+#   3. checks out protected `main` for the SIGNING script only
+#      (scripts/sign-release.mjs) - the secret never touches tag-controlled
+#      code,
+#   4. publishes the release only after the `release` environment approval.
+#
+# Duplicate-safe: a replayed/outage tag event refreshes the three signed
+# assets on the existing release (rebuilds are byte-stable, --clobber
+# cannot change what users already verified).
+
+name: release-sign-and-publish
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag (vX.Y.Z)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  sign-and-publish:
+    name: Sign and publish (trusted main-controlled steps)
+    runs-on: ubuntu-latest
+    # D6: the "release" environment (repo settings) carries a required
+    # reviewer + a tags-only deployment policy - without this line the
+    # approval gate would never fire.
+    environment: release
+    steps:
+      - name: Checkout the tagged commit (with tags)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: The tag must be an ancestor of protected main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${{ inputs.tag }}" origin/main; then
+            echo "::error::tag ${{ inputs.tag }} is NOT on main - refusing to release unreviewed commits"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify tag == package version (F-05/F-16 invariant)
+        run: node scripts/check-version.mjs
+
+      - name: Build the source artifact (byte-stable git archive)
+        run: git archive --format=tar.gz --output="broke-${{ inputs.tag }}.tar.gz" "${{ inputs.tag }}"
+
+      - name: Checkout protected main (trusted signing code only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: trusted
+          sparse-checkout: |
+            scripts
+
+      - name: Sign SHA256SUMS (script from protected main, not the tag)
+        env:
+          BROKE_RELEASE_SIGNING_KEY: ${{ secrets.BROKE_RELEASE_SIGNING_KEY }}
+        run: node trusted/scripts/sign-release.mjs "broke-${{ inputs.tag }}.tar.gz"
+
+      - name: Publish the GitHub release (duplicate-safe)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ inputs.tag }}" >/dev/null 2>&1; then
+            gh release upload "${{ inputs.tag }}" \
+              "broke-${{ inputs.tag }}.tar.gz" \
+              SHA256SUMS \
+              SHA256SUMS.sig \
+              --clobber
+          else
+            gh release create "${{ inputs.tag }}" \
+              "broke-${{ inputs.tag }}.tar.gz" \
+              SHA256SUMS \
+              SHA256SUMS.sig \
+              --verify-tag \
+              --title "${{ inputs.tag }}" \
+              --generate-notes
+          fi
