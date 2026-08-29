@@ -15,15 +15,19 @@
   to deploy an exact tagged version (git archive; safe even from a dirty
   tree).
   The deploy is atomic: the previous installation is renamed to a backup
-  first and only removed after the new copy completed successfully; on
-  failure the previous installation is restored automatically.
-  The deployed version is written to .deployed-version in the target.
-  .git, node_modules and sensitive files (.env*, *.pem, *.key, *.p12,
-  *.pfx, *.log, .aider*, stats.jsonl) are never copied from the working
-  tree, at ANY depth (nested examples/.env is excluded too). Existing
-  runtime files in the target (config.json, stats.jsonl,
-  node_modules, snapshots/, index/, and errors/ up to 100 MB) are preserved across
-  the deploy.
+  first and only removed after the commit marker (.deployed-version) was
+  written and verified; on failure the previous installation is restored
+  automatically (BRK-012). Runtime data that exceeds its preserve cap is
+  MOVED to an update-recovery directory next to the target instead of
+  being deleted with the backup (BRK-004/BRK-011).
+  The payload is built from the GIT MANIFEST (git ls-files): only tracked
+  files ship, so untracked runtime/private data (errors/, snapshots/,
+  index/, logs) can never leave the machine (BRK-011). On top of that,
+  sensitive files (.env*, *.pem, *.key, *.p12, *.pfx, *.log, .aider*,
+  stats.jsonl) are excluded at every depth as defense in depth.
+  Existing runtime files in the target (config.json, stats.jsonl,
+  node_modules, snapshots/, index/, and errors/ up to 100 MB) are
+  preserved across the deploy.
 
 .PARAMETER Category
   skills | extensions | agents
@@ -64,23 +68,32 @@ function Write-Utf8NoBom {
   [System.IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding($false)))
 }
 
-function Copy-FilteredRecursive {
+function Copy-GitManifest {
   param(
     [string]$From,
     [string]$To,
     [string]$ExcludeRegex
   )
-  # The exclusion list applies at EVERY depth: a nested examples/.env must
-  # never leave the machine. Top-level filtering + recursive copy leaks it.
+  # BRK-011 (external review 2026-08-29): the payload is built from the GIT
+  # MANIFEST (tracked files only). Untracked runtime/private data that lives
+  # in the working tree (errors/, snapshots/, index/, measure.jsonl, logs)
+  # can therefore never leave the machine - the old negative-filter recursive
+  # copy shipped exactly those. The exclude regex stays as defense in depth.
   New-Item -ItemType Directory -Path $To -Force | Out-Null
-  foreach ($child in Get-ChildItem -Path $From -Force) {
-    if ($child.Name -match $ExcludeRegex) { continue }
-    if ($child.PSIsContainer) {
-      Copy-FilteredRecursive -From $child.FullName -To (Join-Path $To $child.Name) -ExcludeRegex $ExcludeRegex
+  Push-Location $From
+  try {
+    $files = git ls-files -z
+    if ($LASTEXITCODE -ne 0) { throw 'git ls-files failed' }
+    foreach ($rel in ($files -split "`0" | Where-Object { $_ -ne '' })) {
+      if ($rel -match $ExcludeRegex) { continue }
+      $dest = Join-Path $To $rel
+      $destDir = Split-Path $dest -Parent
+      if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+      Copy-Item -Path (Join-Path $From $rel) -Destination $dest -Force
     }
-    else {
-      Copy-Item -Path $child.FullName -Destination $To -Force
-    }
+  }
+  finally {
+    Pop-Location
   }
 }
 
@@ -161,10 +174,10 @@ if (-not $Force) {
 }
 
 # --- Build deployment copy ----------------------------------------------
-# Files that are never deployed from the working tree: version control,
-# dependencies, secrets, logs, AiderDesk project config and runtime data.
-# (git archive for -FromTag only contains tracked files anyway.)
-$excludeRegex = '^(\.git|node_modules|\.env(\..*)?|.+\.(pem|key|p12|pfx|log)$|\.aider.*|stats\.jsonl)$'
+# Files that are never deployed even if tracked (defense in depth on top of
+# the git manifest): secrets, key material, logs, AiderDesk project config
+# and runtime data (errors/, snapshots/, index/, measure.jsonl).
+$excludeRegex = '^(\.git|node_modules|\.env(\..*)?|.+\.(pem|key|p12|pfx|log)$|\.aider.*|stats\.jsonl|measure\.jsonl$|^(errors|snapshots|index)(\\|/|$))'
 
 # GetTempPath() instead of $env:TEMP: pwsh on Linux does not set TEMP/TMP,
 # and a real deploy (not just the dry run) failed there with a null path.
@@ -190,7 +203,7 @@ try {
       Remove-Item $archive -Force -ErrorAction SilentlyContinue
     }
     else {
-      Copy-FilteredRecursive -From $Source -To $tmp -ExcludeRegex $excludeRegex
+      Copy-GitManifest -From $Source -To $tmp -ExcludeRegex $excludeRegex
     }
   } finally {
     Pop-Location
@@ -230,7 +243,13 @@ try {
           Copy-Item -Path $errSrc -Destination (Join-Path $tmp 'errors') -Recurse -Force
         }
         else {
-          Write-Host "[!] errors/ archive exceeds 100 MB - not preserved across the deploy." -ForegroundColor Yellow
+          # BRK-004/BRK-011 parity with the updater: oversized runtime data is
+          # MOVED to a recovery directory next to the target - never deleted
+          # with the backup after a successful deploy.
+          $recovery = Join-Path (Split-Path $Target -Parent) ("update-recovery-" + (Get-Date -Format "yyyy-MM-ddTHH-mm-ss"))
+          New-Item -ItemType Directory -Path $recovery -Force | Out-Null
+          Move-Item -Path $errSrc -Destination (Join-Path $recovery 'errors') -Force
+          Write-Host "[!] errors/ archive exceeds 100 MB - moved to $recovery (not deleted)." -ForegroundColor Yellow
         }
       }
     }
@@ -250,12 +269,22 @@ try {
   # The target's parent chain must exist before the copy (fresh machines,
   # CI profiles): Copy-Item does not create missing parent directories.
   New-Item -ItemType Directory -Force -Path (Split-Path $Target -Parent) | Out-Null
-  # Recover from an earlier interrupted deploy first: a leftover backup with
-  # no target means the previous run crashed between rename and copy.
+  # Recover from an earlier interrupted deploy first (BRK-012): the commit
+  # marker decides, not "target exists -> newer". A target WITHOUT
+  # .deployed-version is a partial copy from a crashed deploy - the backup
+  # holds the good installation and is restored.
   if (Test-Path $backup) {
+    $targetIsCommitted = Test-Path (Join-Path $Target '.deployed-version')
     if (Test-Path $Target) {
-      # Stale backup; the current target is the newer state.
-      Remove-Item $backup -Recurse -Force
+      if ($targetIsCommitted) {
+        # Committed previous deploy; the backup is a locked leftover.
+        Remove-Item $backup -Recurse -Force
+      }
+      else {
+        # Previous deploy died mid-copy: restore the good backup over it.
+        Remove-Item $Target -Recurse -Force
+        Rename-Item -Path $backup -NewName (Split-Path $Target -Leaf)
+      }
     }
     else {
       Rename-Item -Path $backup -NewName (Split-Path $Target -Leaf)
@@ -279,6 +308,9 @@ try {
   }
 
   Write-Utf8NoBom (Join-Path $Target '.deployed-version') $version
+  # BRK-012: the commit marker is the transaction boundary - verify it before
+  # anything destructive (backup deletion) may happen.
+  if (-not (Test-Path (Join-Path $Target '.deployed-version'))) { throw 'commit marker missing after write' }
 
   if ($InstallDeps) {
     Write-Host '[deps] Running npm install in target...' -ForegroundColor Yellow
