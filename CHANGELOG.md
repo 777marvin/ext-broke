@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing) instead of blindly walking a tree whose ignore rules could not
   be evaluated. Persisted index files/dirs are owner-only on POSIX
   (external review BRK-003).
+- Updater data safety: runtime directories that exceed the preserve caps
+  (errors/ > 100 MB, snapshots/ > 64 MB, index/ > 64 MB) are now MOVED
+  into an `update-recovery-*` directory next to the installation and the
+  path is reported in the update result, instead of being skipped and
+  then destroyed together with the swapped-out backup. A RECOVERY-README
+  manifest records what was recovered. If a directory cannot be moved
+  (unresolvable file locks), the updater keeps the previous installation
+  as `<install>.old.kept` instead of deleting it - no update path deletes
+  user data anymore (external review BRK-004).
 - Summarize cache: after an incremental reuse (summary + freshly appended
   tool messages) the cache boundary is no longer advanced over messages
   that were never summarized. The previous behavior silently dropped those

@@ -24,6 +24,7 @@ import {
   compareSemver,
   MAX_PRESERVED_ERRORS_BYTES,
   MAX_PRESERVED_INDEX_BYTES,
+  MAX_PRESERVED_SNAPSHOT_BYTES,
   normalizeTag,
   recoverStaleBackup,
   releaseAssetName,
@@ -612,7 +613,7 @@ describe('errors/ archive preserve cap', () => {
     assert.equal(readFileSync(join(install, 'errors', 'out.txt'), 'utf-8'), 'full tool output');
   });
 
-  it('warns and skips the archive when it exceeds the cap', async () => {
+  it('preserves an oversized archive in a recovery directory instead of losing it (BRK-004)', async () => {
     const install = fakeInstall('0.5.1');
     // Sparse file: create empty, then extend to a huge LOGICAL size (what
     // statSync/dirSizeBytes report) without writing the bytes - instant.
@@ -623,10 +624,17 @@ describe('errors/ archive preserve cap', () => {
     assert.ok(res.ok, res.message);
     assert.equal(res.warnings?.length, 1);
     assert.match(res.warnings?.[0] ?? '', /100 MB/);
-    assert.equal(existsSync(join(install, 'errors', 'out.txt')), false); // archive skipped
-    // The oversized archive stays untouched in the OLD folder... which was
-    // swapped away, so verify via the message instead: update succeeded.
-    assert.match(res.message, /updated: v0\.5\.1 → v0\.6\.0/);
+    // BRK-004: "not carried over" must mean "preserved outside the swap
+    // path", never "destroyed with the backup after a successful swap".
+    const recoveryName = /update-recovery[^\s'"]*/.exec(res.warnings?.[0] ?? '')?.[0] ?? '';
+    assert.ok(recoveryName, 'the warning must point at the recovery directory');
+    const recovery = join(dirname(install), recoveryName);
+    assert.equal(existsSync(join(recovery, 'errors', 'huge.bin')), true, 'the oversized archive must survive the update');
+    assert.equal(existsSync(join(recovery, 'errors', 'out.txt')), true, 'the whole errors/ tree is preserved, not just the big file');
+    const manifest = JSON.parse(readFileSync(join(recovery, 'RECOVERY-README.json'), 'utf-8')) as { entries: string[] };
+    assert.ok(manifest.entries.includes('errors'), 'the manifest records what was recovered');
+    assert.equal(existsSync(join(install, 'errors', 'out.txt')), false); // not carried into the new install
+    assert.match(res.message, /updated: v0\.5\.1/);
   });
 });
 
@@ -641,9 +649,10 @@ describe('index/ preserve cap (F4, plan decision E2)', () => {
     assert.equal(readFileSync(join(install, 'index', 'deadbeef', 'index.json'), 'utf-8'), '{"version":1,"postings":{}}');
   });
 
-  it('warns and skips index/ when it exceeds the cap (rebuildable cache)', async () => {
+  it('preserves an oversized index/ tree in the recovery directory (BRK-004)', async () => {
     const install = fakeInstall('0.5.1');
     mkdirSync(join(install, 'index', 'bloated'), { recursive: true });
+    writeFileSync(join(install, 'index', 'bloated', 'keep.json'), '{"version":1}');
     const fh = openSync(join(install, 'index', 'bloated', 'huge.bin'), 'w');
     ftruncateSync(fh, MAX_PRESERVED_INDEX_BYTES + 1);
     closeSync(fh);
@@ -651,7 +660,34 @@ describe('index/ preserve cap (F4, plan decision E2)', () => {
     assert.ok(res.ok, res.message);
     assert.equal(res.warnings?.length, 1);
     assert.match(res.warnings?.[0] ?? '', /64 MB/);
-    assert.equal(existsSync(join(install, 'index', 'bloated')), false); // skipped entirely
+    const recoveryName = /update-recovery[^\s'"]*/.exec(res.warnings?.[0] ?? '')?.[0] ?? '';
+    assert.ok(recoveryName, 'the warning must point at the recovery directory');
+    const recovery = join(dirname(install), recoveryName);
+    assert.equal(existsSync(join(recovery, 'index', 'bloated', 'huge.bin')), true, 'the oversized index tree survives the update');
+    assert.equal(existsSync(join(recovery, 'index', 'bloated', 'keep.json')), true);
+    assert.equal(existsSync(join(install, 'index', 'bloated')), false); // not carried into the new install
+  });
+});
+
+describe('snapshots/ preserve cap (BRK-004: undo history is user data)', () => {
+  it('preserves an oversized snapshots/ tree in the recovery directory', async () => {
+    const install = fakeInstall('0.5.1');
+    writeFileSync(join(install, 'snapshots', 't1.json'), '{"goal":"precious undo history"}');
+    const fh = openSync(join(install, 'snapshots', 'huge.bin'), 'w');
+    ftruncateSync(fh, MAX_PRESERVED_SNAPSHOT_BYTES + 1);
+    closeSync(fh);
+    const res = await runUpdate({ mode: 'install' }, {}, makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD), install);
+    assert.ok(res.ok, res.message);
+    assert.equal(res.warnings?.length, 1);
+    assert.match(res.warnings?.[0] ?? '', /64 MB/);
+    const recoveryName = /update-recovery[^\s'"]*/.exec(res.warnings?.[0] ?? '')?.[0] ?? '';
+    assert.ok(recoveryName, 'the warning must point at the recovery directory');
+    const recovery = join(dirname(install), recoveryName);
+    assert.equal(
+      readFileSync(join(recovery, 'snapshots', 't1.json'), 'utf-8'),
+      '{"goal":"precious undo history"}',
+      'undo history survives the update',
+    );
   });
 });
 

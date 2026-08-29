@@ -42,7 +42,7 @@ import {
 } from 'node:fs';
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { promisify } from 'node:util';
 
 const execAsync = promisify(exec);
@@ -380,10 +380,88 @@ export const MAX_PRESERVED_INDEX_BYTES = 64 * 1024 * 1024;
 /**
  * F3 snapshot records + raw undo histories are user session data - carried
  * over like ledgers, but CAPPED (review F-14): raw histories make a single
- * snapshot arbitrarily large. Oversized archives are left behind; the new
- * installation's own size-aware rotation bounds them going forward.
+ * snapshot arbitrarily large. Oversized archives are moved to an
+ * update-recovery directory (BRK-004) - never deleted with the backup.
  */
 export const MAX_PRESERVED_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * BRK-004 (external review 2026-08-29): a size cap on preserved runtime data
+ * must mean "not migrated, safely preserved", never "skipped and destroyed
+ * with the backup after a successful swap". Oversized runtime directories are
+ * therefore MOVED into a recovery directory NEXT TO the installation -
+ * outside the swap path - and the update result reports that path. A manifest
+ * records what was recovered and why. Only when even the move fails
+ * (unresolvable locks) does the updater fall back to KEEPING the whole
+ * previous installation as `<install>.old.kept` (see KEEP_BACKUP_MARKER), so
+ * no path in this module deletes user data.
+ */
+const RECOVERY_DIR_PREFIX = 'update-recovery-';
+const RECOVERY_MANIFEST = 'RECOVERY-README.json';
+const KEEP_BACKUP_MARKER = '.update-keep-backup';
+
+function moveOversizedToRecovery(oldInstall: string, name: string, sizeLabel: string, warnings: string[]): void {
+  const recoveryDir = join(
+    dirname(oldInstall),
+    `${RECOVERY_DIR_PREFIX}${basename(oldInstall)}-${new Date().toISOString().replace(/[:.]/g, '-')}`,
+  );
+  try {
+    mkdirSync(recoveryDir, { recursive: true });
+    renameSync(join(oldInstall, name), join(recoveryDir, name));
+  } catch {
+    // Rename failed (e.g. a Windows handle pins the tree): fall back to
+    // copy + delete. If even that fails the original stays where it is and
+    // the KEEP_BACKUP_MARKER tells every swap path to keep the backup.
+    try {
+      cpSync(join(oldInstall, name), join(recoveryDir, name), { recursive: true });
+      rmSync(join(oldInstall, name), { recursive: true, force: true });
+    } catch {
+      try {
+        writeFileSync(join(oldInstall, KEEP_BACKUP_MARKER), `${name}\n`, { encoding: 'utf-8', flag: 'a' });
+      } catch {
+        // Nothing more can be done here; the recovery attempt is reported.
+      }
+      warnings.push(
+        `${name}/ exceeded its preserve cap and could not be moved to the recovery directory - the previous installation will be KEPT (<install>.old.kept) so nothing is lost.`,
+      );
+      return;
+    }
+  }
+  try {
+    const manifestPath = join(recoveryDir, RECOVERY_MANIFEST);
+    const manifest = existsSync(manifestPath)
+      ? (JSON.parse(readFileSync(manifestPath, 'utf-8')) as { createdAt?: string; entries: string[] })
+      : { createdAt: new Date().toISOString(), entries: [] };
+    if (!manifest.entries.includes(name)) manifest.entries.push(name);
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+  } catch {
+    // The manifest is best effort - the preserved data itself is safe.
+  }
+  warnings.push(
+    `${name}/ exceeded ${sizeLabel} (update preserve cap) and was NOT carried over - preserved in ${basename(recoveryDir)} (next to the extension directory).`,
+  );
+}
+
+/**
+ * Backup cleanup that honors KEEP_BACKUP_MARKER: a backup holding runtime
+ * data that could not be evacuated is renamed aside instead of deleted.
+ * `*.old.kept` directories are user-recoverable and never auto-deleted.
+ */
+function dropOrKeepBackup(backup: string): void {
+  try {
+    if (existsSync(join(backup, KEEP_BACKUP_MARKER))) {
+      try {
+        renameSync(backup, `${backup}.kept`);
+      } catch {
+        // Still locked - leave it; recoverStaleBackup re-evaluates next time.
+      }
+      return;
+    }
+    rmSync(backup, { recursive: true, force: true });
+  } catch {
+    // A locked leftover is cosmetic; the next update's recovery re-checks it.
+  }
+}
 
 function dirSizeBytes(dir: string): number {
   let total = 0;
@@ -437,7 +515,7 @@ function preserveRuntimeState(oldInstall: string, stagedPayload: string, warning
     if (dirSizeBytes(errDir) <= MAX_PRESERVED_ERRORS_BYTES) {
       cpSync(errDir, join(stagedPayload, 'errors'), { recursive: true });
     } else {
-      warnings.push('errors/ archive exceeded 100 MB and was not carried over');
+      moveOversizedToRecovery(oldInstall, 'errors', '100 MB', warnings);
     }
   }
   // F3 snapshot records + raw undo histories: user session data, carried
@@ -448,7 +526,7 @@ function preserveRuntimeState(oldInstall: string, stagedPayload: string, warning
     if (dirSizeBytes(snapDir) <= MAX_PRESERVED_SNAPSHOT_BYTES) {
       cpSync(snapDir, join(stagedPayload, 'snapshots'), { recursive: true });
     } else {
-      warnings.push('snapshots/ exceeded 64 MB and was not carried over');
+      moveOversizedToRecovery(oldInstall, 'snapshots', '64 MB', warnings);
     }
   }
   // F4 keyword index (plan decision E2): derived cache, but skipping this
@@ -458,7 +536,7 @@ function preserveRuntimeState(oldInstall: string, stagedPayload: string, warning
     if (dirSizeBytes(idxDir) <= MAX_PRESERVED_INDEX_BYTES) {
       cpSync(idxDir, join(stagedPayload, 'index'), { recursive: true });
     } else {
-      warnings.push('index/ exceeded 64 MB and was left to lazy rebuild');
+      moveOversizedToRecovery(oldInstall, 'index', '64 MB', warnings);
     }
   }
 }
@@ -641,7 +719,9 @@ function installHasDeployedVersion(installDir: string): boolean {
 export function recoverStaleBackup(backup: string, installDir: string): 'clean' | 'leftover-dropped' | 'restored' {
   if (!existsSync(backup)) return 'clean';
   if (isCommittedInstall(installDir) || installHasDeployedVersion(installDir)) {
-    rmSync(backup, { recursive: true, force: true });
+    // BRK-004: a backup flagged with KEEP_BACKUP_MARKER still holds runtime
+    // data that could not be evacuated - keep it aside, never delete it.
+    dropOrKeepBackup(backup);
     return 'leftover-dropped';
   }
   // Crash recovery: the previous installation lives in the backup.
@@ -703,7 +783,9 @@ export function swapInstallDirectory(installDir: string, payloadDir: string, tag
   }
   // A locked leftover backup is cosmetic - the next update's
   // recoverStaleBackup drops it. Never fail a finished update over it.
-  rmSync(backup, { recursive: true, force: true });
+  // BRK-004: a backup flagged with KEEP_BACKUP_MARKER is renamed aside
+  // instead of deleted - it may still hold un-evacuated user data.
+  dropOrKeepBackup(backup);
   return 'swapped';
 }
 
@@ -843,7 +925,9 @@ export function replaceInstallationInPlace(installDir: string, payloadDir: strin
 
   // Success: drop the backup. A locked leftover is cosmetic - the next
   // update's recoverStaleBackup drops it. Never fail a finished swap over it.
-  rmSync(backup, { recursive: true, force: true });
+  // BRK-004: a backup flagged with KEEP_BACKUP_MARKER is renamed aside
+  // instead of deleted - it may still hold un-evacuated user data.
+  dropOrKeepBackup(backup);
 }
 
 // ---------------------------------------------------------------------------
@@ -1029,6 +1113,15 @@ export async function runUpdate(
         hooks.onAfterSwap?.();
       } catch {
         // Host falls back to lazy reload / next start.
+      }
+      // BRK-004: if runtime data could not be evacuated before the swap, the
+      // swap kept the previous installation as <install>.old.kept - surface
+      // it, the user decides what to do with it.
+      const keptBackup = `${installDir}.old.kept`;
+      if (existsSync(keptBackup)) {
+        warnings.push(
+          `Previous installation kept at ${basename(keptBackup)} - it contains runtime data that could not be migrated automatically.`,
+        );
       }
 
       const verb = cmp > 0 ? 'updated' : cmp === 0 ? 'reinstalled' : 'downgraded';
