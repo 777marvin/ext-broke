@@ -5,7 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-08-29
+
+First release shaped entirely by external review round 3 (BRK-016..030).
+The headline: runtime data - config, ledgers, snapshots, search index and
+the error archive - moved out of the swappable installation tree into a
+versioned `.broke-data/v1/` root with a one-time automatic migration, so
+`/broke update` can no longer touch user data. The optional Ollama backend
+left the task-critical and polling paths, and the repository gains its
+security and governance surfaces (SECURITY.md, CODEOWNERS, pull-request
+template).
 
 ### Fixed
 

@@ -1,6 +1,6 @@
 {
   "name": "broke",
-  "version": "1.0.1-dev",
+  "version": "1.1.0",
   "description": "Token budget extension for AiderDesk: progressive input compression (structural + truncation + summarization), local-model (Ollama) summarization offload, and token-saving workflows",
   "private": true,
   "main": "index.ts",
