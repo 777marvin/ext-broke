@@ -35,6 +35,8 @@
   const uiCfg = cfg.ui ?? {};
   const statsCfg = cfg.stats ?? {};
   const searchCfg = cfg.search ?? {};
+  const snapshotCfg = cfg.snapshot ?? {};
+  const flushCfg = cfg.flush ?? {};
 
   return (
     <div className="flex flex-col gap-5">
@@ -133,6 +135,9 @@
           {numberField('Max KB', truncate.maxKB ?? 20, (n) =>
             updateConfig({ ...config, truncate: { ...truncate, maxKB: n } }),
           )}
+          {numberField('Max input chars', truncate.maxInputChars ?? 2000, (n) =>
+            updateConfig({ ...config, truncate: { ...truncate, maxInputChars: n } }),
+          )}
         </div>
       </div>
 
@@ -185,6 +190,9 @@
           2, 100)}
           {numberField('Min region chars', summarize.minChars ?? 8000, (n) =>
             updateConfig({ ...config, summarize: { ...summarize, minChars: n } }),
+          )}
+          {numberField('Max summary chars', summarize.maxSummaryChars ?? 4000, (n) =>
+            updateConfig({ ...config, summarize: { ...summarize, maxSummaryChars: n } }),
           )}
         </div>
         <p className="text-xs text-text-secondary -mt-2">
@@ -241,6 +249,40 @@
           Per-run records (sizes + per-pass removals, no content, no paths) are what <span className="font-mono">/broke
           measure</span> and <span className="font-mono">npm run measure</span> analyze - the provable real-session
           numbers. At 5 MB the file is rotated aside (kept as .1/.2/.3) instead of being rewritten.
+        </p>
+      </div>
+
+      {/* 8 - Milestones & destructive operations (BRK-028) */}
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium">Milestones &amp; destructive operations</p>
+        <Checkbox
+          label="Record a snapshot after every successful commit"
+          checked={snapshotCfg.onCommit ?? true}
+          onChange={(checked) => updateConfig({ ...config, snapshot: { ...snapshotCfg, onCommit: checked } })}
+        />
+        <Checkbox
+          label="Record a snapshot when tool output looks like passing tests"
+          checked={snapshotCfg.onTestPass ?? false}
+          onChange={(checked) => updateConfig({ ...config, snapshot: { ...snapshotCfg, onTestPass: checked } })}
+        />
+        <Checkbox
+          label="Keep raw message history with every snapshot (undo source; contains conversation content)"
+          checked={snapshotCfg.keepHistory ?? false}
+          onChange={(checked) => updateConfig({ ...config, snapshot: { ...snapshotCfg, keepHistory: checked } })}
+        />
+        <Checkbox
+          label="Ask for confirmation before /broke flush (recommended)"
+          checked={flushCfg.confirm ?? true}
+          onChange={(checked) => updateConfig({ ...config, flush: { ...flushCfg, confirm: checked } })}
+        />
+        <Checkbox
+          label="Keep the pre-flush history file so /broke flush --undo can restore it"
+          checked={flushCfg.undo ?? true}
+          onChange={(checked) => updateConfig({ ...config, flush: { ...flushCfg, undo: checked } })}
+        />
+        <p className="text-xs text-text-secondary -mt-2">
+          Snapshots are small JSON milestones; only the destructive flush writes raw history (undo file), and only when
+          this switch is on. Every option here is also reachable via <span className="font-mono">/broke config get|set</span>.
         </p>
       </div>
     </div>

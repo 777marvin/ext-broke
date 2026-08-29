@@ -663,3 +663,40 @@ describe('estimate persistence (stats.jsonl ledger)', () => {
   });
 });
 
+
+describe('config get/set/list (BRK-028)', () => {
+  it('parses config subcommands', () => {
+    assert.deepEqual(parseBrokeCommand(['config', 'list']), { kind: 'config-list' });
+    assert.deepEqual(parseBrokeCommand(['config', 'get', 'snapshot.onCommit']), { kind: 'config-get', path: 'snapshot.onCommit' });
+    assert.deepEqual(parseBrokeCommand(['config', 'set', 'snapshot.onCommit', 'false']), { kind: 'config-set', path: 'snapshot.onCommit', value: 'false' });
+    expectUnknown(['config']);
+    expectUnknown(['config', 'get']);
+    expectUnknown(['config', 'set', 'onlypath']);
+  });
+
+  it('lists every documented leaf path with its current value', () => {
+    const { message } = applyBrokeCommand({ kind: 'config-list' }, DEFAULT_CONFIG);
+    for (const p of ['snapshot.onCommit', 'snapshot.onTestPass', 'snapshot.keepHistory', 'flush.confirm', 'flush.undo', 'summarize.maxSummaryChars', 'truncate.maxInputChars', 'search.includeGitIgnored', 'slice.enabled']) {
+      assert.ok(message.includes(p), 'list must make documented settings reachable, missing: ' + p);
+    }
+  });
+
+  it('gets a value and reports unknown paths honestly', () => {
+    const got = applyBrokeCommand({ kind: 'config-get', path: 'snapshot.onCommit' }, DEFAULT_CONFIG);
+    assert.ok(got.message.includes('true'), 'got: ' + got.message);
+    const bad = applyBrokeCommand({ kind: 'config-get', path: 'snapshot.doesNotExist' }, DEFAULT_CONFIG);
+    assert.ok(bad.message.includes('no such setting'), 'got: ' + bad.message);
+  });
+
+  it('sets values with schema validation and default-type coercion', () => {
+    const file = join(tmp, 'config-brk28.json');
+    const on = applyBrokeCommand({ kind: 'config-set', path: 'snapshot.onCommit', value: 'off' }, DEFAULT_CONFIG, file);
+    assert.equal(on.config.snapshot.onCommit, false, 'boolean settings coerce on/off/true/false');
+    const num = applyBrokeCommand({ kind: 'config-set', path: 'summarize.maxSummaryChars', value: '1500' }, DEFAULT_CONFIG, file);
+    assert.equal(num.config.summarize.maxSummaryChars, 1500);
+    const bad = applyBrokeCommand({ kind: 'config-set', path: 'protectedTurns', value: '99' }, DEFAULT_CONFIG, file);
+    assert.ok(bad.message.includes('rejected'), 'invalid values report honestly instead of throwing: ' + bad.message);
+    const proto = applyBrokeCommand({ kind: 'config-set', path: '__proto__.polluted', value: '1' }, DEFAULT_CONFIG, file);
+    assert.ok(proto.message.includes('rejected'), 'prototype-path writes are refused');
+  });
+});

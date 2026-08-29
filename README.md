@@ -582,6 +582,15 @@ every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
 | snapshot.keepHistory | off | raw-history undo files for auto/manual snapshots (privacy opt-in, F-01) |
 | flush.confirm | on | ask before the destructive `/broke flush` |
 | flush.undo | on | raw pre-flush undo file; enables `flush --undo` (abort-safe) |
+| search.includeGitIgnored | off | opt-in: index git-ignored files too (dot-dirs and private-name denylists stay on regardless) |
+| summarize.maxSummaryChars | 4000 | summary text entering the context is capped at this length |
+
+Every setting above is reachable from the chat via
+`/broke config list|get <path>|set <path> <value>` (schema-validated,
+BRK-028) - no JSON hand-editing required. The gear dialog covers the
+day-to-day surface (pipeline, errors, truncation, summarizer, search,
+milestones/flush safety switches); anything not in the dialog is still
+first-class through `config set`.
 
 ## Status
 

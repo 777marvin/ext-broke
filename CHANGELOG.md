@@ -64,6 +64,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query" claims corrected to the BRK-013 freshness-TTL reality, and
   docs/review-backlog.md now separates historically closed findings from
   the currently tracked BRK-016..030 items.
+- Every documented setting is now reachable from the chat (external
+  review BRK-028): new `/broke config list|get <path>|set <path> <value>`
+  commands enumerate the whole settings surface from the central defaults,
+  coerce values against each option's default type, and write through the
+  same Zod validation as every other setter - invalid values report
+  honestly instead of throwing, prototype-path writes are refused. The
+  gear dialog gains the missing safety-relevant fields (snapshot
+  onCommit/onTestPass/keepHistory, flush confirm/undo,
+  summarize.maxSummaryChars, truncate.maxInputChars).
 - Packaging metadata (external review BRK-025): the extension declares
   itself private (it is a GitHub/AiderDesk extension, not an npm package -
   no accidental `npm publish`), documents its repository, issue tracker
