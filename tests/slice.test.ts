@@ -366,11 +366,13 @@ describe('slicePathKey (D5: relative resolution against the task dir)', () => {
   });
 
   it('matches a relative tool path against an absolute stored focus', () => {
-    assert.equal(sameSlicePath('src/a.ts', 'C:\\proj\\src\\a.ts', 'c:\\proj'), true);
     if (process.platform === 'win32') {
+      // Case folds, so base case and input case may differ freely.
+      assert.equal(sameSlicePath('src/a.ts', 'C:\\proj\\src\\a.ts', 'c:\\proj'), true, 'Windows matching stays case-insensitive');
       assert.equal(sameSlicePath('C:/proj/src/a.ts', 'src\\A.TS', 'C:\\Proj'), true, 'Windows matching stays case-insensitive');
     } else {
-      assert.equal(sameSlicePath('C:/proj/src/a.ts', 'src/a.ts', 'C:\\Proj'), true, 'POSIX matching is case-sensitive but separator-normalized');
+      // Case-sensitive: the relative path must resolve to the EXACT key.
+      assert.equal(sameSlicePath('src/a.ts', 'C:\\proj\\src\\a.ts', 'C:\\proj'), true, 'POSIX matching is case-sensitive but separator-normalized');
       assert.equal(sameSlicePath('C:/proj/src/a.ts', 'src\\A.TS', 'C:\\Proj'), false, 'case-sensitive filesystems must not fold');
     }
   });
