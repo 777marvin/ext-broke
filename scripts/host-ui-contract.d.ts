@@ -4,10 +4,11 @@
  * Purpose: the CI type check must verify components against REAL host prop
  * shapes - never against `any` fallbacks that let typos pass silently.
  * This file pins the shapes the components actually consume, hand-vendored
- * from AiderDesk v0.80.0 / @aiderdesk/extensions 0.31 (the version the
- * extension compiles against; see devDependencies). When a real AiderDesk
- * checkout is present (packages/common detected), the validator prefers the
- * live repo types over this file.
+ * from AiderDesk v0.80.0 / @aiderdesk/extensions 0.31; the UI prop shapes are
+ * verified unchanged through AiderDesk v0.81.0 / @aiderdesk/extensions 0.32
+ * (the version the extension compiles against; see devDependencies). When a
+ * real AiderDesk checkout is present (packages/common detected), the
+ * validator prefers the live repo types over this file.
  *
  * Re-vendor when bumping the minimum supported AiderDesk version.
  */
