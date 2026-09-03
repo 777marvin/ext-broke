@@ -44,7 +44,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "zod": "^4.0.0"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@aiderdesk/extensions": "^0.31.0",
