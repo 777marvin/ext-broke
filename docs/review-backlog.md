@@ -461,14 +461,11 @@ Findings from the hostile external review of 2026-08-29 (baseline commit
 | BRK-001, BRK-002, BRK-003, BRK-004, BRK-014 (P0) | Phase 1, commits f882bb2, 156c33a, 3f1e06d, a31a139, 00cbeae |
 | BRK-005..BRK-015 (P1) | Phase 2, commits 5236b1f, 3b03e05, e1ad7c5, ade6b6e, 2815187, 138db30 |
 | BRK-017..BRK-025 (P2) | Phase 3 on `phase3-hardening`, one commit per finding or pair (5edc959, d950c4a, e1bbf70, 24b4dc3, 26553c0, 1eae8e0, 026f0ee) |
+| BRK-016, BRK-027, BRK-028, BRK-029, BRK-030 | Released in v1.1.0 (e76a8af) via the `phase3-hardening` merge (db5f2cb); notable commits: 8ab47f8 (BRK-028 `/broke config list/get/set` + gear-dialog fields), 299c5ed (BRK-030 governance), P3-H docs truth pass (BRK-027) |
 
 ## Currently open / tracked
 
-- **BRK-016** (runtime-data relocation out of the swap path) - largest single item, planned as `paths.ts` + one-time migration.
 - **BRK-026 residual**: adversarial sequence/fuzz tests beyond the new branch-coverage gate; Windows updater/host lifecycle integration test (deploy.ps1 smokes are not a substitute); ESLint/format gate deliberately DEFERRED (documented in CONTRIBUTING).
-- **BRK-027 residual**: guarantee claims are audited per commit that changes them (BRK-027 principle); full docs pass tracked with P3-H.
-- **BRK-028** (centralized settings surface: `/broke config get/set/list` + UI exposure of safety-relevant options) - planned.
-- **BRK-029** (probe Ollama only when the local backend is active) - planned.
-- **BRK-030** (governance: SECURITY.md, CODEOWNERS, PR template) - planned.
+- **BRK-027 residual**: guarantee claims are audited per commit that changes them (BRK-027 principle); the 1.1.0 docs truth pass (P3-H) is done, a full docs pass remains tracked.
 
 Manual follow-ups from R1 (D6): protected `v*` tags, `release` environment approval, branch-protection required checks - environment approval is LIVE since the v1.0.0 release.
