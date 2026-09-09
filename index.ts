@@ -27,7 +27,7 @@ import {
   type SummarizeDeps,
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, resolveCacheProfile, saveConfig, type Config } from './config';
-import { isSent, markSent } from './cache';
+import { clearTask, isSent, markSent } from './cache';
 import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
 import {
@@ -182,6 +182,8 @@ export default class Broke implements Extension {
   private readonly summarizeFailures = new Map<string, number>();
   /** Tasks whose summarize pass is auto-disabled after repeated failures. */
   private readonly summarizeDisabled = new Map<string, true>();
+  /** Per-task escape-hatch state (cache-friendly mode, option B). */
+  private readonly escapeByTask = new Map<string, { locked: boolean; onEscape?: () => void }>();
   /**
    * Last optimize-run observation per task - recorded for EVERY real
    * pipeline run, including no-op runs where nothing was compressed. This
@@ -354,9 +356,18 @@ export default class Broke implements Extension {
       // Cache-friendly mode: resolve the provider cache profile from config
       // (explicit) and task metadata (auto), then freeze every message whose
       // exact bytes were already sent to the model. 'off' keeps the
-      // historical behavior with no ledger traffic.
+      // historical behavior with no ledger traffic. The escape hatch state
+      // is per task: one deliberate cache-invalidating rewrite per budget
+      // crossing, locked until a run ships under budget again (see
+      // compressMessages) - onEscape resets the ledger so the cache
+      // re-stabilizes on the escape run's output.
       const profile = resolveCacheProfile(config, { provider: task.data.provider, model: task.data.model ?? task.data.mainModel });
-      const cacheOpts = profile === 'off' ? undefined : { frozen: (msg: import('@aiderdesk/extensions').ContextMessage) => isSent(taskId, msg) };
+      let escapeState = this.escapeByTask.get(taskId);
+      if (!escapeState) {
+        escapeState = { locked: false, onEscape: () => clearTask(taskId) };
+        this.escapeByTask.set(taskId, escapeState);
+      }
+      const cacheOpts = profile === 'off' ? undefined : { frozen: (msg: import('@aiderdesk/extensions').ContextMessage) => isSent(taskId, msg), escape: escapeState };
       const { messages, report } = await compressMessages(event.optimizedMessages, config, deps, this.state, taskId, {
         summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
         cache: cacheOpts,
@@ -1028,6 +1039,10 @@ export default class Broke implements Extension {
                 ext.state.cachedSummaryByTask.delete(taskId);
                 ext.summarizeFailures.delete(taskId);
                 ext.summarizeDisabled.delete(taskId);
+                // Cache-friendly state: forget which bytes were sent and
+                // unlock the escape hatch - a reset task starts fresh.
+                clearTask(taskId);
+                ext.escapeByTask.delete(taskId);
               }
               return log('broke: stats cleared for this task (incl. persisted history; summarization re-enabled)');
             }

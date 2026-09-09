@@ -33,13 +33,18 @@ let saveConfig: (typeof import('../config'))['saveConfig'];
 let structuralPass: (typeof import('../compress'))['structuralPass'];
 let errorPass: (typeof import('../compress'))['errorPass'];
 let truncatePass: (typeof import('../compress'))['truncatePass'];
+let compressMessages: (typeof import('../compress'))['compressMessages'];
+let summarizePass: (typeof import('../compress'))['summarizePass'];
+let isSummaryMessage: (typeof import('../compress'))['isSummaryMessage'];
+let createCompressState: (typeof import('../compress'))['createCompressState'];
 let clearTask: (typeof import('../cache'))['clearTask'];
 type Config = import('../config').Config;
+type SummarizeDeps = import('../compress').SummarizeDeps;
 
 before(async () => {
   ({ default: Broke } = await import('../index'));
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
-  ({ structuralPass, errorPass, truncatePass } = await import('../compress'));
+  ({ structuralPass, errorPass, truncatePass, compressMessages, summarizePass, isSummaryMessage, createCompressState } = await import('../compress'));
   ({ clearTask } = await import('../cache'));
 });
 
@@ -103,8 +108,8 @@ async function run(ext: InstanceType<typeof Broke>, context: ExtensionContext, m
 }
 
 describe('cache-friendly byte stability (E2E)', () => {
-  it('anthropic profile: budget overrun in run 2 must NOT rewrite history sent as-is in run 1', async () => {
-    writeConfig({ cache: { profile: 'anthropic', escapeHatch: true } });
+  it('anthropic profile (escapeHatch off): budget overrun in run 2 must NOT rewrite history sent as-is in run 1', async () => {
+    writeConfig({ cache: { profile: 'anthropic', escapeHatch: false } });
     const taskId = 'byte-stable-anthropic';
     clearTask(taskId);
     const ext = new Broke();
@@ -247,5 +252,214 @@ describe('pass-level freeze gating (unit)', () => {
     const truncT2 = trunc.messages.find((m) => (m as { id?: string }).id === 't2') as { content: Array<{ output?: { value?: string } }> };
     assert.ok(truncT1.content[0].output?.value?.includes('build step 59') && !truncT1.content[0].output?.value?.includes('[broke:'), 'frozen tool result not truncated');
     assert.ok(truncT2.content[0].output?.value?.includes('[broke: truncated'), 'unfrozen tool result truncated as usual');
+  });
+});
+
+describe('escape hatch (E2E)', () => {
+  it('anthropic profile + escapeHatch: a real budget overrun sacrifices the cache exactly once (option B)', async () => {
+    writeConfig({ cache: { profile: 'anthropic', escapeHatch: true } });
+    const taskId = 'escape-once';
+    clearTask(taskId);
+    const ext = new Broke();
+    const context = makeHost(taskId, 'anthropic', 'claude-sonnet-4');
+    const overInput = () =>
+      [
+        ...history(300),
+        { id: 'u2', role: 'user', content: 'third turn' },
+        { id: 'a3', role: 'assistant', content: 'big new work'.padEnd(8000, 'x') },
+      ] as unknown as ContextMessage[];
+
+    // Run 1 below budget ships t1 verbatim (sent bytes).
+    const out1 = await run(ext, context, history(300));
+    assert.ok(bytes(out1).includes('build line 299'), 'run 1 sends the full tool output (below budget)');
+
+    // Run 2 overruns: the hatch is open -> ONE deliberate full rewrite.
+    const out2 = await run(ext, context, overInput());
+    assert.ok(bytes(out2).includes('big new work'), 'protected tail arrives intact');
+    assert.ok(bytes(out2).includes('[broke: truncated'), 'escape hatch rewrites the sent history on overrun');
+    assert.notEqual(bytes(out2.slice(0, out1.length)), bytes(out1), 'the sent prefix is deliberately invalidated');
+
+    // Run 3 (same over-budget input): the hatch is locked, and the extension
+    // reset the ledger on the escape run - t1's original bytes are no longer
+    // "sent", so truncate re-derives the same truncated bytes deterministically.
+    // The output re-stabilizes on the escape run's shape and the provider
+    // cache can hit again from there.
+    const out3 = await run(ext, context, overInput());
+    assert.equal(bytes(out3), bytes(out2), 'after the escape run the output is byte-stable again');
+  });
+});
+
+describe('escape hatch state machine (pipeline)', () => {
+  const cfg = (): Config => ({
+    ...DEFAULT_CONFIG,
+    enabled: true,
+    level: 'truncate',
+    maxContextChars: 3000,
+    protectedTurns: 1,
+    errors: { ...DEFAULT_CONFIG.errors, enabled: false },
+    // The fixture's oversized output is a single 4000-char line - cap by KB,
+    // not by line count, so the truncate pass actually rewrites it.
+    truncate: { ...DEFAULT_CONFIG.truncate, maxKB: 1 },
+    cache: { profile: 'anthropic', escapeHatch: true },
+  });
+  const big = 'x'.repeat(4000);
+  const msgs = (): ContextMessage[] =>
+    [
+      { id: 'u0', role: 'user', content: 'brief' },
+      { id: 'a1', role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'power---bash', input: {} }] },
+      { id: 't1', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc1', toolName: 'power---bash', output: { type: 'text', value: big } }] },
+      { id: 'u1', role: 'user', content: 'tail' },
+    ] as unknown as ContextMessage[];
+  const deps = { generateLocal: async () => undefined, generateCloud: async () => undefined } as unknown as SummarizeDeps;
+  const frozen = (m: ContextMessage) => (m as { id?: string }).id === 't1';
+
+  it('over -> escape once -> locked holds -> under releases -> over escapes again', async () => {
+    const state = createCompressState();
+    let escapes = 0;
+    const escape = { locked: false, onEscape: (): void => void escapes++ };
+    const opts = { cache: { frozen, escape } };
+
+    const r1 = await compressMessages(msgs(), cfg(), deps, state, 'esc-1', opts);
+    assert.ok(bytes(r1.messages).includes('[broke: truncated'), 'run 1: hatch open, sent bytes rewritten');
+    assert.equal(escape.locked, true, 'run 1 locks the hatch');
+    assert.equal(escapes, 1, 'onEscape fired for the ledger reset');
+
+    // Run 2: still over, locked - the frozen bytes ship verbatim.
+    const r2 = await compressMessages(msgs(), cfg(), deps, state, 'esc-1', opts);
+    assert.ok(bytes(r2.messages).includes(big), 'run 2: frozen tool output kept verbatim');
+    assert.ok(!bytes(r2.messages).includes('[broke: truncated'), 'run 2: no second rewrite while locked');
+    assert.equal(escape.locked, true, 'run 2 keeps the hatch locked');
+    assert.equal(escapes, 1);
+
+    // Run 3: under budget - the hatch releases (even though nothing runs).
+    const small = [
+      { id: 'u0', role: 'user', content: 'brief' },
+      { id: 'u1', role: 'user', content: 'tail' },
+    ] as unknown as ContextMessage[];
+    await compressMessages(small, cfg(), deps, state, 'esc-1', opts);
+    assert.equal(escape.locked, false, 'an under-budget run releases the hatch');
+
+    // Run 4: over again - the hatch may fire once more.
+    const r4 = await compressMessages(msgs(), cfg(), deps, state, 'esc-1', opts);
+    assert.ok(bytes(r4.messages).includes('[broke: truncated'), 'run 4: hatch fires again after release');
+    assert.equal(escapes, 2);
+  });
+
+  it('escapeHatch: false never rewrites sent bytes', async () => {
+    const state = createCompressState();
+    const escape = { locked: false };
+    const cfgOff: Config = { ...cfg(), cache: { profile: 'anthropic', escapeHatch: false } };
+    const opts = { cache: { frozen, escape } };
+    for (let i = 0; i < 2; i++) {
+      const r = await compressMessages(msgs(), cfgOff, deps, state, 'esc-off', opts);
+      assert.ok(bytes(r.messages).includes(big), `run ${i + 1}: frozen bytes intact`);
+      assert.ok(!bytes(r.messages).includes('[broke: truncated'), `run ${i + 1}: no rewrite`);
+      assert.equal(escape.locked, false, 'hatch never engages');
+    }
+  });
+});
+
+describe('summarizePass cache gating (unit)', () => {
+  const sumCfg = (): Config => ({
+    ...DEFAULT_CONFIG,
+    level: 'summarize',
+    summarize: { ...DEFAULT_CONFIG.summarize, afterTurns: 2, minChars: 60, maxSummaryChars: 2000 },
+  });
+  const conv = (): ContextMessage[] =>
+    [
+      { id: 'u0', role: 'user', content: 'Brief: build the billing module.' },
+      { id: 'a1', role: 'assistant', content: 'Step 1: reading the module.' },
+      { id: 't1', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc1', toolName: 'power---file-read', output: { type: 'text', value: `file content line a\nfile content line b\n${'x'.repeat(350)}` } }] },
+      { id: 'u1', role: 'user', content: 'Add a discount field.' },
+      { id: 'a2', role: 'assistant', content: 'Step 2: editing.' },
+      { id: 't2', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc2', toolName: 'power---file-edit', output: { type: 'text', value: 'edit ok' } }] },
+      { id: 'u2', role: 'user', content: 'Run the tests.' },
+      { id: 'a3', role: 'assistant', content: 'Step 3: running tests.' },
+      { id: 't3', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc3', toolName: 'power---bash', output: { type: 'text', value: 'all tests pass' } }] },
+      { id: 'u3', role: 'user', content: 'Protected tail.' },
+    ] as unknown as ContextMessage[];
+  /** The region grew by one user turn: the old protected tail is now compressible. */
+  const grown = (input: ContextMessage[]): ContextMessage[] =>
+    [
+      ...input.slice(0, 9),
+      { id: 'u3', role: 'user', content: 'Protected tail.' },
+      { id: 'a4', role: 'assistant', content: 'mid work' },
+      { id: 'u4', role: 'user', content: 'Deploy now.' },
+    ] as unknown as ContextMessage[];
+  const deps = (calls: { n: number }): SummarizeDeps => ({
+    generateLocal: async () => {
+      calls.n += 1;
+      return 'Summary: billing module with discount; tests pass.';
+    },
+    generateCloud: async () => undefined,
+  });
+
+  it('blocks regeneration when the region contains already-sent bytes', async () => {
+    const calls = { n: 0 };
+    const input = conv();
+    const frozen = (m: ContextMessage) => ['t1', 'a2'].includes((m as { id?: string }).id ?? '');
+    const r = await summarizePass(input, 1, sumCfg(), deps(calls), createCompressState(), 'sg-a', { frozen });
+    assert.equal(calls.n, 0, 'no summarizer call over sent bytes');
+    assert.equal(r.messages, input, 'region untouched');
+    assert.equal(r.summarizedRanges, 0);
+  });
+
+  it('re-serves the sent summary and appends new turns verbatim instead of regenerating', async () => {
+    const calls = { n: 0 };
+    const state = createCompressState();
+    const input = conv();
+    const r1 = await summarizePass(input, 1, sumCfg(), deps(calls), state, 'sg-b');
+    const S = r1.messages.find(isSummaryMessage);
+    assert.ok(S, 'run 1 produces a summary');
+
+    const frozen = (m: ContextMessage) => m === S;
+    const r2 = await summarizePass(grown(input), 1, sumCfg(), deps(calls), state, 'sg-b', { frozen });
+    assert.equal(calls.n, 1, 'no regeneration over the sent summary');
+    const s2 = r2.messages.find(isSummaryMessage);
+    assert.ok(s2 && bytes([s2]) === bytes([S]), 'the sent summary bytes are re-served verbatim');
+    assert.ok(bytes(r2.messages).includes('Protected tail.') && bytes(r2.messages).includes('mid work'), 'new messages appended verbatim');
+    assert.equal(r2.summarizeCalls, 0);
+
+    // The cache boundary must not advance: the same input re-derives the
+    // same shape on every subsequent run (BRK-001 discipline).
+    const r3 = await summarizePass(grown(input), 1, sumCfg(), deps(calls), state, 'sg-b', { frozen });
+    assert.equal(calls.n, 1, 'still no summarizer call');
+    assert.equal(bytes(r3.messages), bytes(r2.messages), 'byte-stable across runs');
+  });
+
+  it('escaping re-enables regeneration over sent bytes', async () => {
+    const calls = { n: 0 };
+    const state = createCompressState();
+    const input = conv();
+    const r1 = await summarizePass(input, 1, sumCfg(), deps(calls), state, 'sg-c');
+    const S = r1.messages.find(isSummaryMessage);
+    assert.ok(S);
+
+    const r2 = await summarizePass(grown(input), 1, sumCfg(), deps(calls), state, 'sg-c', { frozen: (m) => m === S, escaping: true });
+    assert.equal(calls.n, 2, 'the escape run pays for a full regeneration');
+    const s2 = r2.messages.find(isSummaryMessage);
+    assert.ok(s2 && bytes([s2]) !== bytes([S]), 'a fresh summary replaces the sent one');
+    assert.ok(!bytes(r2.messages).includes('file content line a'), 'sent region bytes are rewritten');
+  });
+
+  it('regenerates freely when nothing in the region was ever sent', async () => {
+    const calls = { n: 0 };
+    const input = conv();
+    const r = await summarizePass(grown(input), 1, sumCfg(), deps(calls), createCompressState(), 'sg-d', { frozen: () => false });
+    assert.equal(calls.n, 1, 'the gate is a no-op for unsent bytes');
+    assert.ok(r.messages.some(isSummaryMessage));
+  });
+
+  it('a history edit under a sent summary: no call, no rewrite (correctness over cache)', async () => {
+    const calls = { n: 0 };
+    const state = createCompressState();
+    const input = conv();
+    const r1 = await summarizePass(input, 1, sumCfg(), deps(calls), state, 'sg-f');
+    const S = r1.messages.find(isSummaryMessage);
+    assert.ok(S);
+    const edited = input.map((m, i) => (i === 1 ? { ...m, content: 'EDITED: Step 1 changed.' } : m)) as ContextMessage[];
+    const r2 = await summarizePass(edited, 1, sumCfg(), deps(calls), state, 'sg-f', { frozen: (m) => m === S });
+    assert.equal(calls.n, 1, 'no regeneration');
+    assert.equal(r2.messages, edited, 'region untouched');
   });
 });

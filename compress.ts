@@ -903,6 +903,16 @@ function chunkRegionForSummarizer(
   return chunks;
 }
 
+/**
+ * Cache-friendly-mode gate for the summarize pass (see CompressOptions.cache):
+ * `frozen` marks already-sent bytes (sent-ledger); `escaping` marks a run
+ * where the escape hatch sanctions rewriting them.
+ */
+export interface SummarizeCacheGate {
+  frozen?: (msg: ContextMessage) => boolean;
+  escaping?: boolean;
+}
+
 export async function summarizePass(
   messages: ContextMessage[],
   protectedTurns: number,
@@ -910,6 +920,7 @@ export async function summarizePass(
   deps: SummarizeDeps,
   state: CompressState,
   taskId: string,
+  gate?: SummarizeCacheGate,
 ): Promise<SummarizeResult> {
   const noop: SummarizeResult = { messages, removedChars: 0, summarizedRanges: 0, summarizeCalls: 0, failed: false, summarizer: 'none', summarizerInputChars: 0, summarizerOutputChars: 0 };
 
@@ -974,7 +985,13 @@ export async function summarizePass(
         const appendsOrphanedResult = sinceThrough.length > 0 && sinceThrough[0].role === 'tool';
         const newUserTurns = sinceThrough.filter((m) => m.role === 'user').length;
         const newChars = messagesChars(sinceThrough);
-        if (!appendsOrphanedResult && newUserTurns === 0 && newChars < config.summarize.minChars) {
+        // Cache-friendly mode: when the already-sent summary must not be
+        // rewritten (no escape this run), this byte-stable shape is FORCED
+        // regardless of the growth gates - regenerating would replace sent
+        // bytes, while this shape extends them byte-for-byte.
+        const growthOk = newUserTurns === 0 && newChars < config.summarize.minChars;
+        const cacheForced = !!gate?.frozen && !gate.escaping && gate.frozen(cached.message);
+        if (!appendsOrphanedResult && (growthOk || cacheForced)) {
           const removedChars = regionChars - messageChars(cached.message) - newChars;
           // XF6: only swap when the cached summary + the new tool messages are
           // smaller than the original region - never grow the context.
@@ -993,6 +1010,20 @@ export async function summarizePass(
         }
       }
     }
+  }
+
+  // --- Cache gate (cache-friendly mode) --------------------------------------
+  // The generate path REPLACES region bytes. When those bytes were already
+  // sent to the model - the original messages (sent-ledger) or a previously
+  // served summary - regenerating would rewrite the sent prefix and
+  // invalidate the provider cache. Only the escape hatch sanctions that
+  // (option B); otherwise the region ships untouched: correctness and cache
+  // stability over compression.
+  if (gate?.frozen && !gate.escaping) {
+    const frozenFn = gate.frozen;
+    const sentOriginals = region.some((m) => frozenFn(m));
+    const sentSummary = cached ? frozenFn(cached.message) : false;
+    if (sentOriginals || sentSummary) return noop;
   }
 
   // --- Generate: full (re-)summarization -------------------------------------
@@ -1185,6 +1216,17 @@ export interface CompressOptions {
    */
   cache?: {
     frozen?: (msg: ContextMessage) => boolean;
+    /**
+     * Escape hatch state (option B), owned per task by the extension. When a
+     * run starts over `maxContextChars` while the hatch is unlocked, exactly
+     * ONE deliberate full rewrite runs (sent bytes sacrificed, provider
+     * cache lost) and the hatch locks until a run starts under budget again
+     * (hysteresis). `onEscape` fires on the escape so the extension can reset
+     * the sent-ledger - stability re-establishes on the escape run's output.
+     * With `cache.escapeHatch: false` the hatch never engages and sent bytes
+     * are never rewritten.
+     */
+    escape?: { locked: boolean; onEscape?: () => void };
   };
 }
 
@@ -1214,15 +1256,36 @@ export async function compressMessages(
   const totalCharsBefore = messagesChars(messages);
   const report = emptyReport(totalCharsBefore);
 
+  // Cache-friendly mode: when active, every pass receives the frozen
+  // predicate (never rewrite already-sent bytes). With 'off' the predicate
+  // is undefined and the passes behave exactly as before.
+  const gate = opts.cache;
+  // Escape hatch (option B): a run that STARTS over budget while the hatch
+  // is unlocked gets ONE deliberate full rewrite - sent bytes are sacrificed
+  // and the provider cache lost exactly once. The hatch then locks until a
+  // run starts under budget again (hysteresis), so a task stuck over budget
+  // cannot rewrite the cache on every call. onEscape lets the extension reset
+  // the sent-ledger so stability re-establishes on this run's output. The
+  // state machine runs BEFORE the shouldCompress early return: an
+  // under-budget run releases the hatch even when no pass follows.
+  let escaping = false;
+  if (gate?.frozen && gate.escape) {
+    const over = totalCharsBefore > config.maxContextChars;
+    if (over && (config.cache?.escapeHatch ?? true) && !gate.escape.locked) {
+      escaping = true;
+      gate.escape.locked = true;
+      gate.escape.onEscape?.();
+    } else if (!over && gate.escape.locked) {
+      gate.escape.locked = false;
+    }
+  }
+  const frozen = escaping ? undefined : gate?.frozen;
+
   if (!shouldCompress(messages, config, totalCharsBefore)) {
     return { messages, report };
   }
 
   let work = messages;
-  // Cache-friendly mode: when active, every pass receives the frozen
-  // predicate (never rewrite already-sent bytes). With 'off' the predicate
-  // is undefined and the passes behave exactly as before.
-  const frozen = opts.cache?.frozen;
 
   // Pass 1 - structural (lossless, synchronous, cannot throw).
   const structural = structuralPass(work, config.protectedTurns, frozen);
@@ -1251,7 +1314,7 @@ export async function compressMessages(
   // discard the structural/truncate savings nor break the model call.
   if (config.level === 'summarize' && !opts.summarizeDisabled && totalCharsBefore > config.maxContextChars) {
     try {
-      const summarized = await summarizePass(work, config.protectedTurns, config, deps, state, taskId);
+      const summarized = await summarizePass(work, config.protectedTurns, config, deps, state, taskId, { frozen: gate?.frozen, escaping });
       report.summarizeChars = summarized.removedChars;
       report.summarizedRanges = summarized.summarizedRanges;
       report.summarizeCalls = summarized.summarizeCalls;
