@@ -26,7 +26,8 @@ import {
   type CompressState,
   type SummarizeDeps,
 } from './compress';
-import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, saveConfig, type Config } from './config';
+import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, resolveCacheProfile, saveConfig, type Config } from './config';
+import { isSent, markSent } from './cache';
 import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
 import {
@@ -350,9 +351,20 @@ export default class Broke implements Extension {
 
     this.optimizingTasks.add(taskId);
     try {
+      // Cache-friendly mode: resolve the provider cache profile from config
+      // (explicit) and task metadata (auto), then freeze every message whose
+      // exact bytes were already sent to the model. 'off' keeps the
+      // historical behavior with no ledger traffic.
+      const profile = resolveCacheProfile(config, { provider: task.data.provider, model: task.data.model ?? task.data.mainModel });
+      const cacheOpts = profile === 'off' ? undefined : { frozen: (msg: import('@aiderdesk/extensions').ContextMessage) => isSent(taskId, msg) };
       const { messages, report } = await compressMessages(event.optimizedMessages, config, deps, this.state, taskId, {
         summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
+        cache: cacheOpts,
       });
+      // Record what THIS run is about to send so the next run can keep these
+      // bytes stable. Marking happens for the unchanged path too - identity
+      // output is exactly the prefix the next run must preserve.
+      if (profile !== 'off') markSent(taskId, messages);
       // Price lookup only when something was actually compressed (it is
       // cached afterwards; the badge warms it on task open).
       const price = report.touched ? await resolveTaskModelPrice(context) : null;

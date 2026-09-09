@@ -247,7 +247,7 @@ export interface PassResult {
   removedChars: number;
 }
 
-export function structuralPass(messages: ContextMessage[], protectedTurns: number): PassResult {
+export function structuralPass(messages: ContextMessage[], protectedTurns: number, frozen?: (msg: ContextMessage) => boolean): PassResult {
   const { start, end } = compressibleRange(messages, protectedTurns);
   if (start >= end) return { messages, removedChars: 0 };
 
@@ -258,9 +258,11 @@ export function structuralPass(messages: ContextMessage[], protectedTurns: numbe
     const msg = messages[i];
     const inRegion = i >= start && i < end;
 
+    // Cache-friendly mode: frozen messages (already-sent bytes) are never
+    // dropped, merged or re-framed - byte stability of the sent prefix.
     // Drop assistant messages that carry no text, no tool calls and no rich
     // parts (reasoning/image must never be silently discarded).
-    if (inRegion && msg.role === 'assistant' && !isSummaryMessage(msg) && !hasRichParts(msg)) {
+    if (inRegion && !frozen?.(msg) && msg.role === 'assistant' && !isSummaryMessage(msg) && !hasRichParts(msg)) {
       const text = assistantText(msg);
       if (!hasToolCalls(msg) && !text.trim()) {
         removedChars += messageChars(msg);
@@ -274,7 +276,7 @@ export function structuralPass(messages: ContextMessage[], protectedTurns: numbe
     // makes the provider call fail (AI_MissingToolResultsError). Dedupe
     // additionally requires the producing tool-calls to be identical
     // (name + input): equal outputs alone are not enough (XF1).
-    if (inRegion && msg.role === 'tool' && Array.isArray(msg.content)) {
+    if (inRegion && !frozen?.(msg) && msg.role === 'tool' && Array.isArray(msg.content)) {
       const parts = msg.content as unknown as PartLike[];
       const emptyParts = parts.filter(
         (p) => p.type === 'tool-result' && partText(p).trim().length === 0,
@@ -306,9 +308,9 @@ export function structuralPass(messages: ContextMessage[], protectedTurns: numbe
 
     // Merge consecutive assistant text messages - only when BOTH sides are
     // pure text (merging would otherwise drop reasoning/image parts).
-    if (inRegion && msg.role === 'assistant' && !hasToolCalls(msg) && isTextOnly(msg) && result.length > 0) {
+    if (inRegion && !frozen?.(msg) && msg.role === 'assistant' && !hasToolCalls(msg) && isTextOnly(msg) && result.length > 0) {
       const prev = result[result.length - 1];
-      if (prev.role === 'assistant' && !hasToolCalls(prev) && isTextOnly(prev) && !isSummaryMessage(prev)) {
+      if (prev.role === 'assistant' && !hasToolCalls(prev) && isTextOnly(prev) && !isSummaryMessage(prev) && !frozen?.(prev)) {
         const mergedText = [assistantText(prev), assistantText(msg)].filter(Boolean).join('\n\n');
         // Honest accounting: the merged text stays in the context (plus the
         // separator), so a merge saves 0 chars. Only the message framing
@@ -543,13 +545,15 @@ export function truncatePass(
   maxLines: number,
   maxKB: number,
   maxInputChars: number,
+  frozen?: (msg: ContextMessage) => boolean,
 ): PassResult {
   const { start, end } = compressibleRange(messages, protectedTurns);
   if (start >= end) return { messages, removedChars: 0 };
 
   let removedChars = 0;
   const result = messages.map((msg, i) => {
-    if (i < start || i >= end) return msg;
+    // Cache-friendly mode: already-sent bytes are never rewritten.
+    if (i < start || i >= end || frozen?.(msg)) return msg;
 
     if (msg.role === 'tool' && Array.isArray(msg.content)) {
       let changed = false;
@@ -653,13 +657,14 @@ export interface ErrorPassOptions {
  * text; truncate then handles whatever remains. Input-only - the stored
  * task history is never touched.
  */
-export function errorPass(messages: ContextMessage[], protectedTurns: number, opts: ErrorPassOptions): PassResult {
+export function errorPass(messages: ContextMessage[], protectedTurns: number, opts: ErrorPassOptions, frozen?: (msg: ContextMessage) => boolean): PassResult {
   const { start, end } = compressibleRange(messages, protectedTurns);
   if (start >= end) return { messages, removedChars: 0 };
 
   let removedChars = 0;
   const result = messages.map((msg, i) => {
-    if (i < start || i >= end || msg.role !== 'tool' || !Array.isArray(msg.content)) return msg;
+    // Cache-friendly mode: already-sent bytes are never rewritten.
+    if (i < start || i >= end || msg.role !== 'tool' || !Array.isArray(msg.content) || frozen?.(msg)) return msg;
 
     let changed = false;
     const parts = msg.content.map((p) => {
@@ -1171,6 +1176,16 @@ export interface CompressOptions {
   validate?: (messages: ContextMessage[]) => ValidationFailure[];
   /** Called when validation failed and the run was reverted (for logging). */
   onValidationFailure?: (line: string) => void;
+  /**
+   * Cache-friendly mode (prompt-caching awareness): when a provider profile
+   * is active, `frozen` marks messages whose exact bytes were already sent
+   * to the model (sent-ledger, cache.ts). Frozen messages are emitted
+   * byte-identically by every pass so the sent prefix stays stable and the
+   * provider cache keeps hitting. undefined = gate off ('off' profile).
+   */
+  cache?: {
+    frozen?: (msg: ContextMessage) => boolean;
+  };
 }
 
 /**
@@ -1204,9 +1219,13 @@ export async function compressMessages(
   }
 
   let work = messages;
+  // Cache-friendly mode: when active, every pass receives the frozen
+  // predicate (never rewrite already-sent bytes). With 'off' the predicate
+  // is undefined and the passes behave exactly as before.
+  const frozen = opts.cache?.frozen;
 
   // Pass 1 - structural (lossless, synchronous, cannot throw).
-  const structural = structuralPass(work, config.protectedTurns);
+  const structural = structuralPass(work, config.protectedTurns, frozen);
   report.structuralChars = structural.removedChars;
   work = structural.messages;
 
@@ -1216,14 +1235,14 @@ export async function compressMessages(
   // Pass 2 - error compression (lossy, synchronous, cannot throw). Runs
   // BEFORE truncate so stack-trace extraction sees the full output text.
   if ((config.level === 'truncate' || config.level === 'summarize') && hasOldContent && config.errors.enabled) {
-    const errors = errorPass(work, config.protectedTurns, { minChars: config.errors.minChars, contextLines: config.errors.contextLines });
+    const errors = errorPass(work, config.protectedTurns, { minChars: config.errors.minChars, contextLines: config.errors.contextLines }, frozen);
     report.errorChars = errors.removedChars;
     work = errors.messages;
   }
 
   // Pass 3 - truncate (lossy, synchronous, cannot throw).
   if ((config.level === 'truncate' || config.level === 'summarize') && hasOldContent && totalCharsBefore > config.maxContextChars) {
-    const truncated = truncatePass(work, config.protectedTurns, config.truncate.maxLines, config.truncate.maxKB, config.truncate.maxInputChars);
+    const truncated = truncatePass(work, config.protectedTurns, config.truncate.maxLines, config.truncate.maxKB, config.truncate.maxInputChars, frozen);
     report.truncateChars = truncated.removedChars;
     work = truncated.messages;
   }
