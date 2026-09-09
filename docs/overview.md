@@ -1,7 +1,10 @@
 # Project Overview
 
-*Snapshot: release v1.1.0 (2026-08-29), review rounds F1-F24, XF1-XF16,
-R1-R15 and remediation F-01..F-16 closed, external-review findings BRK-001..030 fixed, suite 474/474 green*/
+*Snapshot: release v1.2.0 (2026-09-09) adds the cache-friendly mode
+(sent-ledger freeze, escape hatch with hysteresis, provider-cache pricing,
+badge settings overlay), suite 524/524 green. Prior snapshot: release
+v1.1.0 (2026-08-29), review rounds F1-F24, XF1-XF16, R1-R15 and remediation
+F-01..F-16 closed, external-review findings BRK-001..030 fixed.*/
 
 ## What broke is
 

@@ -64,14 +64,14 @@ escaped. index.ts: profile in cacheOpts, lastCallUsage in recordReport,
 Escape-Rewrites, provider-Cache-Snapshot und cache-adjustierte Kosten.
 E2E: Escape-Record verifiziert (Run 2 escaped, Run 3 nicht). 519/519, tsc
 clean, validate:ui PASS.
-## Task 7: Settings-UI (Tooltips + Presets + Einstieg) — [ ]
+## Task 7: Settings-UI (Tooltips + Presets + Einstieg) — [x]
 ENTSCHEIDUNG (User, 2026-09-09): Einstieg = broke-eigenes Overlay-Settings-UI
 (Button → Overlay mit voller broke-Konfiguration), kein Verweis-Dialog.
-## Task 8: Doku (README, overview, CHANGELOG) — [ ]
-## Task 9: Release (MINOR bump, Tag, Signatur) — [ ]
+## Task 8: Doku (README, overview, CHANGELOG) — [x]
+## Task 9: Release (MINOR bump, Tag, Signatur) — [x]
 
 ## Checkpoints
 - [x] Phase 1 (nach Task 2): Tests gruen, tsc clean
 - [x] Phase 2 (nach Task 5): Byte-Stabilitaet gruen, 'off' regressionssicher
-- [ ] Phase 3 (nach Task 7): UI validiert, Pricing konsistent
-- [ ] Release-Bereitschaft (nach Task 9)
+- [x] Phase 3 (nach Task 7): UI validiert, Pricing konsistent
+- [x] Release-Bereitschaft (nach Task 9)
