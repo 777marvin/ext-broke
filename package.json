@@ -1,7 +1,8 @@
 {
   "name": "broke",
-  "version": "1.2.0",
+  "version": "1.2.1-dev",
   "description": "Token budget extension for AiderDesk: progressive input compression (structural + truncation + summarization), local-model (Ollama) summarization offload, and token-saving workflows",
+
   "private": true,
   "main": "index.ts",
   "files": [
@@ -23,7 +24,7 @@
   "homepage": "https://github.com/777marvin/ext-broke#readme",
   "scripts": {
     "test": "tsx --test \"tests/*.test.ts\"",
-    "coverage": "c8 --check-coverage --per-file --branches 82 --lines 0 --statements 0 --functions 0 --include compress.ts --include indexer.ts npm test && c8 --check-coverage --per-file --branches 72 --lines 0 --statements 0 --functions 0 --include update.ts npm test && c8 --check-coverage --per-file --branches 60 --lines 0 --statements 0 --functions 0 --include index.ts npm test",
+    "coverage": "c8 --check-coverage --per-file --branches 82 --lines 90 --statements 90 --functions 85 --include compress.ts --include indexer.ts --include cache.ts --include config.ts npm test && c8 --check-coverage --per-file --branches 72 --lines 75 --statements 75 --functions 80 --include update.ts --include paths.ts npm test && c8 --check-coverage --per-file --branches 60 --lines 75 --statements 75 --functions 80 --include index.ts npm test",
     "typecheck": "tsc --noEmit",
     "check:version": "node scripts/check-version.mjs",
     "bench": "tsx scripts/bench.ts",

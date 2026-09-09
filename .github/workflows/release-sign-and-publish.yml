@@ -24,6 +24,11 @@ on:
         description: 'Release tag (vX.Y.Z)'
         required: true
         type: string
+    secrets:
+      BROKE_RELEASE_SIGNING_KEY:
+        description: 'Private Ed25519 signing key for release checksums'
+        required: true
+
 
 permissions:
   contents: write

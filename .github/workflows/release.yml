@@ -52,4 +52,5 @@ jobs:
     uses: 777marvin/ext-broke/.github/workflows/release-sign-and-publish.yml@main
     with:
       tag: ${{ github.ref_name }}
-    secrets: inherit
+    secrets:
+      BROKE_RELEASE_SIGNING_KEY: ${{ secrets.BROKE_RELEASE_SIGNING_KEY }}

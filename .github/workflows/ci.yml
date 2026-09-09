@@ -92,7 +92,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm install @aiderdesk/extensions@latest
+      - run: npm install --ignore-scripts @aiderdesk/extensions@latest
       - run: npm run typecheck
       - run: npm test
 

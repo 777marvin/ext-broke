@@ -97,4 +97,28 @@ describe('migrateLegacyRuntimeData (BRK-016)', () => {
     tmpRoots.push(legacy, target);
     assert.doesNotThrow(() => migrateLegacyRuntimeData(legacy, target));
   });
+
+  it('DATA-001: does not write .migrated-v1 marker on failed migration and allows retry', () => {
+    const legacy = mkdtempSync(join(tmpdir(), 'broke-legacy-fail-'));
+    const invalidTarget = join(tmpdir(), `broke-file-target-${Date.now()}`);
+    // Write a file where target directory should be, making subdirectory creation fail
+    writeFileSync(invalidTarget, 'blocking file');
+    tmpRoots.push(legacy, invalidTarget);
+
+    writeFileSync(join(legacy, 'config.json'), '{"enabled":true}');
+
+    const ok1 = migrateLegacyRuntimeData(legacy, invalidTarget);
+    assert.equal(ok1, false, 'migration reports failure when moves fail');
+    assert.equal(existsSync(join(invalidTarget, '.migrated-v1')), false, 'marker is NOT written on failure');
+    assert.equal(existsSync(join(legacy, 'config.json')), true, 'legacy file preserved for retry');
+
+    // Clean up blocking file and provide valid directory
+    rmSync(invalidTarget, { force: true });
+    mkdirSync(invalidTarget, { recursive: true });
+
+    const ok2 = migrateLegacyRuntimeData(legacy, invalidTarget);
+    assert.equal(ok2, true, 'subsequent retry succeeds');
+    assert.equal(existsSync(join(invalidTarget, 'config.json')), true, 'file successfully migrated on retry');
+    assert.equal(existsSync(join(invalidTarget, '.migrated-v1')), true, 'marker written on complete success');
+  });
 });

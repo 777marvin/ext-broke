@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -445,6 +445,54 @@ describe('index hardening: persisted-state trust boundary (review F-09)', () => 
       if (prev === undefined) delete process.env.BROKE_INDEX_DIR;
       else process.env.BROKE_INDEX_DIR = prev;
     }
+  });
+});
+
+describe('SEC-001: indexer symlink and workspace confinement', () => {
+  it('refuses symlinks pointing outside the project root', () => {
+    const root = makeProject();
+    const outside = mkdtempSync(join(tmpdir(), 'broke-outside-'));
+    tmpRoots.push(outside);
+    writeFileSync(join(outside, 'secret.md'), 'SUPER_SECRET_TOKEN = 12345');
+
+    const symlinkPath = join(root, 'docs-link.md');
+    try {
+      symlinkSync(join(outside, 'secret.md'), symlinkPath, 'file');
+    } catch {
+      // Windows unprivileged symlink permissions may skip
+      return;
+    }
+
+    const { state } = ensureFresh(root, { maxFileKB: 512 });
+    assert.equal('docs-link.md' in state.files, false, 'outside symlink never indexed');
+
+    state.files['docs-link.md'] = { mtimeMs: Date.now(), sizeBytes: 50, tokenCount: 5 };
+    state.postings['super'] = { 'docs-link.md': 1 };
+    const res = runSearch(state, root, 'super', { k: 5, maxChars: 2000, contextLines: 2 });
+    assert.equal(res.hits.length, 0, 'outside symlink never read during search');
+  });
+
+  it('refuses symlinks pointing to sensitive internal files like .env', () => {
+    const root = makeProject();
+    writeFileSync(join(root, '.env'), 'SECRET_API_KEY=abcdef');
+    const symlinkPath = join(root, 'public-link.md');
+    try {
+      symlinkSync(join(root, '.env'), symlinkPath, 'file');
+    } catch {
+      return;
+    }
+
+    const { state } = ensureFresh(root, { maxFileKB: 512 });
+    assert.equal('public-link.md' in state.files, false, 'symlink to .env is rejected');
+  });
+
+  it('OBS-001: mergeIntoState only increments added/updated for successfully indexed documents', () => {
+    const state = createEmptyState(makeProject());
+    const root = state.projectRoot;
+    const bogusEntry = { relPath: 'vanished.ts', mtimeMs: Date.now(), sizeBytes: 100 };
+    const delta = mergeIntoState(state, root, [bogusEntry], false);
+    assert.equal(delta.added, 0, 'unreadable file is not counted in delta.added');
+    assert.equal(Object.keys(state.files).length, 0);
   });
 });
 

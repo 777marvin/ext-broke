@@ -98,6 +98,26 @@ describe('sent-ledger bounds and hygiene', () => {
     assert.equal(isSent('task-59', msg('a', 'content 59')), true);
   });
 
+  it('CACHE-003: touching an older task keeps it in LRU cache ahead of inactive tasks', () => {
+    markSent('lru-old', [msg('a', 'initial')]);
+    assert.ok(ledgerStats('lru-old').tracked === true);
+
+    for (let i = 0; i < 45; i++) {
+      markSent(`lru-fill-${i}`, [msg('a', `content ${i}`)]);
+    }
+
+    // Touch lru-old to refresh its recency
+    assert.equal(isSent('lru-old', msg('a', 'initial')), true);
+
+    // Add 10 more tasks (total exceeds 50 task limit)
+    for (let i = 45; i < 55; i++) {
+      markSent(`lru-fill-${i}`, [msg('a', `content ${i}`)]);
+    }
+
+    assert.ok(ledgerStats('lru-old').tracked === true, 'recently touched task is NOT evicted');
+    assert.ok(ledgerStats('lru-fill-0').tracked === false, 'untouched old task is evicted first');
+  });
+
   it('never throws on hostile input (host surface must stay unbreakable)', () => {
     assert.doesNotThrow(() => markSent('t1', [null as never, undefined as never, { id: '', content: '' } as never]));
     assert.doesNotThrow(() => markSent('t1', []));

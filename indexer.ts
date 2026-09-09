@@ -22,9 +22,9 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import type { Config } from './config';
 import { runtimeDir } from './paths';
 
@@ -219,6 +219,36 @@ function sensitiveBasename(relPath: string): boolean {
   return /(secret|credential|password|passwd)/.test(base);
 }
 
+/** Normalize to forward slashes so on-disk keys are OS-portable. */
+export function forwardSlash(p: string): string {
+  return p.includes('\\') ? p.replace(/\\/g, '/') : p;
+}
+
+/**
+ * SEC-001: Strict workspace confinement check.
+ * Verifies that relPath is syntactically confined AND resolves to an actual
+ * regular file strictly inside the project root on disk (symlink / realpath containment).
+ * Also enforces that the canonical target does not point to sensitive or skipped paths.
+ */
+export function isSafeWorkspaceFile(root: string, relPath: unknown): relPath is string {
+  if (!isConfinedRelPath(relPath)) return false;
+  try {
+    const canonicalRoot = realpathSync(root);
+    const abs = join(root, ...relPath.split('/'));
+    const canonicalFile = realpathSync(abs);
+    const rel = relative(canonicalRoot, canonicalFile);
+    if (rel.startsWith('..') || isAbsolute(rel)) return false;
+    const normRel = forwardSlash(rel);
+    if (hasDotSegment(normRel) || hasSkipDirSegment(normRel) || sensitiveBasename(normRel) || skippedPath(normRel)) {
+      return false;
+    }
+    const st = statSync(canonicalFile);
+    return st.isFile();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * BRK-003: git-aware candidate list - tracked plus untracked-but-not-ignored
  * files (`git ls-files -co --exclude-standard`), i.e. exactly the project
@@ -287,6 +317,12 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
   let truncated = false;
   const deadline = opts.deadlineMs ?? Number.POSITIVE_INFINITY;
   const outOfTime = (): boolean => Date.now() >= deadline;
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = realpathSync(root);
+  } catch {
+    return { entries: [], truncated: false, source: 'git-unavailable' };
+  }
   const gitFiles = gitCandidateFiles(root, opts.includeGitIgnored === true);
   if (gitFiles !== null) {
     if (outOfTime()) return { entries: [], truncated: true, source: 'git' };
@@ -296,9 +332,21 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
         break;
       }
       if (!indexableRelPath(relPath) || skippedPath(relPath) || hasSkipDirSegment(relPath) || hasDotSegment(relPath) || sensitiveBasename(relPath)) continue;
+      const abs = join(root, ...relPath.split('/'));
       try {
-        const st = statSync(join(root, ...relPath.split('/')));
-        if (st.size > maxBytes) continue;
+        const lst = lstatSync(abs);
+        let st = lst;
+        if (lst.isSymbolicLink()) {
+          const realFile = realpathSync(abs);
+          const rel = relative(canonicalRoot, realFile);
+          if (rel.startsWith('..') || isAbsolute(rel)) continue;
+          const normRel = forwardSlash(rel);
+          if (hasDotSegment(normRel) || hasSkipDirSegment(normRel) || sensitiveBasename(normRel) || skippedPath(normRel)) {
+            continue;
+          }
+          st = statSync(realFile);
+        }
+        if (!st.isFile() || st.size > maxBytes) continue;
         entries.push({ relPath, mtimeMs: st.mtimeMs, sizeBytes: st.size });
       } catch {
         // raced file - skip
@@ -352,11 +400,6 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
   return { entries, truncated, source: 'walk' };
 }
 
-/** Normalize to forward slashes so on-disk keys are OS-portable. */
-function forwardSlash(p: string): string {
-  return p.includes('\\') ? p.replace(/\\/g, '/') : p;
-}
-
 function removeDocument(state: IndexState, relPath: string): void {
   delete state.files[relPath];
   for (const term of Object.keys(state.postings)) {
@@ -370,22 +413,26 @@ function removeDocument(state: IndexState, relPath: string): void {
   }
 }
 
-function addDocument(state: IndexState, root: string, entry: ScannedEntry, budget?: { remainingBytes: number; exhausted: boolean }): void {
+function addDocument(state: IndexState, root: string, entry: ScannedEntry, budget?: { remainingBytes: number; exhausted: boolean }): boolean {
   // BRK-013: an exhausted aggregate budget leaves the file honestly absent
   // (the index simply does not know it yet) instead of reading unbounded.
   if (budget) {
-    if (budget.exhausted) return;
+    if (budget.exhausted) return false;
     if (entry.sizeBytes > budget.remainingBytes) {
       budget.exhausted = true;
-      return;
+      return false;
     }
   }
   removeDocument(state, entry.relPath);
+  // SEC-001: strictly enforce workspace confinement before reading
+  if (!isSafeWorkspaceFile(root, entry.relPath)) {
+    return false;
+  }
   let text = '';
   try {
     text = readFileSync(join(root, ...entry.relPath.split('/')), 'utf-8');
   } catch {
-    return; // unreadable at index time - absent from postings is honest
+    return false; // unreadable at index time - absent from postings is honest
   }
   if (budget) budget.remainingBytes -= entry.sizeBytes;
   const tokens = tokenize(text);
@@ -404,6 +451,7 @@ function addDocument(state: IndexState, root: string, entry: ScannedEntry, budge
     }
     defineKey(posting, entry.relPath, tf);
   }
+  return true;
 }
 
 /**
@@ -425,11 +473,13 @@ export function mergeIntoState(
     seen.add(entry.relPath);
     const old = state.files[entry.relPath];
     if (!old) {
-      addDocument(state, root, entry, budget);
-      added++;
+      if (addDocument(state, root, entry, budget)) {
+        added++;
+      }
     } else if (old.mtimeMs !== entry.mtimeMs || old.sizeBytes !== entry.sizeBytes) {
-      addDocument(state, root, entry, budget);
-      updated++;
+      if (addDocument(state, root, entry, budget)) {
+        updated++;
+      }
     }
   }
   let removed = 0;
@@ -673,10 +723,10 @@ export function runSearch(
   for (const cand of ranked) {
     if (hits.length >= opts.k) break;
     if (usedChars >= budget) break;
-    // Defense in depth (review F-09): postings keys are validated at load
-    // time, but the read boundary re-checks confinement before touching the
-    // filesystem - an in-memory state can always be hand-built wrong.
-    if (!isConfinedRelPath(cand.relPath)) continue;
+    // SEC-001 (and review F-09): postings keys are validated at load
+    // time, but the read boundary re-checks realpath workspace containment
+    // before touching the filesystem - an in-memory state can always be hand-built wrong.
+    if (!isSafeWorkspaceFile(root, cand.relPath)) continue;
     let text = '';
     try {
       text = readFileSync(join(root, ...cand.relPath.split('/')), 'utf-8');

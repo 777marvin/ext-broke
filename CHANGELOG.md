@@ -5,7 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Post-release hardening and remediation for v1.2.0 (external security, architecture, and code review).
+
+### Security
+
+- **Workspace symlink containment (SEC-001)**: `indexer.ts` now enforces canonical workspace containment (`isSafeWorkspaceFile`) using `realpathSync`. Symlinks pointing outside the workspace root or targeting sensitive files (`.env`, dot-segments, `SKIP_DIRS`) are excluded from `scanProject`, rejected by `addDocument`, and blocked in `runSearch` before reading live snippets from disk.
+- **Release workflow secret scoping (SUP-001)**: Replaced `secrets: inherit` in `.github/workflows/release.yml` with explicit mapping for `BROKE_RELEASE_SIGNING_KEY`, preventing unintentional secret forwarding to called workflows.
+- **Compatibility CI job hardening (SUP-003)**: Added `--ignore-scripts` to `npm install @aiderdesk/extensions@latest` in `.github/workflows/ci.yml` (`deps-current` job) to eliminate arbitrary code execution from untrusted lifecycle scripts.
+
+### Fixed
+
+- **Escape hatch lockup on monotonic history (CACHE-001)**: `compress.ts` now re-arms the escape hatch (`escape.locked = false`) whenever a compression run fits within `config.maxContextChars` without needing an escape, eliminating permanent lockups on continuously growing conversations.
+- **Transactional escape state handling (CACHE-002)**: In `compress.ts`, cache-escape mutation and `onEscape` notifications are executed transactionally after `validateContext`. If validation fails, the output safely reverts to original messages without locking the hatch or dropping cache state.
+- **Legacy data migration error handling & recursive fallback (DATA-001)**: `paths.ts` `moveIfPossible` now provides a recursive copy-and-remove fallback (`cpSync` + `rmSync`) for directories across devices/filesystems. `.migrated-v1` is written only when all migrations succeed without errors.
+- **Config cache mutation side-effects (CONF-001)**: `applyConfigUpdates` in `config.ts` now deep-clones the `cache` section, preventing mutations from leaking back to the caller's configuration object.
+- **Deleted config ENOENT handling (CONF-002)**: `getConfig()` in `config.ts` invalidates its in-memory cache and reloads default configuration upon encountering `ENOENT` instead of treating it as a transient error.
+- **Task cache LRU semantics (CACHE-003)**: `cache.ts` now properly refreshes Map key recency on read (`isSent`) and write (`markSent`) accesses, ensuring active tasks are not prematurely evicted before inactive ones.
+- **Indexer merge metrics honesty (OBS-001)**: `mergeIntoState` in `indexer.ts` now increments `added` and `updated` counters only when `addDocument` successfully indexes the file.
+
+### Added
+
+- **Dependabot configuration (SUP-002)**: Created `.github/dependabot.yml` with weekly automated dependency security updates for npm and GitHub Actions.
+- **Stricter coverage thresholds and test additions (TEST-001, TEST-002)**: Replaced zero-floors in `package.json` with strict per-module coverage requirements (compress 90%, indexer 85%, update 85%, index 80%, cache 80%, config 80%, paths 80%) across 3 passes. Added comprehensive integration and regression tests for symlink escapes, cache lifecycle, validation reverts, LRU eviction, and migration recovery.
+
 ## [1.2.0] - 2026-09-09
+
 
 Cache-friendly mode: broke now respects provider prompt caching so the
 biggest hidden cost of aggressive compression - rewriting an already-cached

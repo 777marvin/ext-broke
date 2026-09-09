@@ -19,7 +19,7 @@
  *   errors/                - error archive
  */
 
-import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 /** Where the extension code is installed (the swappable directory). */
@@ -42,25 +42,35 @@ export function runtimeDir(): string {
  * Best-effort move of one legacy artifact into the new layout. Moves only
  * when the source exists AND the destination does not - newer data at the
  * target always wins, so a partially-applied migration can never destroy
- * anything. All failures are swallowed: a failed move leaves the legacy
- * copy in place for a later retry.
+ * anything. Returns true if the move succeeded or was safely unnecessary,
+ * false if an error left the legacy copy in place for a later retry.
  */
-function moveIfPossible(from: string, to: string): void {
+function moveIfPossible(from: string, to: string): boolean {
   try {
-    if (!existsSync(from) || existsSync(to)) return;
+    if (!existsSync(from)) return true;
+    if (existsSync(to)) return true;
     mkdirSync(dirname(to), { recursive: true });
     try {
       renameSync(from, to);
+      return true;
     } catch {
       // Cross-device renames (EXDEV) and pinned files: fall back to
-      // copy-then-remove for FILES; directories stay for a later retry.
-      if (!existsSync(to) && !statIsDirectory(from)) {
-        copyFileSync(from, to);
-        rmSync(from, { force: true });
+      // copy-then-remove for both files and directories.
+      if (!existsSync(to)) {
+        if (statIsDirectory(from)) {
+          cpSync(from, to, { recursive: true });
+          rmSync(from, { recursive: true, force: true });
+          return existsSync(to);
+        } else {
+          copyFileSync(from, to);
+          rmSync(from, { force: true });
+          return existsSync(to);
+        }
       }
+      return false;
     }
   } catch {
-    // best effort - a failed move leaves the legacy copy in place
+    return false;
   }
 }
 
@@ -75,28 +85,35 @@ function statIsDirectory(path: string): boolean {
 /**
  * One-time migration of runtime data from the installation tree into the
  * versioned runtime root. Best-effort and idempotent (marker file):
- * anything that cannot be moved stays in place; the marker is written
- * regardless so the fast path stabilizes after the first run. Injectable
- * paths for hermetic tests.
+ * anything that cannot be moved stays in place. The marker is written
+ * ONLY when all migrations succeeded, ensuring failed directories or files
+ * can be retried on subsequent starts. Injectable paths for hermetic tests.
  */
-export function migrateLegacyRuntimeData(legacyDir: string = INSTALL_DIR, targetDir: string = runtimeDir()): void {
+export function migrateLegacyRuntimeData(legacyDir: string = INSTALL_DIR, targetDir: string = runtimeDir()): boolean {
   try {
     const marker = join(targetDir, MIGRATION_MARKER);
-    if (existsSync(marker)) return;
+    if (existsSync(marker)) return true;
 
     // Move only what exists at the legacy default locations. Env overrides
     // (tests, host isolation) redirect the live modules elsewhere - the
     // legacy location is always the installation directory.
-    moveIfPossible(join(legacyDir, 'config.json'), join(targetDir, 'config.json'));
-    moveIfPossible(join(legacyDir, 'stats.jsonl'), join(targetDir, 'ledgers', 'stats.jsonl'));
-    moveIfPossible(join(legacyDir, 'measure.jsonl'), join(targetDir, 'ledgers', 'measure.jsonl'));
-    moveIfPossible(join(legacyDir, 'snapshots'), join(targetDir, 'snapshots'));
-    moveIfPossible(join(legacyDir, 'index'), join(targetDir, 'index'));
-    moveIfPossible(join(legacyDir, 'errors'), join(targetDir, 'errors'));
+    const results = [
+      moveIfPossible(join(legacyDir, 'config.json'), join(targetDir, 'config.json')),
+      moveIfPossible(join(legacyDir, 'stats.jsonl'), join(targetDir, 'ledgers', 'stats.jsonl')),
+      moveIfPossible(join(legacyDir, 'measure.jsonl'), join(targetDir, 'ledgers', 'measure.jsonl')),
+      moveIfPossible(join(legacyDir, 'snapshots'), join(targetDir, 'snapshots')),
+      moveIfPossible(join(legacyDir, 'index'), join(targetDir, 'index')),
+      moveIfPossible(join(legacyDir, 'errors'), join(targetDir, 'errors')),
+    ];
 
-    mkdirSync(targetDir, { recursive: true });
-    writeFileSync(marker, new Date().toISOString(), { encoding: 'utf-8', mode: 0o600 });
+    const allSucceeded = results.every(Boolean);
+    if (allSucceeded) {
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(marker, new Date().toISOString(), { encoding: 'utf-8', mode: 0o600 });
+      return true;
+    }
+    return false;
   } catch {
-    // best effort - worst case the legacy files stay and are moved later
+    return false;
   }
 }

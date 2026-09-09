@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   applyConfigUpdates,
+  CONFIG_PATH,
   DEFAULT_CONFIG,
+  getConfig,
+  invalidateConfigCache,
   loadConfigFile,
   mergeConfig,
   saveConfig,
@@ -123,6 +126,14 @@ describe('applyConfigUpdates', () => {
   it('throws on values outside the schema', () => {
     assert.throws(() => applyConfigUpdates({ ...DEFAULT_CONFIG }, [['protectedTurns', 999]]));
     assert.throws(() => applyConfigUpdates({ ...DEFAULT_CONFIG }, [['summarize.afterTurns', 1]]));
+  });
+
+  it('CONF-001: preserves cache block immutability when applying updates', () => {
+    const before = mergeConfig({});
+    const previous = before.cache.profile;
+    const updated = applyConfigUpdates(before, [['cache.profile', 'anthropic']]);
+    assert.equal(before.cache.profile, previous, 'original cache object not mutated');
+    assert.equal(updated.cache.profile, 'anthropic');
   });
 });
 
@@ -324,5 +335,25 @@ describe('resolveCacheProfile', () => {
   it('never throws on odd hints (host surface must stay unbreakable)', () => {
     assert.doesNotThrow(() => resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: undefined as unknown as string, model: 42 as unknown as string }));
     assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: undefined as unknown as string, model: 42 as unknown as string }), 'off');
+  });
+});
+
+describe('CONF-002: getConfig cached read and ENOENT handling', () => {
+  it('reloads default config when cached config file is deleted', () => {
+    try {
+      invalidateConfigCache();
+      saveConfig({ ...DEFAULT_CONFIG, protectedTurns: 5 }, CONFIG_PATH);
+      const c1 = getConfig();
+      assert.equal(c1.protectedTurns, 5);
+
+      // Delete the file
+      if (existsSync(CONFIG_PATH)) rmSync(CONFIG_PATH);
+      // getConfig should detect ENOENT, invalidate cache, and return defaults
+      const c2 = getConfig();
+      assert.equal(c2.protectedTurns, DEFAULT_CONFIG.protectedTurns, 'reloads defaults on deleted file');
+    } finally {
+      invalidateConfigCache();
+      if (existsSync(CONFIG_PATH)) rmSync(CONFIG_PATH, { force: true });
+    }
   });
 });

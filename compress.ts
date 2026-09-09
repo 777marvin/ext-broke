@@ -1251,52 +1251,18 @@ export function shouldCompress(messages: ContextMessage[], config: Config, total
   return (totalChars ?? messagesChars(messages)) >= config.errors.minChars;
 }
 
-export async function compressMessages(
+async function executePasses(
   messages: ContextMessage[],
   config: Config,
   deps: SummarizeDeps,
   state: CompressState,
   taskId: string,
-  opts: CompressOptions = {},
+  opts: CompressOptions,
+  totalCharsBefore: number,
+  frozen: ((msg: ContextMessage) => boolean) | undefined,
+  escaping: boolean,
 ): Promise<{ messages: ContextMessage[]; report: CompressReport }> {
-  const totalCharsBefore = messagesChars(messages);
   const report = emptyReport(totalCharsBefore);
-
-  // Cache-friendly mode: when active, every pass receives the frozen
-  // predicate (never rewrite already-sent bytes). With 'off' the predicate
-  // is undefined and the passes behave exactly as before.
-  const gate = opts.cache;
-  // Escape hatch (option B): a run that STARTS over budget while the hatch
-  // is unlocked gets ONE deliberate full rewrite - sent bytes are sacrificed
-  // and the provider cache lost exactly once. The hatch then locks until a
-  // run starts under budget again (hysteresis), so a task stuck over budget
-  // cannot rewrite the cache on every call. onEscape lets the extension reset
-  // the sent-ledger so stability re-establishes on this run's output. The
-  // state machine runs BEFORE the shouldCompress early return: an
-  // under-budget run releases the hatch even when no pass follows.
-  let escaping = false;
-  if (gate?.frozen && gate.escape) {
-    const over = totalCharsBefore > config.maxContextChars;
-    if (over && (config.cache?.escapeHatch ?? true) && !gate.escape.locked) {
-      escaping = true;
-      gate.escape.locked = true;
-      gate.escape.onEscape?.();
-    } else if (!over && gate.escape.locked) {
-      gate.escape.locked = false;
-    }
-  }
-  const frozen = escaping ? undefined : gate?.frozen;
-  // Measure-ledger facts (task 6): which profile ran, and whether this run
-  // was a deliberate cache-invalidating escape rewrite. A validator revert
-  // replaces the report below - correctly dropping the flag, since nothing
-  // shipped and the provider cache was not lost.
-  if (gate?.profile) report.cacheProfile = gate.profile;
-  if (escaping) report.escaped = true;
-
-  if (!shouldCompress(messages, config, totalCharsBefore)) {
-    return { messages, report };
-  }
-
   let work = messages;
 
   // Pass 1 - structural (lossless, synchronous, cannot throw).
@@ -1326,7 +1292,7 @@ export async function compressMessages(
   // discard the structural/truncate savings nor break the model call.
   if (config.level === 'summarize' && !opts.summarizeDisabled && totalCharsBefore > config.maxContextChars) {
     try {
-      const summarized = await summarizePass(work, config.protectedTurns, config, deps, state, taskId, { frozen: gate?.frozen, escaping });
+      const summarized = await summarizePass(work, config.protectedTurns, config, deps, state, taskId, { frozen: opts.cache?.frozen, escaping });
       report.summarizeChars = summarized.removedChars;
       report.summarizedRanges = summarized.summarizedRanges;
       report.summarizeCalls = summarized.summarizeCalls;
@@ -1344,18 +1310,90 @@ export async function compressMessages(
   }
 
   report.totalCharsAfter = messagesChars(work);
+  return { messages: work, report };
+}
+
+export async function compressMessages(
+  messages: ContextMessage[],
+  config: Config,
+  deps: SummarizeDeps,
+  state: CompressState,
+  taskId: string,
+  opts: CompressOptions = {},
+): Promise<{ messages: ContextMessage[]; report: CompressReport }> {
+  const totalCharsBefore = messagesChars(messages);
+  const gate = opts.cache;
+
+  // An under-budget run releases the escape hatch even when no passes run
+  if (gate?.escape?.locked && totalCharsBefore <= config.maxContextChars) {
+    gate.escape.locked = false;
+  }
+
+  if (!shouldCompress(messages, config, totalCharsBefore)) {
+    const report = emptyReport(totalCharsBefore);
+    if (gate?.profile) report.cacheProfile = gate.profile;
+    return { messages, report };
+  }
+
+  const validate = opts.validate ?? validateContext;
+  const isInputValid = validate(messages).length === 0;
+
+  const isCacheMode = !!(gate?.frozen && gate.escape);
+  let runResult = await executePasses(
+    messages,
+    config,
+    deps,
+    state,
+    taskId,
+    opts,
+    totalCharsBefore,
+    gate?.frozen,
+    false,
+  );
+
+  let didEscape = false;
+  // Escape hatch (option B):
+  // When cache mode is active and the cache-preserving candidate output is over budget
+  // (or if input was over budget and candidate could not reduce below budget):
+  if (isCacheMode && gate.escape) {
+    const candidateOver = runResult.report.totalCharsAfter > config.maxContextChars || totalCharsBefore > config.maxContextChars;
+    const canEscape = (config.cache?.escapeHatch ?? true) && !gate.escape.locked;
+
+    if (candidateOver && canEscape) {
+      // Execute un-frozen escape run as a pending transaction
+      const escapeResult = await executePasses(
+        messages,
+        config,
+        deps,
+        state,
+        taskId,
+        opts,
+        totalCharsBefore,
+        undefined,
+        true,
+      );
+
+      // CACHE-002: Validate escape candidate BEFORE mutating state or resetting ledger!
+      const escapeFailures = validate(escapeResult.messages);
+      if (escapeFailures.length === 0 || !isInputValid) {
+        // Validation succeeded: commit escape transaction
+        gate.escape.locked = true;
+        gate.escape.onEscape?.();
+        escapeResult.report.escaped = true;
+        runResult = escapeResult;
+        didEscape = true;
+      }
+    }
+  }
+
+  let { messages: work, report } = runResult;
+  if (gate?.profile) report.cacheProfile = gate.profile;
 
   // ContextValidator (review P0): the pipeline must never INTRODUCE a broken
   // context. Revert happens only when the OUTPUT violates pairing/identity
-  // invariants while the INPUT was sound - i.e. a pass broke it. When the
-  // input was already corrupt, the provider call fails either way (that is a
-  // pre-existing host/history condition, not something compression caused),
-  // and reverting would silently disable broke for every subsequent call on
-  // that task - so the compressed output ships unchanged. Fail-safe over
-  // fail-broken, without turning the guard into a compression kill-switch.
-  const validate = opts.validate ?? validateContext;
+  // invariants while the INPUT was sound - i.e. a pass broke it.
   const outputFailures = validate(work);
-  if (outputFailures.length > 0 && validate(messages).length === 0) {
+  if (outputFailures.length > 0 && isInputValid) {
     opts.onValidationFailure?.(
       `broke: context validation failed (${formatValidationFailures(outputFailures)}) - reverting to the uncompressed context`,
     );
@@ -1366,6 +1404,14 @@ export async function compressMessages(
     reverted.summarizerOutputChars = report.summarizerOutputChars;
     if (report.summarizer !== 'none') reverted.summarizer = report.summarizer;
     return { messages, report: reverted };
+  }
+
+  // CACHE-001: Re-arm escape hatch if this run did not escape and the output
+  // successfully fits within budget (hysteresis based on effective output).
+  if (isCacheMode && gate.escape && !didEscape) {
+    if (report.totalCharsAfter <= config.maxContextChars && gate.escape.locked) {
+      gate.escape.locked = false;
+    }
   }
 
   report.touched =

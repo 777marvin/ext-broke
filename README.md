@@ -441,9 +441,12 @@ byte-stable, so the provider's prompt cache keeps hitting between calls:
   else keeps the plain behavior.
 - The **escape hatch** (`cache.escapeHatch`) is the one sanctioned cache
   loss: a run that starts over `maxContextChars` gets exactly ONE
-  deliberate full rewrite, the hatch locks until a run starts under budget
-  again (hysteresis), and the cache re-stabilizes on that run's output.
+  deliberate full rewrite, the hatch locks until a run fits under budget
+  again (hysteresis / re-arming), and the cache re-stabilizes on that run's output.
+  Escape operations are transactional: if output validation fails, changes revert
+  cleanly without locking the hatch or dropping cache state.
   With the hatch off, sent bytes are never rewritten - even over budget.
+
 
 The badge gear (⚙) opens a quick settings overlay with the core knobs;
 the settings dialog offers inline tooltips and presets (Standard /
@@ -572,6 +575,10 @@ as any file-read tool result. The persisted index contains no file text
 editing/removing the FILE itself; nothing searchable lingers in
 `index/`. Queries run live against disk, honoring the same skip rules in
 every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
+The indexer and snippet reader strictly enforce workspace confinement
+via canonical `realpath` validation, rejecting symlinks that resolve outside
+the workspace root or target sensitive paths (`.env`, dot-directories, skipped folders).
+
 
 ## Configuration
 

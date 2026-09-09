@@ -469,3 +469,27 @@ Findings from the hostile external review of 2026-08-29 (baseline commit
 - **BRK-027 residual**: guarantee claims are audited per commit that changes them (BRK-027 principle); the 1.1.0 docs truth pass (P3-H) is done, a full docs pass remains tracked.
 
 Manual follow-ups from R1 (D6): protected `v*` tags, `release` environment approval, branch-protection required checks - environment approval is LIVE since the v1.0.0 release.
+
+---
+
+# External Review Round 4 - 2026-09-09 (v1.2.0 Hardening)
+
+Comprehensive technical code, architecture, and security review of release v1.2.0 (commit `352755f21a762dfe20abcabdb8c6b3843c9925e5`).
+All findings verified, remediated, and covered with automated tests.
+
+| Finding | Severity | Component | Status | Summary of Fix |
+|---|---|---|---|---|
+| **SEC-001** | 🔴 P0 (Critical) | Indexer / Security | **Closed** | Symlink traversal outside workspace blocked in `indexer.ts` via canonical `realpathSync` containment (`isSafeWorkspaceFile`). |
+| **CACHE-001** | 🟠 P1 (High) | Compression / Cache | **Closed** | Escape hatch permanent locking on monotonic history fixed in `compress.ts`; re-arms when run is within budget without escaping. |
+| **CACHE-002** | 🟠 P1 (High) | Compression / Cache | **Closed** | Non-transactional escape state mutation in `compress.ts` fixed; validates before committing escape state or invoking `onEscape`. |
+| **DATA-001** | 🟠 P1 (High) | Migration / Storage | **Closed** | `paths.ts` directory rename failure now uses recursive `cpSync`+`rmSync` fallback; `.migrated-v1` marker written only on full success. |
+| **CONF-001** | 🟡 P2 (Medium) | Config | **Closed** | `config.ts` deep-clones `cache` block in `applyConfigUpdates` to avoid caller input object mutation. |
+| **CACHE-003** | 🟡 P2 (Medium) | Cache / LRU | **Closed** | Task ledger in `cache.ts` acts as true LRU by refreshing key recency on touch (`delete` + `set`). |
+| **CONF-002** | 🟡 P2 (Medium) | Config | **Closed** | `config.ts` `getConfig()` treats deleted config (`ENOENT`) by clearing memory cache and reloading defaults. |
+| **OBS-001** | ⚪ P3 (Low) | Indexer / Metrics | **Closed** | `indexer.ts` `mergeIntoState` only increments `added`/`updated` counters on successful document indexing. |
+| **TEST-001** | 🟡 P2 (Medium) | Test / CI | **Closed** | Strict coverage floors in `package.json` replace dummy `--lines 0` gates; `cache.ts`, `config.ts`, `paths.ts` included. |
+| **TEST-002** | 🟡 P2 (Medium) | Tests / Scenarios | **Closed** | Multi-run scenario and regression tests added for symlinks, cache transitions, validation revert, LRU, and migration errors. |
+| **SUP-001** | 🟠 P1 (High) | CI/CD / Security | **Closed** | `.github/workflows/release.yml` replaces `secrets: inherit` with explicit `BROKE_RELEASE_SIGNING_KEY` secret mapping. |
+| **SUP-002** | 🟡 P2 (Medium) | Supply Chain | **Closed** | `.github/dependabot.yml` configured for weekly automated updates of `npm` and `github-actions`. |
+| **SUP-003** | ⚪ P3 (Low) | CI/CD / Security | **Closed** | `.github/workflows/ci.yml` `deps-current` job adds `--ignore-scripts` to `npm install @aiderdesk/extensions@latest`. |
+

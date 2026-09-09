@@ -64,12 +64,17 @@ export function markSent(taskId: string, messages: readonly ContextMessage[]): v
   if (!taskId || !Array.isArray(messages)) return;
   let ledger = ledgers.get(taskId);
   if (!ledger) {
-    ledgers.set(taskId, ledger = new Map());
+    ledger = new Map();
+    ledgers.set(taskId, ledger);
     // LRU over tasks: evict the least recently touched ledger.
     if (ledgers.size > MAX_TASKS) {
       const oldest = ledgers.keys().next().value;
       if (oldest !== undefined) ledgers.delete(oldest);
     }
+  } else {
+    // Delete-then-set keeps Map insertion order = recency order.
+    ledgers.delete(taskId);
+    ledgers.set(taskId, ledger);
   }
   for (const msg of messages) {
     if (!msg || typeof msg !== 'object') continue;
@@ -93,6 +98,9 @@ export function isSent(taskId: string, msg: ContextMessage): boolean {
   if (!taskId || !msg || typeof msg !== 'object') return false;
   const ledger = ledgers.get(taskId);
   if (!ledger) return false;
+  // Delete-then-set keeps Map insertion order = recency order.
+  ledgers.delete(taskId);
+  ledgers.set(taskId, ledger);
   return ledger.has(hashOf(serialize(msg)));
 }
 

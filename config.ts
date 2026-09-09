@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -402,7 +402,11 @@ export function getConfig(): Config {
     try {
       const mtime = statSync(CONFIG_PATH).mtimeMs;
       if (mtime === cachedConfigMtimeMs) return cachedConfig;
-    } catch {
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        invalidateConfigCache();
+        return loadConfigFile(CONFIG_PATH).config;
+      }
       return cachedConfig; // transient stat failure - serve the cache
     }
   }
@@ -438,6 +442,7 @@ export function invalidateConfigCache(): void {
 export function saveConfig(config: Config, filePath: string = CONFIG_PATH): void {
   const tmpPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
+    mkdirSync(dirname(filePath), { recursive: true });
     // mode 0o600 (POSIX): config can hold summarizer endpoints; owner-only is
     // the least-surprise default for sensitive local state (review R8).
     writeFileSync(tmpPath, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 });
@@ -489,6 +494,7 @@ export function applyConfigUpdates(current: Config, updates: Array<[string, unkn
     snapshot: { ...current.snapshot },
     flush: { ...current.flush },
     search: { ...current.search },
+    cache: { ...current.cache },
   };
   for (const [path, value] of updates) {
     const parts = path.split('.');

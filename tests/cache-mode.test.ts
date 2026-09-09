@@ -379,6 +379,87 @@ describe('escape hatch state machine (pipeline)', () => {
       assert.equal(escape.locked, false, 'hatch never engages');
     }
   });
+
+  it('CACHE-002: escape state is NOT locked and ledger is NOT reset if validator rejects output', async () => {
+    const state = createCompressState();
+    let escapes = 0;
+    const escape = { locked: false, onEscape: (): void => void escapes++ };
+    let shouldReject = true;
+    const rejectingValidate = (messages: ContextMessage[]) => {
+      if (shouldReject && bytes(messages).includes('[broke: truncated')) {
+        return [{ index: 0, reason: 'test simulated corruption' }];
+      }
+      return [];
+    };
+
+    const opts = {
+      cache: { frozen, escape, profile: 'anthropic' as const },
+      validate: rejectingValidate,
+    };
+
+    const r1 = await compressMessages(msgs(), cfg(), deps, state, 'esc-fail', opts);
+    assert.equal(r1.report.escaped, undefined, 'report does NOT flag escaped because output was reverted');
+    assert.equal(escape.locked, false, 'escape is NOT locked after validator rejection');
+    assert.equal(escapes, 0, 'onEscape did NOT fire');
+    assert.ok(bytes(r1.messages).includes(big), 'uncompressed messages returned');
+
+    shouldReject = false;
+    const r2 = await compressMessages(msgs(), cfg(), deps, state, 'esc-fail', opts);
+    assert.equal(r2.report.escaped, true, 'subsequent run successfully escapes');
+    assert.equal(escape.locked, true, 'hatch is locked after successful escape');
+    assert.equal(escapes, 1, 'onEscape fired once');
+    assert.ok(bytes(r2.messages).includes('[broke: truncated'), 'messages rewritten');
+  });
+
+  it('CACHE-001: monotonic history allows subsequent escapes when history re-exceeds budget', async () => {
+    const state = createCompressState();
+    let escapes = 0;
+    const escape = { locked: false, onEscape: (): void => void escapes++ };
+
+    const sentSet = new Set<string>();
+    const frozenFn = (m: ContextMessage) => sentSet.has((m as { id?: string }).id ?? '');
+
+    const opts = {
+      cache: { frozen: frozenFn, escape, profile: 'anthropic' as const },
+    };
+
+    // Run 1: starts over budget -> escapes down to ~250 chars.
+    const r1 = await compressMessages(msgs(), cfg(), deps, state, 'esc-mono', opts);
+    assert.equal(r1.report.escaped, true, 'run 1 escapes');
+    assert.equal(escape.locked, true, 'locked after run 1');
+    assert.equal(escapes, 1);
+    for (const m of r1.messages) {
+      if ((m as { id?: string }).id) sentSet.add((m as { id?: string }).id!);
+    }
+
+    // Run 2: Monotonic history! Run 1's messages (frozen) + small new turn (50 chars).
+    // Total input fits within budget -> cache-preserving output fits without escaping -> re-arms hatch!
+    const turn2 = [
+      ...r1.messages,
+      { id: 'u2', role: 'user', content: 'small question' },
+      { id: 'a2', role: 'assistant', content: 'small reply' },
+    ] as ContextMessage[];
+    const r2 = await compressMessages(turn2, cfg(), deps, state, 'esc-mono', opts);
+    assert.equal(r2.report.escaped, undefined, 'run 2 did not need to escape');
+    assert.equal(escape.locked, false, 'run 2 re-arms the hatch because output fits within budget');
+    assert.equal(escapes, 1);
+    for (const m of r2.messages) {
+      if ((m as { id?: string }).id) sentSet.add((m as { id?: string }).id!);
+    }
+
+    // Run 3: Monotonic growth! Add ANOTHER large tool output (800 chars). Total now ~1150 chars (> 500).
+    // Since hatch was re-armed, it can escape again!
+    const turn3 = [
+      ...r2.messages,
+      { id: 't2', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc2', toolName: 'power---bash', output: { type: 'text', value: big } }] },
+      { id: 'u3', role: 'user', content: 'tail' },
+    ] as unknown as ContextMessage[];
+
+    const r3 = await compressMessages(turn3, cfg(), deps, state, 'esc-mono', opts);
+    assert.equal(r3.report.escaped, true, 'run 3 escapes again on second budget crossing!');
+    assert.equal(escape.locked, true, 'locked again after second escape');
+    assert.equal(escapes, 2);
+  });
 });
 
 describe('summarizePass cache gating (unit)', () => {
