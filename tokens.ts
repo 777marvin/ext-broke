@@ -4,6 +4,7 @@ import type { ContextMessage } from '@aiderdesk/extensions';
 import type { CompressReport } from './compress';
 import { partText } from './output';
 import { runtimeDir } from './paths';
+import { cacheAdjustedSavedUsd, savedCostUsd } from './pricing';
 
 // BROKE_STATS_PATH / BROKE_MEASURE_PATH override the defaults (read at
 // module load): tests need isolation from the real ledgers.
@@ -313,6 +314,40 @@ export function createStatsLoader(filePath: string = STATS_PATH, ttlMs: number =
 // only - no paths, no message content (privacy).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+
+/** Provider-reported usage of the most recent completed model call (UsageReportData, task 6). */
+export interface LastCallUsage {
+  sentTokens: number;
+  cacheWriteTokens?: number;
+  cacheReadTokens?: number;
+  messageCost?: number;
+}
+
+/**
+ * Walk backwards to the newest message carrying a usable usageReport - the
+ * provider's own numbers for the call right before this compression run.
+ * Pure and hostile-safe: only finite numbers pass, everything else is
+ * skipped or dropped field-wise.
+ */
+export function lastCallUsage(messages: readonly unknown[]): LastCallUsage | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i] as { usageReport?: { sentTokens?: unknown; cacheWriteTokens?: unknown; cacheReadTokens?: unknown; messageCost?: unknown } } | null | undefined;
+    const u = msg?.usageReport;
+    if (!u || typeof u !== 'object') continue;
+    const sent = u.sentTokens;
+    if (typeof sent !== 'number' || !Number.isFinite(sent)) continue;
+    const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+    return {
+      sentTokens: sent,
+      cacheWriteTokens: num(u.cacheWriteTokens),
+      cacheReadTokens: num(u.cacheReadTokens),
+      messageCost: num(u.messageCost),
+    };
+  }
+  return undefined;
+}
+
 export interface RunRecord {
   kind: 'run';
   taskId: string;
@@ -334,11 +369,20 @@ export interface RunRecord {
   /** Cost side (R10): chars sent to / received from the summarizer LLM. Optional: pre-0.8.0 records lack them. */
   summarizerInputChars?: number;
   summarizerOutputChars?: number;
+  /** Cache-friendly mode: resolved provider profile of the run. Optional: pre-task-6 records lack it. */
+  cacheProfile?: 'anthropic' | 'openai' | 'off';
+  /** True when this run was an escape-hatch rewrite (deliberate cache invalidation). */
+  escaped?: boolean;
+  /** Provider-reported usage of the most recent completed call BEFORE this run. Optional: pre-task-6 records lack them. */
+  lastSentTokens?: number;
+  lastCacheWriteTokens?: number;
+  lastCacheReadTokens?: number;
+  lastMessageCost?: number;
 }
 
 /** Map a compression report to its measurement record (pure). */
-export function buildRunRecord(taskId: string, report: CompressReport): RunRecord {
-  return {
+export function buildRunRecord(taskId: string, report: CompressReport, lastUsage?: LastCallUsage): RunRecord {
+  const rec: RunRecord = {
     kind: 'run',
     taskId,
     at: Date.now(),
@@ -354,6 +398,17 @@ export function buildRunRecord(taskId: string, report: CompressReport): RunRecor
     summarizerInputChars: report.summarizerInputChars,
     summarizerOutputChars: report.summarizerOutputChars,
   };
+  // Cache-friendly facts stay ABSENT (not zeroed) when unknown - old records
+  // and 'off'-profile runs keep their exact historical shape.
+  if (report.cacheProfile) rec.cacheProfile = report.cacheProfile;
+  if (report.escaped) rec.escaped = true;
+  if (lastUsage) {
+    rec.lastSentTokens = lastUsage.sentTokens;
+    if (lastUsage.cacheWriteTokens !== undefined) rec.lastCacheWriteTokens = lastUsage.cacheWriteTokens;
+    if (lastUsage.cacheReadTokens !== undefined) rec.lastCacheReadTokens = lastUsage.cacheReadTokens;
+    if (lastUsage.messageCost !== undefined) rec.lastMessageCost = lastUsage.messageCost;
+  }
+  return rec;
 }
 
 /** Append one run record to the measurement ledger (rotation-capped, best effort). */
@@ -404,6 +459,23 @@ export interface MeasureSummary {
   summarizerOutputChars: number;
   /** Per-task breakdown, sorted by savedChars descending. */
   byTask: Array<{ taskId: string; runs: number; savedChars: number }>;
+  /** Escape-hatch rewrites among the records (deliberate cache invalidations). */
+  escapes: number;
+  /** Provider-reported cache usage, summed over the per-run "last call" snapshots. */
+  lastCacheWriteTokens: number;
+  lastCacheReadTokens: number;
+  /** Provider-reported USD billed, summed over the same snapshots. */
+  lastMessageCost: number;
+  /** Estimated saved USD at the current task model price (plain input rate). Optional: needs a known price. */
+  savedUsd?: number;
+  /** Same, priced with the provider's cache-write multiplier (cache-adjusted). */
+  cacheSavedUsd?: number;
+}
+
+/** Aggregation options (task 6): thread the task's model price + cache profile in. */
+export interface MeasureSummaryOptions {
+  inputPerMToken?: number | null;
+  cacheProfile?: 'anthropic' | 'openai' | 'off';
 }
 
 /**
@@ -412,7 +484,7 @@ export interface MeasureSummary {
  * same region is compressed again on every model call). Returns null when
  * there are no records.
  */
-export function summarizeRunRecords(records: RunRecord[]): MeasureSummary | null {
+export function summarizeRunRecords(records: RunRecord[], opts?: MeasureSummaryOptions): MeasureSummary | null {
   if (records.length === 0) return null;
   const savedPerRun = records.map((r) => r.savedChars);
   const sorted = [...savedPerRun].sort((a, b) => a - b);
@@ -429,7 +501,13 @@ export function summarizeRunRecords(records: RunRecord[]): MeasureSummary | null
   const charsAfter = records.reduce((sum, r) => sum + r.charsAfter, 0);
   const savedChars = records.reduce((sum, r) => sum + r.savedChars, 0);
   const ats = records.map((r) => r.at).sort((a, b) => a - b);
-  return {
+  // Hostile-record safe: a malformed optional field contributes 0, not NaN.
+  const sumNum = (pick: (r: RunRecord) => number | undefined): number =>
+    records.reduce((s, r) => {
+      const v = pick(r);
+      return s + (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    }, 0);
+  const result: MeasureSummary = {
     runs: records.length,
     tasks: byTask.size,
     spanMs: ats.length > 1 ? ats[ats.length - 1] - ats[0] : 0,
@@ -446,5 +524,15 @@ export function summarizeRunRecords(records: RunRecord[]): MeasureSummary | null
     byTask: [...byTask.entries()]
       .map(([taskId, entry]) => ({ taskId, runs: entry.runs, savedChars: entry.savedChars }))
       .sort((a, b) => b.savedChars - a.savedChars),
+    escapes: records.reduce((s, r) => s + (r.escaped === true ? 1 : 0), 0),
+    lastCacheWriteTokens: sumNum((r) => r.lastCacheWriteTokens),
+    lastCacheReadTokens: sumNum((r) => r.lastCacheReadTokens),
+    lastMessageCost: sumNum((r) => r.lastMessageCost),
   };
+  if (typeof opts?.inputPerMToken === 'number' && opts.inputPerMToken > 0) {
+    const savedTokens = estimateTokens(savedChars);
+    result.savedUsd = savedCostUsd(savedTokens, opts.inputPerMToken);
+    result.cacheSavedUsd = cacheAdjustedSavedUsd(savedTokens, opts.inputPerMToken, opts.cacheProfile ?? 'off');
+  }
+  return result;
 }

@@ -5,6 +5,47 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-09
+
+Cache-friendly mode: broke now respects provider prompt caching so the
+biggest hidden cost of aggressive compression - rewriting an already-cached
+prefix on every call - disappears. Claude bills cache writes at 1.25x and
+hits at 0.1x, GPT/o-models bill cached input at 0.5x; keeping the sent
+prefix byte-stable is worth more than every other optimization combined
+for long-running tasks.
+
+### Added
+
+- Cache-friendly mode (`cache.profile: off | auto | anthropic | openai`,
+  default off - explicit opt-in): a per-task sent-ledger freezes every byte
+  already sent to the model. Structural merges re-derive identical bytes,
+  error/truncate passes skip frozen outputs, and the summarize pass
+  re-serves the cached summary byte-identically and appends new turns
+  verbatim instead of regenerating over sent bytes. `auto` detects the
+  rules from the task model (Claude -> Anthropic rules, GPT/o-models ->
+  OpenAI rules, anything else stays plain).
+- Escape hatch (`cache.escapeHatch`, default on): a run that starts over
+  `maxContextChars` gets exactly ONE deliberate full rewrite (the provider
+  cache is lost once), then locks until a run starts under budget again -
+  so a stuck-over-budget task cannot invalidate the cache on every call.
+  With the hatch off, sent bytes are never rewritten, even over budget.
+- Settings UI: a "Provider prompt cache" section with inline onboarding
+  tooltips, three one-click presets (Standard / Cache-optimiert / Maximal
+  komprimiert) and a gear button on the status badge opening a broke-owned
+  settings overlay with the core knobs - saved through the same
+  schema-validated path as the settings dialog.
+- Measure ledger: per-run records now carry the resolved cache profile, the
+  escape flag and the provider-reported usage of the last completed call
+  (cache write/read tokens, billed cost) instead of a chars/4 guess.
+  `/broke measure` reports escape rewrites, the provider cache snapshot and
+  a cache-adjusted savings estimate (removed tokens priced as new input
+  incl. the write premium).
+
+### Fixed
+
+- `/broke reset` now also clears the sent-ledger and the escape-hatch
+  state, so a reset task starts cache-fresh.
+
 ## [1.1.0] - 2026-08-29
 
 First release shaped entirely by external review round 3 (BRK-016..030).

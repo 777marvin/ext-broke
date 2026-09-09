@@ -424,6 +424,32 @@ After 3 consecutive summarize failures, broke disables summarization for
 that task and tells you why. The badge tooltip shows the disabled state;
 `/broke reset` or changing the summarizer backend/model re-enables it.
 
+### Cache-friendly mode (provider prompt cache)
+
+Claude bills cache **writes** at 1.25x and cache **hits** at 0.1x; GPT and
+o-models bill cached input at 0.5x. Every recompressed byte therefore costs
+real money: a rewritten prefix re-writes the whole cache. Cache-friendly
+mode (`cache.profile`) keeps every byte that was already sent to the model
+byte-stable, so the provider's prompt cache keeps hitting between calls:
+
+- `anthropic` / `openai`: the sent-ledger freezes already-sent messages.
+  Structural merges re-derive identical bytes, the error/truncate passes
+  skip frozen outputs, and the summarize pass re-serves the cached summary
+  and appends new turns verbatim instead of regenerating over sent bytes.
+- `auto` (recommended): detects the rules from the task model - Claude
+  models get the Anthropic rules, GPT/o-models the OpenAI ones, anything
+  else keeps the plain behavior.
+- The **escape hatch** (`cache.escapeHatch`) is the one sanctioned cache
+  loss: a run that starts over `maxContextChars` gets exactly ONE
+  deliberate full rewrite, the hatch locks until a run starts under budget
+  again (hysteresis), and the cache re-stabilizes on that run's output.
+  With the hatch off, sent bytes are never rewritten - even over budget.
+
+The badge gear (⚙) opens a quick settings overlay with the core knobs;
+the settings dialog offers inline tooltips and presets (Standard /
+Cache-optimiert / Maximal komprimiert). `/broke measure` reports escape
+rewrites plus the provider-reported cache tokens (writes / reads / billed).
+
 ### ST-slicing (tool-level, opt-in)
 
 Independent of the input pipeline, `slice.enabled` (default **off**)
@@ -555,6 +581,8 @@ every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
 | level | `truncate` | structural / truncate / summarize |
 | maxContextChars | 60000 | ≈15k tokens, engages lossy passes |
 | protectedTurns | 2 | last N user turns never compressed |
+| cache.profile | `off` | off / auto / anthropic / openai - keep the provider prompt cache hitting (see Cache-friendly mode) |
+| cache.escapeHatch | on | one deliberate cache-invalidating rewrite on real budget overruns |
 | truncate.maxLines / maxKB | 200 / 20 | old tool output limits |
 | truncate.maxInputChars | 2000 | tool-call input trim threshold |
 | errors.enabled | on | stack-trace/log compression |

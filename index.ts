@@ -26,7 +26,8 @@ import {
   type CompressState,
   type SummarizeDeps,
 } from './compress';
-import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, saveConfig, type Config } from './config';
+import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, resolveCacheProfile, saveConfig, type Config } from './config';
+import { clearTask, isSent, markSent } from './cache';
 import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
 import {
@@ -80,6 +81,7 @@ import {
   createStatsLoader,
   emptyStats,
   estimateTokens,
+  lastCallUsage,
   loadRunRecords,
   persistRunRecord,
   persistStats,
@@ -88,6 +90,7 @@ import {
   messagesChars,
   type StatsLoader,
   type TaskStats,
+  type LastCallUsage,
 } from './tokens';
 import { boundedMapSet } from './compress';
 import { runUpdate } from './update';
@@ -181,6 +184,8 @@ export default class Broke implements Extension {
   private readonly summarizeFailures = new Map<string, number>();
   /** Tasks whose summarize pass is auto-disabled after repeated failures. */
   private readonly summarizeDisabled = new Map<string, true>();
+  /** Per-task escape-hatch state (cache-friendly mode, option B). */
+  private readonly escapeByTask = new Map<string, { locked: boolean; onEscape?: () => void }>();
   /**
    * Last optimize-run observation per task - recorded for EVERY real
    * pipeline run, including no-op runs where nothing was compressed. This
@@ -350,13 +355,36 @@ export default class Broke implements Extension {
 
     this.optimizingTasks.add(taskId);
     try {
+      // Cache-friendly mode: resolve the provider cache profile from config
+      // (explicit) and task metadata (auto), then freeze every message whose
+      // exact bytes were already sent to the model. 'off' keeps the
+      // historical behavior with no ledger traffic. The escape hatch state
+      // is per task: one deliberate cache-invalidating rewrite per budget
+      // crossing, locked until a run ships under budget again (see
+      // compressMessages) - onEscape resets the ledger so the cache
+      // re-stabilizes on the escape run's output.
+      const profile = resolveCacheProfile(config, { provider: task.data.provider, model: task.data.model ?? task.data.mainModel });
+      let escapeState = this.escapeByTask.get(taskId);
+      if (!escapeState) {
+        escapeState = { locked: false, onEscape: () => clearTask(taskId) };
+        this.escapeByTask.set(taskId, escapeState);
+      }
+      const cacheOpts = profile === 'off' ? undefined : { frozen: (msg: import('@aiderdesk/extensions').ContextMessage) => isSent(taskId, msg), escape: escapeState, profile };
       const { messages, report } = await compressMessages(event.optimizedMessages, config, deps, this.state, taskId, {
         summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
+        cache: cacheOpts,
       });
+      // Record what THIS run is about to send so the next run can keep these
+      // bytes stable. Marking happens for the unchanged path too - identity
+      // output is exactly the prefix the next run must preserve.
+      if (profile !== 'off') markSent(taskId, messages);
       // Price lookup only when something was actually compressed (it is
       // cached afterwards; the badge warms it on task open).
       const price = report.touched ? await resolveTaskModelPrice(context) : null;
-      this.recordReport(taskId, report, price);
+      // Provider-reported usage of the last completed call: real cache
+      // write/read tokens flow into the measure ledger (task 6) instead of a
+      // chars/4 guess.
+      this.recordReport(taskId, report, price, lastCallUsage(event.originalMessages));
       // Observe every real pipeline run - touched or not. No-op runs are
       // still facts the UI needs: they are how a zero badge explains itself.
       boundedMapSet(this.lastObservation, taskId, { at: Date.now(), inputChars: report.totalCharsBefore });
@@ -789,7 +817,7 @@ export default class Broke implements Extension {
     }
   }
 
-  private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null): void {
+  private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null, lastUsage?: LastCallUsage): void {
     // No-op runs (nothing compressed, nothing attempted) are not compression
     // runs: counting them inflates `passes` and appends a stats line on
     // EVERY model call.
@@ -848,7 +876,7 @@ export default class Broke implements Extension {
     // Per-run measurement ledger (NOT throttled - one record per real run is
     // the point). Rotation-capped like stats.jsonl, config-gated, best effort.
     if (getConfig().stats.measure) {
-      persistRunRecord(buildRunRecord(taskId, report));
+      persistRunRecord(buildRunRecord(taskId, report, lastUsage));
     }
 
     const savedChars = report.structuralChars + report.errorChars + report.truncateChars + report.summarizeChars;
@@ -1016,6 +1044,10 @@ export default class Broke implements Extension {
                 ext.state.cachedSummaryByTask.delete(taskId);
                 ext.summarizeFailures.delete(taskId);
                 ext.summarizeDisabled.delete(taskId);
+                // Cache-friendly state: forget which bytes were sent and
+                // unlock the escape hatch - a reset task starts fresh.
+                clearTask(taskId);
+                ext.escapeByTask.delete(taskId);
               }
               return log('broke: stats cleared for this task (incl. persisted history; summarization re-enabled)');
             }
@@ -1093,7 +1125,15 @@ export default class Broke implements Extension {
             case 'flush':
               return log(await ext.handleFlushCommand(context, cmd));
             case 'measure': {
-              const summary = summarizeRunRecords(loadRunRecords());
+              // Cost estimates use the CURRENT task model + cache profile -
+              // never a stored one; without a price only token figures show.
+              const task = context.getTaskContext();
+              const measureProfile = resolveCacheProfile(config, { provider: task?.data.provider, model: task?.data.model ?? task?.data.mainModel });
+              const measurePrice = await resolveTaskModelPrice(context);
+              const summary = summarizeRunRecords(loadRunRecords(), {
+                inputPerMToken: measurePrice?.inputPerMToken ?? null,
+                cacheProfile: measureProfile,
+              });
               return log(formatMeasure(summary));
             }
             case 'help':
@@ -1639,10 +1679,22 @@ export default class Broke implements Extension {
   /**
    * UI component actions. 'refresh' is the polling fallback used by the
    * badge interval: it forces the renderer to re-fetch the component data
-   * even when a push event (triggerUIDataRefresh) was missed.
+   * even when a push event (triggerUIDataRefresh) was missed. 'getConfig' /
+   * 'setConfig' back the badge settings overlay (task 7) - setConfig runs
+   * the SAME validated path as the settings dialog: an out-of-schema value
+   * is logged, rejected and the previous config is kept.
    */
-  async executeUIExtensionAction(_componentId: string, action: string, _args: unknown[], _context: ExtensionContext): Promise<unknown> {
+  async executeUIExtensionAction(_componentId: string, action: string, args: unknown[], _context: ExtensionContext): Promise<unknown> {
     if (action === 'refresh') this.refreshUI();
+    if (action === 'getConfig') return getConfig();
+    if (action === 'setConfig') {
+      // saveConfigData returns the PREVIOUS config when the schema rejected
+      // the value - the overlay must SEE that rejection instead of silently
+      // looking saved, so surface it as an ok flag.
+      const before = getConfig();
+      const after = await this.saveConfigData(args[0]);
+      return { ok: after !== before, config: after };
+    }
     return null;
   }
 

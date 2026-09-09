@@ -635,6 +635,23 @@ export function formatMeasure(summary: MeasureSummary | null): string {
       `  estimated NET savings after summarizer traffic: ≈ ${net.toLocaleString('en-US')} tokens (gross ≈ ${savedGross.toLocaleString('en-US')}; actual billing also depends on caching and model prices)`,
     );
   }
+  if (summary.escapes > 0) {
+    lines.push(`  escape rewrites: ${summary.escapes} (deliberate cache invalidations - the following run re-stabilizes the cache)`);
+  }
+  if (summary.lastCacheWriteTokens > 0 || summary.lastCacheReadTokens > 0 || summary.lastMessageCost > 0) {
+    lines.push(
+      `  provider-reported cache (snapshot of each run's last call): ${summary.lastCacheWriteTokens.toLocaleString('en-US')} tok written | ${summary.lastCacheReadTokens.toLocaleString('en-US')} tok read | ${formatUsd(summary.lastMessageCost)} billed`,
+    );
+  }
+  if (summary.savedUsd !== undefined && summary.savedUsd > 0) {
+    // Cache-adjusted view: removed tokens priced as new input incl. the
+    // write premium. Only shown when it actually differs from plain pricing.
+    const cachePart =
+      summary.cacheSavedUsd !== undefined && Math.abs(summary.cacheSavedUsd - summary.savedUsd) > 1e-9
+        ? ` (cache-adjusted: ${formatUsd(summary.cacheSavedUsd)})`
+        : '';
+    lines.push(`  estimated saved cost: ${formatUsd(summary.savedUsd)}${cachePart} at current task model price`);
+  }
   if (summary.byTask.length > 0) {
     lines.push('  per task:');
     for (const t of summary.byTask.slice(0, 5)) {

@@ -10,6 +10,7 @@ import {
   mergeConfig,
   saveConfig,
   updateConfigPaths,
+  resolveCacheProfile,
   type Config,
 } from '../config';
 
@@ -267,5 +268,61 @@ describe('search config block (F4)', () => {
     assert.throws(() => mergeConfig({ search: { maxChars: 400 } }), /maxChars/i);
     assert.throws(() => mergeConfig({ search: { maxChars: 100_000 } }), /maxChars/i);
     assert.throws(() => mergeConfig({ search: { maxFileKB: 4096 } }), /maxFileKB/i);
+  });
+});
+
+describe('cache block', () => {
+  it('defaults to off (opt-in like every behavior-changing pass) with the escape hatch armed', () => {
+    const cfg = mergeConfig({});
+    assert.equal(cfg.cache.profile, 'off');
+    assert.equal(cfg.cache.escapeHatch, true);
+  });
+
+  it('fills the cache block with defaults even when the block is missing entirely', () => {
+    const cfg = mergeConfig({ maxContextChars: 12345 });
+    assert.equal(cfg.cache.profile, 'off');
+    assert.equal(cfg.cache.escapeHatch, true);
+  });
+
+  it('accepts every documented profile and rejects unknown ones', () => {
+    for (const profile of ['auto', 'anthropic', 'openai', 'off'] as const) {
+      assert.equal(mergeConfig({ cache: { profile } }).cache.profile, profile);
+    }
+    assert.throws(() => mergeConfig({ cache: { profile: 'gemini' } }), /profile/i);
+  });
+});
+
+describe('resolveCacheProfile', () => {
+  it('uses an explicit profile without consulting the hints', () => {
+    assert.equal(resolveCacheProfile({ cache: { profile: 'openai' } }, { provider: 'anthropic', model: 'claude-sonnet-4' }), 'openai');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'anthropic' } }, { provider: 'openai', model: 'gpt-4o' }), 'anthropic');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'off' } }, { provider: 'anthropic', model: 'claude-sonnet-4' }), 'off');
+  });
+
+  it('auto: sniffs the MODEL first - cache behavior follows the model, not the aggregator', () => {
+    // claude behind an aggregator/proxy still has Anthropic-style caching.
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: 'openrouter', model: 'anthropic/claude-sonnet-4' }), 'anthropic');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: 'bedrock', model: 'anthropic.claude-3-5-sonnet-20240620-v1:0' }), 'anthropic');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: 'azure', model: 'gpt-4o' }), 'openai');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: 'openai', model: 'o3-mini' }), 'openai');
+  });
+
+  it('auto: falls back to the provider name when the model does not match a known family', () => {
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: 'anthropic' }), 'anthropic');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: 'openai' }), 'openai');
+    // Local runtimes have no paid cache economics - no reason to restrain passes.
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: 'ollama', model: 'qwen2.5-coder:3b' }), 'off');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: 'lmstudio' }), 'off');
+  });
+
+  it('auto: unknown provider and unmatched model resolve to off (current behavior, no risk)', () => {
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: 'neuralwatt', model: 'some-new-model' }), 'off');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, {}), 'off');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: '', model: '' }), 'off');
+  });
+
+  it('never throws on odd hints (host surface must stay unbreakable)', () => {
+    assert.doesNotThrow(() => resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: undefined as unknown as string, model: 42 as unknown as string }));
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: undefined as unknown as string, model: 42 as unknown as string }), 'off');
   });
 });

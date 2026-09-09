@@ -183,6 +183,39 @@ const UiSchema = z.object({
 });
 const uiDefault = UiSchema.parse({});
 
+/**
+ * Cache-friendly mode (prompt-caching awareness). Provider prompt caches are
+ * prefix-based: ANY change to already-sent history invalidates the cached
+ * prefix - at Anthropic even with a ~1.25x write premium for rebuilding it.
+ * The cache block makes broke cache-aware: sent messages become immutable
+ * (sent-ledger), and only a real budget overrun may trigger one deliberate,
+ * cost-weighed rewrite (escapeHatch).
+ */
+const CacheSchema = z.object({
+  /**
+   * Which provider cache rules to apply:
+   * - 'off':       current behavior, no cache awareness (default - opt-in
+   *                like every behavior-changing pass)
+   * - 'anthropic': strictest sent-prefix immutability; pricing assumes
+   *                write ~1.25x / read ~0.1x
+   * - 'openai':    same immutability rules, cheaper invalidation (auto
+   *                caching, read ~0.5x, no write premium)
+   * - 'auto':      resolve from task metadata (model sniff first - cache
+   *                behavior follows the model, not the aggregator - then the
+   *                provider name); unknown => 'off'
+   */
+  profile: z.enum(['auto', 'anthropic', 'openai', 'off']).default('off'),
+  /**
+   * When totalChars exceeds maxContextChars, allow ONE deliberate rewrite
+   * pass (known, accepted cache loss) instead of leaving the overrun in
+   * place. Re-arms only after the budget is under-run again (hysteresis).
+   * false = hard promise: sent bytes are never touched, overrun stays until
+   * the user intervenes.
+   */
+  escapeHatch: z.boolean().default(true),
+});
+const cacheDefault = CacheSchema.parse({});
+
 const StatsSchema = z.object({
   /**
    * Append one record per real compression run to measure.jsonl (taskId,
@@ -228,11 +261,36 @@ export const ConfigSchema = z.object({
   snapshot: SnapshotSchema.default(snapshotDefault),
   flush: FlushSchema.default(flushDefault),
   search: SearchSchema.default(searchDefault),
+  cache: CacheSchema.default(cacheDefault),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
 
 export const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
+
+/**
+ * Provider cache profile resolution (pure, host-surface safe).
+ * Precedence: explicit profile > model sniff > provider name > 'off'.
+ * The model sniff comes first because cache behavior follows the MODEL:
+ * a claude-* model behind openrouter/bedrock still has Anthropic-style
+ * prefix caching, a gpt-* model on azure still has OpenAI auto-caching.
+ * Unknown or local providers resolve to 'off' - no paid cache economics,
+ * no reason to restrain the passes.
+ */
+export function resolveCacheProfile(
+  config: { cache?: { profile?: Config['cache']['profile'] } },
+  hints: { provider?: string; model?: string },
+): 'anthropic' | 'openai' | 'off' {
+  const explicit = config.cache?.profile ?? 'off';
+  if (explicit !== 'auto') return explicit;
+  const provider = typeof hints.provider === 'string' ? hints.provider.toLowerCase() : '';
+  const model = typeof hints.model === 'string' ? hints.model.toLowerCase() : '';
+  if (model.includes('claude')) return 'anthropic';
+  if (/^gpt|^o[134](-|\b)|chatgpt/.test(model)) return 'openai';
+  if (provider === 'anthropic' || provider === 'anthropic-compatible' || provider === 'bedrock' || provider === 'vertex-ai') return 'anthropic';
+  if (provider === 'openai' || provider === 'openai-compatible' || provider === 'azure') return 'openai';
+  return 'off';
+}
 
 /** Deep-merge plain objects (config fragments), then validate against the schema. */
 export function mergeConfig(...parts: unknown[]): Config {

@@ -1,4 +1,57 @@
 ({ data, executeExtensionAction }) => {
+  // Badge settings overlay (task 7): one-click access to the core knobs.
+  // The overlay reads the full config via 'getConfig' and saves through
+  // 'setConfig' - the same validated path as the settings dialog (a schema
+  // rejection returns ok:false and keeps the previous config, which the
+  // overlay shows as an error line instead of silently "saving").
+  const [overlayOpen, setOverlayOpen] = React.useState(false);
+  const [overlayCfg, setOverlayCfg] = React.useState(null);
+  const [overlayError, setOverlayError] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
+
+  const loadOverlayConfig = async () => {
+    setOverlayError(null);
+    try {
+      const c = await executeExtensionAction?.('getConfig');
+      setOverlayCfg(c && typeof c === 'object' ? c : null);
+    } catch {
+      setOverlayError('could not load the config');
+    }
+  };
+
+  const openOverlay = () => {
+    setOverlayOpen(true);
+    void loadOverlayConfig();
+  };
+
+  const saveOverlay = async () => {
+    setSaving(true);
+    try {
+      const res = (await executeExtensionAction?.('setConfig', overlayCfg)) as { ok?: boolean; config?: Record<string, unknown> } | undefined;
+      const ok = res?.ok === true;
+      if (res?.config && typeof res.config === 'object') {
+        setOverlayCfg(res.config);
+        setOverlayError(ok ? null : 'invalid value - the previous config was kept');
+      }
+      if (ok) {
+        setOverlayOpen(false);
+        executeExtensionAction?.('refresh').catch?.(() => {});
+      }
+    } catch {
+      setOverlayError('could not save the config');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const patchOverlay = (patch) => setOverlayCfg((c) => (c && typeof c === 'object' ? { ...c, ...patch } : c));
+  const numberCommit = (key, fallback) => (e) => {
+    const n = Math.trunc(Number(e.target.value));
+    if (Number.isFinite(n) && n > 0) patchOverlay({ [key]: n });
+    else e.target.value = String(overlayCfg?.[key] ?? fallback);
+  };
+  const overlayCache = overlayCfg?.cache ?? {};
+
   // Polling fallback: re-fetches the data every 10s even if a push event
   // (triggerUIDataRefresh after a compression run) was missed by the
   // renderer - same pattern as the ext-savemytoken badge.
@@ -100,6 +153,127 @@
       ) : null}
       {level === 'summarize' && configured !== 'none' ? (
         <span title="summarizer backend">{configured === 'local' ? '🖥' : '☁'}{ollamaDown ? '⚠' : null}</span>
+      ) : null}
+      <button
+        type="button"
+        title="broke settings"
+        onClick={(e) => {
+          e.stopPropagation();
+          openOverlay();
+        }}
+        style={{
+          border: 'none',
+          background: 'transparent',
+          cursor: 'pointer',
+          fontSize: 11,
+          lineHeight: 1,
+          padding: 0,
+          opacity: 0.75,
+        }}
+      >
+        ⚙
+      </button>
+      {overlayOpen ? (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.45)',
+            fontSize: 12,
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--bg, #1e1e1e)',
+              color: 'var(--text, #ddd)',
+              border: '1px solid rgba(128,128,128,0.4)',
+              borderRadius: 8,
+              padding: 16,
+              width: 420,
+              maxWidth: '92vw',
+              maxHeight: '86vh',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: 13 }}>broke settings</div>
+            {overlayError ? <div style={{ color: '#e06c75' }}>{overlayError}</div> : null}
+            {!overlayCfg ? (
+              <div style={{ opacity: 0.7 }}>loading…</div>
+            ) : (
+              <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={overlayCfg.enabled ?? true}
+                    onChange={(e) => patchOverlay({ enabled: e.target.checked })}
+                  />
+                  Enable broke
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  Compression level
+                  <select value={overlayCfg.level ?? 'truncate'} onChange={(e) => patchOverlay({ level: e.target.value })}>
+                    <option value="structural">Structural - content-preserving only</option>
+                    <option value="truncate">Truncate - + truncation of old tool outputs</option>
+                    <option value="summarize">Summarize - + LLM summary (needs backend)</option>
+                  </select>
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
+                    Max context chars
+                    <input type="number" min="1000" defaultValue={String(overlayCfg.maxContextChars ?? 60000)} onBlur={numberCommit('maxContextChars', 60000)} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
+                    Protected turns
+                    <input type="number" min="1" max="50" defaultValue={String(overlayCfg.protectedTurns ?? 2)} onBlur={numberCommit('protectedTurns', 2)} />
+                  </label>
+                </div>
+                <label
+                  style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+                  title="Auto detects the rules from the task model: Claude -> Anthropic rules (writes 1.25x, hits 0.1x), GPT/o-models -> OpenAI rules (cached input 0.5x)."
+                >
+                  Cache profile (prompt-cache friendly mode)
+                  <select
+                    value={overlayCache.profile ?? 'off'}
+                    onChange={(e) => patchOverlay({ cache: { ...overlayCache, profile: e.target.value } })}
+                  >
+                    <option value="off">Off - plain behavior</option>
+                    <option value="auto">Auto - detect from task model (recommended)</option>
+                    <option value="anthropic">Anthropic - Claude models</option>
+                    <option value="openai">OpenAI - GPT/o-models</option>
+                  </select>
+                </label>
+                <label
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                  title="On a real budget overrun, ONE deliberate rewrite of sent history (cache lost once) instead of shipping an over-budget context."
+                >
+                  <input
+                    type="checkbox"
+                    checked={overlayCache.escapeHatch ?? true}
+                    onChange={(e) => patchOverlay({ cache: { ...overlayCache, escapeHatch: e.target.checked } })}
+                  />
+                  Escape hatch on budget overruns
+                </label>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+                  <button type="button" onClick={() => setOverlayOpen(false)} style={{ padding: '4px 10px' }}>
+                    Cancel
+                  </button>
+                  <button type="button" onClick={() => void saveOverlay()} disabled={saving} style={{ padding: '4px 10px' }}>
+                    {saving ? 'saving…' : 'Save'}
+                  </button>
+                </div>
+                <div style={{ opacity: 0.6, fontSize: 11 }}>Full config: AiderDesk settings → Extensions → broke, or /broke help.</div>
+              </>
+            )}
+          </div>
+        </div>
       ) : null}
     </div>
   );

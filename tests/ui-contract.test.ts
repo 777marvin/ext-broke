@@ -42,4 +42,24 @@ describe('vendored host UI contract (BRK-024)', () => {
     assert.match(run.stdout, /2 passed, 0 failed/);
     assert.ok(!run.stdout.includes('permissive (any)'), 'the any-fallback warning must be gone');
   });
+
+  it('the settings UI ships the cache section, presets and tooltips (task 7 onboarding A)', () => {
+    const configComponent = readFileSync('ConfigComponent.jsx', 'utf8');
+    // No DOM test infra in this repo - these are source-presence checks; the
+    // type-level contract is enforced by the validator above.
+    assert.match(configComponent, /Cache profile/, 'the cache profile select exists');
+    assert.match(configComponent, /value:\s*'auto'/, 'the auto profile option exists');
+    assert.match(configComponent, /Escape hatch/, 'the escape hatch checkbox exists');
+    assert.match(configComponent, /Cache-optimiert/, 'the cache-friendly preset exists');
+    assert.match(configComponent, /Maximal komprimiert/, 'the max-compression preset exists');
+    assert.match(configComponent, /<Tooltip/, 'options carry inline onboarding tooltips');
+    assert.match(configComponent, /<Button/, 'presets use the host Button primitive');
+  });
+
+  it('the badge wires the settings overlay to the validated config actions', () => {
+    const statusBadge = readFileSync('StatusBadge.jsx', 'utf8');
+    assert.match(statusBadge, /'getConfig'/, 'the overlay loads the config via the getConfig action');
+    assert.match(statusBadge, /'setConfig'/, 'the overlay saves via the setConfig action');
+    assert.match(statusBadge, /broke settings/, 'the badge carries the settings entry point');
+  });
 });

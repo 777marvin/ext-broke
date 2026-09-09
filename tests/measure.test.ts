@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildRunRecord,
+  lastCallUsage,
   loadRunRecords,
   persistRunRecord,
   summarizeRunRecords,
@@ -228,5 +229,122 @@ describe('summarizeRunRecords', () => {
     const summary = summarizeRunRecords([record(10)]);
     assert.ok(summary);
     assert.equal(summary.spanMs, 0);
+  });
+});
+
+describe('cache-friendly run records (task 6)', () => {
+  // Local copy: the shape mirrors the helper inside the persist/load describe
+  // (scoped there), with summarize fields included.
+  const record = (taskId: string, charsBefore: number, charsAfter: number): RunRecord => ({
+    kind: 'run',
+    taskId,
+    at: 1_000,
+    charsBefore,
+    charsAfter,
+    savedChars: charsBefore - charsAfter,
+    structuralChars: 0,
+    errorChars: 0,
+    truncateChars: charsBefore - charsAfter,
+    summarizeChars: 0,
+    summarizeCalls: 0,
+    summarizer: 'none',
+  });
+
+  it('buildRunRecord maps cache profile, escape flag and provider-reported usage', () => {
+    const r = buildRunRecord('t', report({ cacheProfile: 'anthropic', escaped: true }), {
+      sentTokens: 4000,
+      cacheWriteTokens: 3500,
+      cacheReadTokens: 500,
+      messageCost: 0.012,
+    });
+    assert.equal(r.cacheProfile, 'anthropic');
+    assert.equal(r.escaped, true);
+    assert.equal(r.lastSentTokens, 4000);
+    assert.equal(r.lastCacheWriteTokens, 3500);
+    assert.equal(r.lastCacheReadTokens, 500);
+    assert.equal(r.lastMessageCost, 0.012);
+  });
+
+  it('plain runs carry no cache fields (backward-compatible records)', () => {
+    const r = buildRunRecord('t', report());
+    assert.equal(r.cacheProfile, undefined);
+    assert.equal(r.escaped, undefined);
+    assert.equal(r.lastCacheWriteTokens, undefined);
+    assert.equal(r.lastSentTokens, undefined);
+  });
+
+  it('lastCallUsage walks backwards to the newest provider usage report', () => {
+    const msgs = [
+      { id: 'u0', role: 'user', content: 'brief' },
+      { id: 'a1', role: 'assistant', content: 'no usage here' },
+      {
+        id: 'a2',
+        role: 'assistant',
+        content: 'y',
+        usageReport: { model: 'm', sentTokens: 100, receivedTokens: 10, messageCost: 0.001, cacheWriteTokens: 90, cacheReadTokens: 10 },
+      },
+      { id: 'u9', role: 'user', content: 'z' },
+    ];
+    const u = lastCallUsage(msgs);
+    assert.ok(u);
+    assert.equal(u.sentTokens, 100);
+    assert.equal(u.cacheWriteTokens, 90);
+    assert.equal(u.cacheReadTokens, 10);
+    assert.equal(u.messageCost, 0.001);
+  });
+
+  it('lastCallUsage: no usage reports or hostile shapes -> undefined', () => {
+    assert.equal(lastCallUsage([]), undefined);
+    assert.equal(lastCallUsage([{ id: 'a', role: 'assistant', content: 'x' }]), undefined);
+    assert.equal(lastCallUsage([{ id: 'a', role: 'assistant', usageReport: { sentTokens: 'lots' } }]), undefined);
+    assert.equal(lastCallUsage(['junk', 42, null]), undefined);
+  });
+
+  it('summarizeRunRecords aggregates escapes and provider-reported cache sums', () => {
+    const base = record('a', 1000, 900);
+    const records: RunRecord[] = [
+      { ...base, cacheProfile: 'anthropic', escaped: false, lastSentTokens: 1000, lastCacheWriteTokens: 800, lastCacheReadTokens: 200, lastMessageCost: 0.01 },
+      { ...base, cacheProfile: 'anthropic', escaped: true, lastSentTokens: 900, lastCacheWriteTokens: 850, lastCacheReadTokens: 0, lastMessageCost: 0.02 },
+      { ...base }, // old-style record without cache fields
+    ];
+    const s = summarizeRunRecords(records);
+    assert.ok(s);
+    assert.equal(s.escapes, 1);
+    assert.equal(s.lastCacheWriteTokens, 1650);
+    assert.equal(s.lastCacheReadTokens, 200);
+    assert.ok(Math.abs(s.lastMessageCost - 0.03) < 1e-9);
+  });
+
+  it('summarizeRunRecords adds cost estimates only when a price is given', () => {
+    const base = record('a', 4_000_000, 0); // chars/4 heuristic -> 1M saved tokens
+    const s1 = summarizeRunRecords([base]);
+    assert.equal(s1?.savedUsd, undefined);
+    assert.equal(s1?.cacheSavedUsd, undefined);
+
+    const s2 = summarizeRunRecords([base], { inputPerMToken: 3, cacheProfile: 'anthropic' });
+    assert.ok(Math.abs((s2?.savedUsd ?? 0) - 3) < 1e-9);
+    assert.ok(Math.abs((s2?.cacheSavedUsd ?? 0) - 3.75) < 1e-9, 'write premium 1.25x on the avoided input');
+
+    const s3 = summarizeRunRecords([base], { inputPerMToken: 3, cacheProfile: 'off' });
+    assert.ok(Math.abs((s3?.cacheSavedUsd ?? 0) - 3) < 1e-9, 'off profile: no premium');
+  });
+
+  it('persist/load round-trips the cache fields', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-measure-cache-'));
+    const file = join(dir, 'measure.jsonl');
+    try {
+      persistRunRecord(
+        { ...record('t', 1000, 900), cacheProfile: 'openai', escaped: true, lastSentTokens: 700, lastCacheWriteTokens: 700, lastCacheReadTokens: 0, lastMessageCost: 0.005 },
+        file,
+      );
+      const [r] = loadRunRecords(file);
+      assert.ok(r);
+      assert.equal(r.cacheProfile, 'openai');
+      assert.equal(r.escaped, true);
+      assert.equal(r.lastCacheWriteTokens, 700);
+      assert.equal(r.lastMessageCost, 0.005);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

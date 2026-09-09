@@ -57,6 +57,10 @@ export interface CompressReport {
   summarizerOutputChars: number;
   totalCharsBefore: number;
   totalCharsAfter: number;
+  /** Cache-friendly mode: resolved provider profile of this run (set when active). */
+  cacheProfile?: 'anthropic' | 'openai' | 'off';
+  /** Cache-friendly mode: this run was an escape-hatch rewrite (deliberate cache loss). */
+  escaped?: boolean;
 }
 
 export interface SummarizeDeps {
@@ -247,7 +251,7 @@ export interface PassResult {
   removedChars: number;
 }
 
-export function structuralPass(messages: ContextMessage[], protectedTurns: number): PassResult {
+export function structuralPass(messages: ContextMessage[], protectedTurns: number, frozen?: (msg: ContextMessage) => boolean): PassResult {
   const { start, end } = compressibleRange(messages, protectedTurns);
   if (start >= end) return { messages, removedChars: 0 };
 
@@ -258,9 +262,11 @@ export function structuralPass(messages: ContextMessage[], protectedTurns: numbe
     const msg = messages[i];
     const inRegion = i >= start && i < end;
 
+    // Cache-friendly mode: frozen messages (already-sent bytes) are never
+    // dropped, merged or re-framed - byte stability of the sent prefix.
     // Drop assistant messages that carry no text, no tool calls and no rich
     // parts (reasoning/image must never be silently discarded).
-    if (inRegion && msg.role === 'assistant' && !isSummaryMessage(msg) && !hasRichParts(msg)) {
+    if (inRegion && !frozen?.(msg) && msg.role === 'assistant' && !isSummaryMessage(msg) && !hasRichParts(msg)) {
       const text = assistantText(msg);
       if (!hasToolCalls(msg) && !text.trim()) {
         removedChars += messageChars(msg);
@@ -274,7 +280,7 @@ export function structuralPass(messages: ContextMessage[], protectedTurns: numbe
     // makes the provider call fail (AI_MissingToolResultsError). Dedupe
     // additionally requires the producing tool-calls to be identical
     // (name + input): equal outputs alone are not enough (XF1).
-    if (inRegion && msg.role === 'tool' && Array.isArray(msg.content)) {
+    if (inRegion && !frozen?.(msg) && msg.role === 'tool' && Array.isArray(msg.content)) {
       const parts = msg.content as unknown as PartLike[];
       const emptyParts = parts.filter(
         (p) => p.type === 'tool-result' && partText(p).trim().length === 0,
@@ -306,9 +312,9 @@ export function structuralPass(messages: ContextMessage[], protectedTurns: numbe
 
     // Merge consecutive assistant text messages - only when BOTH sides are
     // pure text (merging would otherwise drop reasoning/image parts).
-    if (inRegion && msg.role === 'assistant' && !hasToolCalls(msg) && isTextOnly(msg) && result.length > 0) {
+    if (inRegion && !frozen?.(msg) && msg.role === 'assistant' && !hasToolCalls(msg) && isTextOnly(msg) && result.length > 0) {
       const prev = result[result.length - 1];
-      if (prev.role === 'assistant' && !hasToolCalls(prev) && isTextOnly(prev) && !isSummaryMessage(prev)) {
+      if (prev.role === 'assistant' && !hasToolCalls(prev) && isTextOnly(prev) && !isSummaryMessage(prev) && !frozen?.(prev)) {
         const mergedText = [assistantText(prev), assistantText(msg)].filter(Boolean).join('\n\n');
         // Honest accounting: the merged text stays in the context (plus the
         // separator), so a merge saves 0 chars. Only the message framing
@@ -543,13 +549,15 @@ export function truncatePass(
   maxLines: number,
   maxKB: number,
   maxInputChars: number,
+  frozen?: (msg: ContextMessage) => boolean,
 ): PassResult {
   const { start, end } = compressibleRange(messages, protectedTurns);
   if (start >= end) return { messages, removedChars: 0 };
 
   let removedChars = 0;
   const result = messages.map((msg, i) => {
-    if (i < start || i >= end) return msg;
+    // Cache-friendly mode: already-sent bytes are never rewritten.
+    if (i < start || i >= end || frozen?.(msg)) return msg;
 
     if (msg.role === 'tool' && Array.isArray(msg.content)) {
       let changed = false;
@@ -653,13 +661,14 @@ export interface ErrorPassOptions {
  * text; truncate then handles whatever remains. Input-only - the stored
  * task history is never touched.
  */
-export function errorPass(messages: ContextMessage[], protectedTurns: number, opts: ErrorPassOptions): PassResult {
+export function errorPass(messages: ContextMessage[], protectedTurns: number, opts: ErrorPassOptions, frozen?: (msg: ContextMessage) => boolean): PassResult {
   const { start, end } = compressibleRange(messages, protectedTurns);
   if (start >= end) return { messages, removedChars: 0 };
 
   let removedChars = 0;
   const result = messages.map((msg, i) => {
-    if (i < start || i >= end || msg.role !== 'tool' || !Array.isArray(msg.content)) return msg;
+    // Cache-friendly mode: already-sent bytes are never rewritten.
+    if (i < start || i >= end || msg.role !== 'tool' || !Array.isArray(msg.content) || frozen?.(msg)) return msg;
 
     let changed = false;
     const parts = msg.content.map((p) => {
@@ -898,6 +907,16 @@ function chunkRegionForSummarizer(
   return chunks;
 }
 
+/**
+ * Cache-friendly-mode gate for the summarize pass (see CompressOptions.cache):
+ * `frozen` marks already-sent bytes (sent-ledger); `escaping` marks a run
+ * where the escape hatch sanctions rewriting them.
+ */
+export interface SummarizeCacheGate {
+  frozen?: (msg: ContextMessage) => boolean;
+  escaping?: boolean;
+}
+
 export async function summarizePass(
   messages: ContextMessage[],
   protectedTurns: number,
@@ -905,6 +924,7 @@ export async function summarizePass(
   deps: SummarizeDeps,
   state: CompressState,
   taskId: string,
+  gate?: SummarizeCacheGate,
 ): Promise<SummarizeResult> {
   const noop: SummarizeResult = { messages, removedChars: 0, summarizedRanges: 0, summarizeCalls: 0, failed: false, summarizer: 'none', summarizerInputChars: 0, summarizerOutputChars: 0 };
 
@@ -969,7 +989,13 @@ export async function summarizePass(
         const appendsOrphanedResult = sinceThrough.length > 0 && sinceThrough[0].role === 'tool';
         const newUserTurns = sinceThrough.filter((m) => m.role === 'user').length;
         const newChars = messagesChars(sinceThrough);
-        if (!appendsOrphanedResult && newUserTurns === 0 && newChars < config.summarize.minChars) {
+        // Cache-friendly mode: when the already-sent summary must not be
+        // rewritten (no escape this run), this byte-stable shape is FORCED
+        // regardless of the growth gates - regenerating would replace sent
+        // bytes, while this shape extends them byte-for-byte.
+        const growthOk = newUserTurns === 0 && newChars < config.summarize.minChars;
+        const cacheForced = !!gate?.frozen && !gate.escaping && gate.frozen(cached.message);
+        if (!appendsOrphanedResult && (growthOk || cacheForced)) {
           const removedChars = regionChars - messageChars(cached.message) - newChars;
           // XF6: only swap when the cached summary + the new tool messages are
           // smaller than the original region - never grow the context.
@@ -988,6 +1014,20 @@ export async function summarizePass(
         }
       }
     }
+  }
+
+  // --- Cache gate (cache-friendly mode) --------------------------------------
+  // The generate path REPLACES region bytes. When those bytes were already
+  // sent to the model - the original messages (sent-ledger) or a previously
+  // served summary - regenerating would rewrite the sent prefix and
+  // invalidate the provider cache. Only the escape hatch sanctions that
+  // (option B); otherwise the region ships untouched: correctness and cache
+  // stability over compression.
+  if (gate?.frozen && !gate.escaping) {
+    const frozenFn = gate.frozen;
+    const sentOriginals = region.some((m) => frozenFn(m));
+    const sentSummary = cached ? frozenFn(cached.message) : false;
+    if (sentOriginals || sentSummary) return noop;
   }
 
   // --- Generate: full (re-)summarization -------------------------------------
@@ -1171,6 +1211,29 @@ export interface CompressOptions {
   validate?: (messages: ContextMessage[]) => ValidationFailure[];
   /** Called when validation failed and the run was reverted (for logging). */
   onValidationFailure?: (line: string) => void;
+  /**
+   * Cache-friendly mode (prompt-caching awareness): when a provider profile
+   * is active, `frozen` marks messages whose exact bytes were already sent
+   * to the model (sent-ledger, cache.ts). Frozen messages are emitted
+   * byte-identically by every pass so the sent prefix stays stable and the
+   * provider cache keeps hitting. undefined = gate off ('off' profile).
+   */
+  cache?: {
+    frozen?: (msg: ContextMessage) => boolean;
+    /** Resolved provider profile of this run - flows into the measure ledger. */
+    profile?: 'anthropic' | 'openai' | 'off';
+    /**
+     * Escape hatch state (option B), owned per task by the extension. When a
+     * run starts over `maxContextChars` while the hatch is unlocked, exactly
+     * ONE deliberate full rewrite runs (sent bytes sacrificed, provider
+     * cache lost) and the hatch locks until a run starts under budget again
+     * (hysteresis). `onEscape` fires on the escape so the extension can reset
+     * the sent-ledger - stability re-establishes on the escape run's output.
+     * With `cache.escapeHatch: false` the hatch never engages and sent bytes
+     * are never rewritten.
+     */
+    escape?: { locked: boolean; onEscape?: () => void };
+  };
 }
 
 /**
@@ -1199,6 +1262,37 @@ export async function compressMessages(
   const totalCharsBefore = messagesChars(messages);
   const report = emptyReport(totalCharsBefore);
 
+  // Cache-friendly mode: when active, every pass receives the frozen
+  // predicate (never rewrite already-sent bytes). With 'off' the predicate
+  // is undefined and the passes behave exactly as before.
+  const gate = opts.cache;
+  // Escape hatch (option B): a run that STARTS over budget while the hatch
+  // is unlocked gets ONE deliberate full rewrite - sent bytes are sacrificed
+  // and the provider cache lost exactly once. The hatch then locks until a
+  // run starts under budget again (hysteresis), so a task stuck over budget
+  // cannot rewrite the cache on every call. onEscape lets the extension reset
+  // the sent-ledger so stability re-establishes on this run's output. The
+  // state machine runs BEFORE the shouldCompress early return: an
+  // under-budget run releases the hatch even when no pass follows.
+  let escaping = false;
+  if (gate?.frozen && gate.escape) {
+    const over = totalCharsBefore > config.maxContextChars;
+    if (over && (config.cache?.escapeHatch ?? true) && !gate.escape.locked) {
+      escaping = true;
+      gate.escape.locked = true;
+      gate.escape.onEscape?.();
+    } else if (!over && gate.escape.locked) {
+      gate.escape.locked = false;
+    }
+  }
+  const frozen = escaping ? undefined : gate?.frozen;
+  // Measure-ledger facts (task 6): which profile ran, and whether this run
+  // was a deliberate cache-invalidating escape rewrite. A validator revert
+  // replaces the report below - correctly dropping the flag, since nothing
+  // shipped and the provider cache was not lost.
+  if (gate?.profile) report.cacheProfile = gate.profile;
+  if (escaping) report.escaped = true;
+
   if (!shouldCompress(messages, config, totalCharsBefore)) {
     return { messages, report };
   }
@@ -1206,7 +1300,7 @@ export async function compressMessages(
   let work = messages;
 
   // Pass 1 - structural (lossless, synchronous, cannot throw).
-  const structural = structuralPass(work, config.protectedTurns);
+  const structural = structuralPass(work, config.protectedTurns, frozen);
   report.structuralChars = structural.removedChars;
   work = structural.messages;
 
@@ -1216,14 +1310,14 @@ export async function compressMessages(
   // Pass 2 - error compression (lossy, synchronous, cannot throw). Runs
   // BEFORE truncate so stack-trace extraction sees the full output text.
   if ((config.level === 'truncate' || config.level === 'summarize') && hasOldContent && config.errors.enabled) {
-    const errors = errorPass(work, config.protectedTurns, { minChars: config.errors.minChars, contextLines: config.errors.contextLines });
+    const errors = errorPass(work, config.protectedTurns, { minChars: config.errors.minChars, contextLines: config.errors.contextLines }, frozen);
     report.errorChars = errors.removedChars;
     work = errors.messages;
   }
 
   // Pass 3 - truncate (lossy, synchronous, cannot throw).
   if ((config.level === 'truncate' || config.level === 'summarize') && hasOldContent && totalCharsBefore > config.maxContextChars) {
-    const truncated = truncatePass(work, config.protectedTurns, config.truncate.maxLines, config.truncate.maxKB, config.truncate.maxInputChars);
+    const truncated = truncatePass(work, config.protectedTurns, config.truncate.maxLines, config.truncate.maxKB, config.truncate.maxInputChars, frozen);
     report.truncateChars = truncated.removedChars;
     work = truncated.messages;
   }
@@ -1232,7 +1326,7 @@ export async function compressMessages(
   // discard the structural/truncate savings nor break the model call.
   if (config.level === 'summarize' && !opts.summarizeDisabled && totalCharsBefore > config.maxContextChars) {
     try {
-      const summarized = await summarizePass(work, config.protectedTurns, config, deps, state, taskId);
+      const summarized = await summarizePass(work, config.protectedTurns, config, deps, state, taskId, { frozen: gate?.frozen, escaping });
       report.summarizeChars = summarized.removedChars;
       report.summarizedRanges = summarized.summarizedRanges;
       report.summarizeCalls = summarized.summarizeCalls;
