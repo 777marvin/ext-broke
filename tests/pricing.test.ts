@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from '../pricing';
+import { cacheAdjustedSavedUsd, cacheRates, formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from '../pricing';
 import { appendJsonLine, clearTaskStats, createStatsLoader, emptyStats, loadTaskStats, persistStats } from '../tokens';
 
 const price = (inputPerMToken: number | null): TaskModelPrice => ({
@@ -261,5 +261,37 @@ describe('createStatsLoader', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('cacheRates (provider prompt-cache economics)', () => {
+  it('anthropic: 1.25x cache-write premium, 0.1x cache-read', () => {
+    assert.deepEqual(cacheRates('anthropic'), { writeMultiplier: 1.25, readMultiplier: 0.1 });
+  });
+
+  it('openai: automatic caching - no write premium, 0.5x cached read', () => {
+    assert.deepEqual(cacheRates('openai'), { writeMultiplier: 1.0, readMultiplier: 0.5 });
+  });
+
+  it('off: no cache economics (every token bills as plain input)', () => {
+    assert.deepEqual(cacheRates('off'), { writeMultiplier: 1.0, readMultiplier: 1.0 });
+  });
+});
+
+describe('cacheAdjustedSavedUsd', () => {
+  it('prices removed tokens as new input incl. the write premium (anthropic)', () => {
+    // 1M removed tokens at $3/M: as new input they would be written once at 1.25x -> $3.75 avoided.
+    assert.ok(Math.abs(cacheAdjustedSavedUsd(1_000_000, 3, 'anthropic') - 3.75) < 1e-9);
+  });
+
+  it('openai removed tokens bill at plain input rate (no write premium)', () => {
+    assert.ok(Math.abs(cacheAdjustedSavedUsd(1_000_000, 3, 'openai') - 3.0) < 1e-9);
+  });
+
+  it('unknown price or hostile tokens -> 0', () => {
+    assert.equal(cacheAdjustedSavedUsd(1_000_000, null, 'anthropic'), 0);
+    assert.equal(cacheAdjustedSavedUsd(0, 3, 'anthropic'), 0);
+    assert.equal(cacheAdjustedSavedUsd(-5, 3, 'openai'), 0);
+    assert.equal(cacheAdjustedSavedUsd(Number.NaN, 3, 'off'), 0);
   });
 });

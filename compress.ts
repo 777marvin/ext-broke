@@ -57,6 +57,10 @@ export interface CompressReport {
   summarizerOutputChars: number;
   totalCharsBefore: number;
   totalCharsAfter: number;
+  /** Cache-friendly mode: resolved provider profile of this run (set when active). */
+  cacheProfile?: 'anthropic' | 'openai' | 'off';
+  /** Cache-friendly mode: this run was an escape-hatch rewrite (deliberate cache loss). */
+  escaped?: boolean;
 }
 
 export interface SummarizeDeps {
@@ -1216,6 +1220,8 @@ export interface CompressOptions {
    */
   cache?: {
     frozen?: (msg: ContextMessage) => boolean;
+    /** Resolved provider profile of this run - flows into the measure ledger. */
+    profile?: 'anthropic' | 'openai' | 'off';
     /**
      * Escape hatch state (option B), owned per task by the extension. When a
      * run starts over `maxContextChars` while the hatch is unlocked, exactly
@@ -1280,6 +1286,12 @@ export async function compressMessages(
     }
   }
   const frozen = escaping ? undefined : gate?.frozen;
+  // Measure-ledger facts (task 6): which profile ran, and whether this run
+  // was a deliberate cache-invalidating escape rewrite. A validator revert
+  // replaces the report below - correctly dropping the flag, since nothing
+  // shipped and the provider cache was not lost.
+  if (gate?.profile) report.cacheProfile = gate.profile;
+  if (escaping) report.escaped = true;
 
   if (!shouldCompress(messages, config, totalCharsBefore)) {
     return { messages, report };

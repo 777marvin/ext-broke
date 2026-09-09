@@ -354,6 +354,10 @@ describe('formatStats', () => {
       summarizeCalls: 0,
       summarizerInputChars: 0,
       summarizerOutputChars: 0,
+      escapes: 0,
+      lastCacheWriteTokens: 0,
+      lastCacheReadTokens: 0,
+      lastMessageCost: 0,
       byTask: [],
     });
     assert.ok(out.includes('25%'));
@@ -409,6 +413,10 @@ describe('formatMeasure', () => {
       summarizeCalls: 0,
       summarizerInputChars: 0,
       summarizerOutputChars: 0,
+      escapes: 0,
+      lastCacheWriteTokens: 0,
+      lastCacheReadTokens: 0,
+      lastMessageCost: 0,
       byTask: [{ taskId: 't1', runs: 2, savedChars: 5000 }],
     });
     assert.ok(out.includes('2 run(s)'));
@@ -433,6 +441,10 @@ describe('formatMeasure', () => {
       summarizeCalls: 2,
       summarizerInputChars: 8000,
       summarizerOutputChars: 2000,
+      escapes: 0,
+      lastCacheWriteTokens: 0,
+      lastCacheReadTokens: 0,
+      lastMessageCost: 0,
       byTask: [],
     });
     // gross ≈ 1250 tokens, summarizer traffic = (8000+2000)/4 = 2500 tokens
@@ -457,6 +469,10 @@ describe('formatMeasure', () => {
       summarizeCalls: 0,
       summarizerInputChars: 0,
       summarizerOutputChars: 0,
+      escapes: 0,
+      lastCacheWriteTokens: 0,
+      lastCacheReadTokens: 0,
+      lastMessageCost: 0,
       byTask: [],
     });
     assert.ok(out.includes('33.3%'));

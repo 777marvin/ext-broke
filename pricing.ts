@@ -96,3 +96,49 @@ export function priceLabel(price: TaskModelPrice | null): string {
   const base = price.modelId === price.providerId ? price.modelId : `${price.providerId}/${price.modelId}`;
   return price.inputPerMToken === null ? `${base} (local/unknown - $0)` : `${base} @ $${price.inputPerMToken}/1M input`;
 }
+
+// ---------------------------------------------------------------------------
+// Provider prompt-cache economics (cache-friendly mode)
+// ---------------------------------------------------------------------------
+
+/** Resolved prompt-cache profile of a task (see config resolveCacheProfile). */
+export type CacheProfile = 'anthropic' | 'openai' | 'off';
+
+export interface CacheRates {
+  /** Cost multiplier for tokens WRITTEN to the provider cache. */
+  writeMultiplier: number;
+  /** Cost multiplier for tokens READ from the provider cache. */
+  readMultiplier: number;
+}
+
+/**
+ * Documented provider figures:
+ * - anthropic: explicit prompt caching - a cache write bills 1.25x base
+ *   input, a cache hit bills 0.1x (5 min TTL, refreshed on hit).
+ * - openai: automatic caching (identical prefix >= 1024 tokens) - no write
+ *   premium, cached input bills 0.5x.
+ * - off: no cache economics - every token bills as plain input.
+ */
+export function cacheRates(profile: CacheProfile): CacheRates {
+  switch (profile) {
+    case 'anthropic':
+      return { writeMultiplier: 1.25, readMultiplier: 0.1 };
+    case 'openai':
+      return { writeMultiplier: 1.0, readMultiplier: 0.5 };
+    default:
+      return { writeMultiplier: 1.0, readMultiplier: 1.0 };
+  }
+}
+
+/**
+ * Estimated USD saved by NOT sending `savedTokens` input tokens, priced the
+ * way a cache-friendly provider bills NEW input: base rate times the write
+ * multiplier (tokens removed from the context never enter the billed input
+ * stream - under a write-premium provider that stream bills 1.25x). How often
+ * the cache would have re-read them is not knowable per run, so this stays a
+ * one-call estimate like savedCostUsd.
+ */
+export function cacheAdjustedSavedUsd(savedTokens: number, inputPerMToken: number | null, profile: CacheProfile): number {
+  if (!inputPerMToken || !Number.isFinite(savedTokens) || savedTokens <= 0) return 0;
+  return (savedTokens / 1_000_000) * inputPerMToken * cacheRates(profile).writeMultiplier;
+}

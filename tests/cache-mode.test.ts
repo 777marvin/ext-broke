@@ -38,6 +38,7 @@ let summarizePass: (typeof import('../compress'))['summarizePass'];
 let isSummaryMessage: (typeof import('../compress'))['isSummaryMessage'];
 let createCompressState: (typeof import('../compress'))['createCompressState'];
 let clearTask: (typeof import('../cache'))['clearTask'];
+let loadRunRecords: (typeof import('../tokens'))['loadRunRecords'];
 type Config = import('../config').Config;
 type SummarizeDeps = import('../compress').SummarizeDeps;
 
@@ -46,6 +47,7 @@ before(async () => {
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
   ({ structuralPass, errorPass, truncatePass, compressMessages, summarizePass, isSummaryMessage, createCompressState } = await import('../compress'));
   ({ clearTask } = await import('../cache'));
+  ({ loadRunRecords } = await import('../tokens'));
 });
 
 after(() => {
@@ -266,7 +268,12 @@ describe('escape hatch (E2E)', () => {
       [
         ...history(300),
         { id: 'u2', role: 'user', content: 'third turn' },
-        { id: 'a3', role: 'assistant', content: 'big new work'.padEnd(8000, 'x') },
+        {
+          id: 'a3',
+          role: 'assistant',
+          content: 'big new work'.padEnd(8000, 'x'),
+          usageReport: { model: 'claude-sonnet-4', sentTokens: 5000, receivedTokens: 100, messageCost: 0.05, cacheWriteTokens: 4800, cacheReadTokens: 200 },
+        },
       ] as unknown as ContextMessage[];
 
     // Run 1 below budget ships t1 verbatim (sent bytes).
@@ -286,6 +293,19 @@ describe('escape hatch (E2E)', () => {
     // cache can hit again from there.
     const out3 = await run(ext, context, overInput());
     assert.equal(bytes(out3), bytes(out2), 'after the escape run the output is byte-stable again');
+
+    // The measure ledger (task 6) marks the escape run and carries the
+    // provider-reported cache usage of the last completed call. Run 3 is
+    // touched as well (deterministic re-derivation) and must NOT be flagged.
+    const recs = loadRunRecords().filter((r) => r.taskId === 'escape-once');
+    assert.equal(recs.length, 2, 'runs 2 and 3 are the touched runs (run 1 ships untouched)');
+    const escapeRec = recs.find((r) => r.escaped === true);
+    assert.ok(escapeRec, 'the ledger marks the deliberate cache invalidation');
+    assert.equal(escapeRec.cacheProfile, 'anthropic');
+    assert.equal(escapeRec.lastCacheWriteTokens, 4800);
+    assert.equal(escapeRec.lastCacheReadTokens, 200);
+    assert.equal(escapeRec.lastSentTokens, 5000);
+    assert.equal(recs[recs.length - 1].escaped, undefined, 'the locked run 3 is not an escape');
   });
 });
 
@@ -317,12 +337,14 @@ describe('escape hatch state machine (pipeline)', () => {
     const state = createCompressState();
     let escapes = 0;
     const escape = { locked: false, onEscape: (): void => void escapes++ };
-    const opts = { cache: { frozen, escape } };
+    const opts = { cache: { frozen, escape, profile: 'anthropic' as const } };
 
     const r1 = await compressMessages(msgs(), cfg(), deps, state, 'esc-1', opts);
     assert.ok(bytes(r1.messages).includes('[broke: truncated'), 'run 1: hatch open, sent bytes rewritten');
     assert.equal(escape.locked, true, 'run 1 locks the hatch');
     assert.equal(escapes, 1, 'onEscape fired for the ledger reset');
+    assert.equal(r1.report.escaped, true, 'the report flags the escape rewrite');
+    assert.equal(r1.report.cacheProfile, 'anthropic', 'the report carries the resolved cache profile');
 
     // Run 2: still over, locked - the frozen bytes ship verbatim.
     const r2 = await compressMessages(msgs(), cfg(), deps, state, 'esc-1', opts);

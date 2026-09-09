@@ -81,6 +81,7 @@ import {
   createStatsLoader,
   emptyStats,
   estimateTokens,
+  lastCallUsage,
   loadRunRecords,
   persistRunRecord,
   persistStats,
@@ -89,6 +90,7 @@ import {
   messagesChars,
   type StatsLoader,
   type TaskStats,
+  type LastCallUsage,
 } from './tokens';
 import { boundedMapSet } from './compress';
 import { runUpdate } from './update';
@@ -367,7 +369,7 @@ export default class Broke implements Extension {
         escapeState = { locked: false, onEscape: () => clearTask(taskId) };
         this.escapeByTask.set(taskId, escapeState);
       }
-      const cacheOpts = profile === 'off' ? undefined : { frozen: (msg: import('@aiderdesk/extensions').ContextMessage) => isSent(taskId, msg), escape: escapeState };
+      const cacheOpts = profile === 'off' ? undefined : { frozen: (msg: import('@aiderdesk/extensions').ContextMessage) => isSent(taskId, msg), escape: escapeState, profile };
       const { messages, report } = await compressMessages(event.optimizedMessages, config, deps, this.state, taskId, {
         summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
         cache: cacheOpts,
@@ -379,7 +381,10 @@ export default class Broke implements Extension {
       // Price lookup only when something was actually compressed (it is
       // cached afterwards; the badge warms it on task open).
       const price = report.touched ? await resolveTaskModelPrice(context) : null;
-      this.recordReport(taskId, report, price);
+      // Provider-reported usage of the last completed call: real cache
+      // write/read tokens flow into the measure ledger (task 6) instead of a
+      // chars/4 guess.
+      this.recordReport(taskId, report, price, lastCallUsage(event.originalMessages));
       // Observe every real pipeline run - touched or not. No-op runs are
       // still facts the UI needs: they are how a zero badge explains itself.
       boundedMapSet(this.lastObservation, taskId, { at: Date.now(), inputChars: report.totalCharsBefore });
@@ -812,7 +817,7 @@ export default class Broke implements Extension {
     }
   }
 
-  private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null): void {
+  private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null, lastUsage?: LastCallUsage): void {
     // No-op runs (nothing compressed, nothing attempted) are not compression
     // runs: counting them inflates `passes` and appends a stats line on
     // EVERY model call.
@@ -871,7 +876,7 @@ export default class Broke implements Extension {
     // Per-run measurement ledger (NOT throttled - one record per real run is
     // the point). Rotation-capped like stats.jsonl, config-gated, best effort.
     if (getConfig().stats.measure) {
-      persistRunRecord(buildRunRecord(taskId, report));
+      persistRunRecord(buildRunRecord(taskId, report, lastUsage));
     }
 
     const savedChars = report.structuralChars + report.errorChars + report.truncateChars + report.summarizeChars;
@@ -1120,7 +1125,15 @@ export default class Broke implements Extension {
             case 'flush':
               return log(await ext.handleFlushCommand(context, cmd));
             case 'measure': {
-              const summary = summarizeRunRecords(loadRunRecords());
+              // Cost estimates use the CURRENT task model + cache profile -
+              // never a stored one; without a price only token figures show.
+              const task = context.getTaskContext();
+              const measureProfile = resolveCacheProfile(config, { provider: task?.data.provider, model: task?.data.model ?? task?.data.mainModel });
+              const measurePrice = await resolveTaskModelPrice(context);
+              const summary = summarizeRunRecords(loadRunRecords(), {
+                inputPerMToken: measurePrice?.inputPerMToken ?? null,
+                cacheProfile: measureProfile,
+              });
               return log(formatMeasure(summary));
             }
             case 'help':

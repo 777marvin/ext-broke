@@ -50,8 +50,23 @@ inkrementelle byte-stabile Form erzwungen; History-Edit unter gesendeter
 Summary => Region unberuehrt (Korrektheit vor Cache). State-Machine laeuft
 VOR dem shouldCompress-Fruehreturn (Under-Budget-Run locked frei). Task-Reset
 raeumt jetzt auch Ledger + Escape-State auf. 506/506, tsc clean.
-## Task 6: Cache-aware Pricing + Measure-Ledger — [ ]
+## Task 6: Cache-aware Pricing + Measure-Ledger — [x]
+pricing.ts: cacheRates (anthropic write 1.25x/read 0.1x, openai write 1x/
+read 0.5x, off 1x/1x) + cacheAdjustedSavedUsd (entfernte Tokens als neuer
+Input inkl. Write-Premium). tokens.ts: LastCallUsage + lastCallUsage
+(rueckwaerts zur neuesten usageReport - provider-reportierte Zahlen statt
+Schaetzung), RunRecord += cacheProfile/escaped/lastSentTokens/
+lastCacheWriteTokens/lastCacheReadTokens/lastMessageCost (optional,
+abwaertskompatibel), MeasureSummary += escapes + Cache-Summen + savedUsd/
+cacheSavedUsd (nur mit bekanntem Preis). compress.ts: report.cacheProfile/
+escaped. index.ts: profile in cacheOpts, lastCallUsage in recordReport,
+/broke measure threaded Preis + Profil. commands.ts: formatMeasure zeigt
+Escape-Rewrites, provider-Cache-Snapshot und cache-adjustierte Kosten.
+E2E: Escape-Record verifiziert (Run 2 escaped, Run 3 nicht). 519/519, tsc
+clean, validate:ui PASS.
 ## Task 7: Settings-UI (Tooltips + Presets + Einstieg) — [ ]
+ENTSCHEIDUNG (User, 2026-09-09): Einstieg = broke-eigenes Overlay-Settings-UI
+(Button → Overlay mit voller broke-Konfiguration), kein Verweis-Dialog.
 ## Task 8: Doku (README, overview, CHANGELOG) — [ ]
 ## Task 9: Release (MINOR bump, Tag, Signatur) — [ ]
 
