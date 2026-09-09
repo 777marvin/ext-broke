@@ -1,5 +1,5 @@
 ({ config, updateConfig, ui }) => {
-  const { Select, Checkbox, Input } = ui;
+  const { Select, Checkbox, Input, Tooltip, Button } = ui;
 
   // Validated number field: uncontrolled input (no re-render while typing),
   // value committed on blur/Enter, invalid input reset to the last valid
@@ -37,6 +37,19 @@
   const searchCfg = cfg.search ?? {};
   const snapshotCfg = cfg.snapshot ?? {};
   const flushCfg = cfg.flush ?? {};
+  const cacheCfg = cfg.cache ?? {};
+
+  // Presets (task 7 onboarding A): one-click coherent bundles. Every preset
+  // MERGES into the current config - unrelated sections are preserved.
+  const applyPreset = (name) => {
+    if (name === 'standard') {
+      updateConfig({ ...config, enabled: true, level: 'truncate', cache: { ...cacheCfg, profile: 'off', escapeHatch: true } });
+    } else if (name === 'cache') {
+      updateConfig({ ...config, enabled: true, cache: { ...cacheCfg, profile: 'auto', escapeHatch: true } });
+    } else if (name === 'max') {
+      updateConfig({ ...config, enabled: true, level: 'summarize', cache: { ...cacheCfg, profile: 'auto', escapeHatch: true } });
+    }
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -66,6 +79,18 @@
         <p className="text-xs text-text-secondary -mt-2">
           The task's stored history is never touched - compression applies to the input of each model call.
         </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-text-secondary">Presets:</span>
+          <Tooltip label="Standard behavior: level Truncate, cache profile Off. Good default when cache savings do not matter.">
+            <Button onClick={() => applyPreset('standard')}>Standard</Button>
+          </Tooltip>
+          <Tooltip label="Cache-friendly mode: cache profile Auto + escape hatch on. Keeps the provider prompt cache hitting - Claude bills cache writes at 1.25x and hits at 0.1x, GPT models bill cached input at 0.5x.">
+            <Button onClick={() => applyPreset('cache')}>Cache-optimiert</Button>
+          </Tooltip>
+          <Tooltip label="Most aggressive compression that still respects the provider cache: level Summarize + cache profile Auto + escape hatch on. Needs a configured summarizer backend.">
+            <Button onClick={() => applyPreset('max')}>Maximal komprimiert</Button>
+          </Tooltip>
+        </div>
       </div>
 
       {/* 2 - Thresholds */}
@@ -82,6 +107,37 @@
         <p className="text-xs text-text-secondary -mt-2">
           chars/4 ≈ tokens. The default (60000 chars ≈ 15k tokens) engages before AiderDesk's built-in compaction
           (default 30% of the context window).
+        </p>
+      </div>
+
+      {/* 2b - Provider prompt cache (cache-friendly mode, task 7) */}
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium">Provider prompt cache (cache-friendly mode)</p>
+        <Tooltip label="Auto detects the cache rules from the task model: Claude models get Anthropic rules (cache writes 1.25x, hits 0.1x), GPT/o-models get OpenAI rules (cached input 0.5x). Unknown models keep the plain behavior. Anthropic/OpenAI force the rules regardless of the model name.">
+          <Select
+            label="Cache profile"
+            value={cacheCfg.profile ?? 'off'}
+            onChange={(value) => updateConfig({ ...config, cache: { ...cacheCfg, profile: value } })}
+            options={[
+              { value: 'off', label: 'Off - plain behavior, no cache awareness' },
+              { value: 'auto', label: 'Auto - detect from the task model (recommended)' },
+              { value: 'anthropic', label: 'Anthropic - Claude models (prefix cache, writes 1.25x)' },
+              { value: 'openai', label: 'OpenAI - GPT/o-models (automatic prefix cache)' },
+            ]}
+          />
+        </Tooltip>
+        <Tooltip label="Budget overruns may trigger ONE deliberate rewrite of the already-sent history (the provider cache is lost once), instead of shipping an over-budget context. Off = sent bytes are never rewritten, even over budget.">
+          <Checkbox
+            label="Escape hatch: one cache-invalidating rewrite on real budget overruns (recommended)"
+            checked={cacheCfg.escapeHatch ?? true}
+            onChange={(checked) => updateConfig({ ...config, cache: { ...cacheCfg, escapeHatch: checked } })}
+          />
+        </Tooltip>
+        <p className="text-xs text-text-secondary -mt-2">
+          Cache-friendly mode keeps every byte already sent to the model byte-stable, so the provider's prompt cache
+          keeps hitting instead of being rewritten on every call. Real overruns of the max context chars budget use the
+          escape hatch (one rewrite, cache re-stabilizes afterwards). Measured effects show up in{' '}
+          <span className="font-mono">/broke measure</span>.
         </p>
       </div>
 

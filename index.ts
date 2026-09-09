@@ -1679,10 +1679,22 @@ export default class Broke implements Extension {
   /**
    * UI component actions. 'refresh' is the polling fallback used by the
    * badge interval: it forces the renderer to re-fetch the component data
-   * even when a push event (triggerUIDataRefresh) was missed.
+   * even when a push event (triggerUIDataRefresh) was missed. 'getConfig' /
+   * 'setConfig' back the badge settings overlay (task 7) - setConfig runs
+   * the SAME validated path as the settings dialog: an out-of-schema value
+   * is logged, rejected and the previous config is kept.
    */
-  async executeUIExtensionAction(_componentId: string, action: string, _args: unknown[], _context: ExtensionContext): Promise<unknown> {
+  async executeUIExtensionAction(_componentId: string, action: string, args: unknown[], _context: ExtensionContext): Promise<unknown> {
     if (action === 'refresh') this.refreshUI();
+    if (action === 'getConfig') return getConfig();
+    if (action === 'setConfig') {
+      // saveConfigData returns the PREVIOUS config when the schema rejected
+      // the value - the overlay must SEE that rejection instead of silently
+      // looking saved, so surface it as an ok flag.
+      const before = getConfig();
+      const after = await this.saveConfigData(args[0]);
+      return { ok: after !== before, config: after };
+    }
     return null;
   }
 
