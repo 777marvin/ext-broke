@@ -81,13 +81,13 @@
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-text-secondary">Presets:</span>
-          <Tooltip label="Standard behavior: level Truncate, cache profile Off. Good default when cache savings do not matter.">
+          <Tooltip content="Standard behavior: level Truncate, cache profile Off. Good default when cache savings do not matter.">
             <Button onClick={() => applyPreset('standard')}>Standard</Button>
           </Tooltip>
-          <Tooltip label="Cache-friendly mode: cache profile Auto + escape hatch on. Keeps the provider prompt cache hitting - Claude bills cache writes at 1.25x and hits at 0.1x, GPT models bill cached input at 0.5x.">
+          <Tooltip content="Cache-friendly mode: cache profile Auto + escape hatch on. Keeps the provider prompt cache hitting - Claude bills cache writes at 1.25x and hits at 0.1x, GPT models bill cached input at 0.5x.">
             <Button onClick={() => applyPreset('cache')}>Cache-optimiert</Button>
           </Tooltip>
-          <Tooltip label="Most aggressive compression that still respects the provider cache: level Summarize + cache profile Auto + escape hatch on. Needs a configured summarizer backend.">
+          <Tooltip content="Most aggressive compression that still respects the provider cache: level Summarize + cache profile Auto + escape hatch on. Needs a configured summarizer backend.">
             <Button onClick={() => applyPreset('max')}>Maximal komprimiert</Button>
           </Tooltip>
         </div>
@@ -113,7 +113,7 @@
       {/* 2b - Provider prompt cache (cache-friendly mode, task 7) */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">Provider prompt cache (cache-friendly mode)</p>
-        <Tooltip label="Auto detects the cache rules from the task model: Claude models get Anthropic rules (cache writes 1.25x, hits 0.1x), GPT/o-models get OpenAI rules (cached input 0.5x). Unknown models keep the plain behavior. Anthropic/OpenAI force the rules regardless of the model name.">
+        <Tooltip content="Auto detects the cache rules from the task model: Claude models get Anthropic rules (cache writes 1.25x, hits 0.1x), GPT/o-models get OpenAI rules (cached input 0.5x). Unknown models keep the plain behavior. Anthropic/OpenAI force the rules regardless of the model name.">
           <Select
             label="Cache profile"
             value={cacheCfg.profile ?? 'off'}
@@ -126,7 +126,7 @@
             ]}
           />
         </Tooltip>
-        <Tooltip label="Budget overruns may trigger ONE deliberate rewrite of the already-sent history (the provider cache is lost once), instead of shipping an over-budget context. Off = sent bytes are never rewritten, even over budget.">
+        <Tooltip content="Budget overruns may trigger ONE deliberate rewrite of the already-sent history (the provider cache is lost once), instead of shipping an over-budget context. Off = sent bytes are never rewritten, even over budget.">
           <Checkbox
             label="Escape hatch: one cache-invalidating rewrite on real budget overruns (recommended)"
             checked={cacheCfg.escapeHatch ?? true}

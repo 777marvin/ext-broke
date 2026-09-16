@@ -4,11 +4,17 @@
  * Purpose: the CI type check must verify components against REAL host prop
  * shapes - never against `any` fallbacks that let typos pass silently.
  * This file pins the shapes the components actually consume, hand-vendored
- * from AiderDesk v0.80.0 / @aiderdesk/extensions 0.31; the UI prop shapes are
- * verified unchanged through AiderDesk v0.81.0 / @aiderdesk/extensions 0.32
- * (the version the extension compiles against; see devDependencies). When a
- * real AiderDesk checkout is present (packages/common detected), the
- * validator prefers the live repo types over this file.
+ * from AiderDesk v0.80.0 / @aiderdesk/extensions 0.31.
+ * Verified consumed props against @aiderdesk/extensions 0.32.1 and
+ * @aiderdesk/extensions 0.33.0 at these hotovo/aider-desk source commits:
+ * - 0.32.1: d671c96a5b744d1215b4b9f2938f3bfa171802ea
+ * - 0.33.0: ef09179b705eed5acb04b313c9acc5e39e7314f4
+ * Sources: src/renderer/src/components/{common/{Button,Checkbox,Input,Select},ui/Tooltip}.tsx
+ * and src/renderer/src/contexts/ExtensionsContext.tsx (direct UI registry).
+ * Tooltip takes content (not label); Button requires children, not label.
+ * These corrections apply to both verified versions. When a real AiderDesk
+ * checkout is present, the validator prefers its live repo types.
+ * Source: https://github.com/hotovo/aider-desk/tree/ef09179b705eed5acb04b313c9acc5e39e7314f4
  *
  * Re-vendor when bumping the minimum supported AiderDesk version.
  */
@@ -83,12 +89,11 @@ export interface SelectProps {
 }
 
 export interface TooltipProps {
-  label?: string;
+  content?: React.ReactNode;
   children?: React.ReactNode;
 }
 
 export interface ButtonProps {
-  label?: string;
   children?: React.ReactNode;
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }

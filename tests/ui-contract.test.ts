@@ -6,7 +6,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const contractPath = join('scripts', 'host-ui-contract.d.ts');
@@ -41,6 +42,21 @@ describe('vendored host UI contract (BRK-024)', () => {
     assert.equal(run.status, 0, `validator failed:\n${run.stdout}\n${run.stderr}`);
     assert.match(run.stdout, /2 passed, 0 failed/);
     assert.ok(!run.stdout.includes('permissive (any)'), 'the any-fallback warning must be gone');
+  });
+
+  it('rejects the unsupported Tooltip label prop but accepts host content', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-tooltip-contract-'));
+    const fixture = join(dir, 'ConfigTooltip.jsx');
+    try {
+      for (const prop of ['label', 'content']) {
+        writeFileSync(fixture, `({ ui }) => <ui.Tooltip ${prop}="Help"><span>Target</span></ui.Tooltip>`);
+        const run = spawnSync(process.execPath, ['scripts/validate-extension-ui.mjs', fixture], { encoding: 'utf-8' });
+        assert.equal(run.status, prop === 'content' ? 0 : 1, `${prop}: ${run.stdout} ${run.stderr}`);
+        if (prop === 'label') assert.match(run.stdout + run.stderr, /label/);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('the settings UI ships the cache section, presets and tooltips (task 7 onboarding A)', () => {
