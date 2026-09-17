@@ -223,6 +223,11 @@ commands) or from the gear icon on the extension card:
 
 ```
 /broke                             status + stats + ollama status
+/broke mode <short|normal|long|custom>
+                                   task-length preset (extension-wide)
+/broke autonomy <autonomous|manual>
+                                   Broke automation only; manual = no automatic
+                                   LLM summaries, tool rewrites or auto-snapshots
 /broke on | off                    enable / disable
 /broke level <structural|truncate|summarize>
 /broke maxchars <n>                engage lossy passes above ~n chars

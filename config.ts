@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { runtimeDir } from './paths';
+import { applyPreset, normalizeMode, type Mode } from './presets';
 
 /**
  * Config file location. BROKE_CONFIG_PATH overrides the default (read at
@@ -229,6 +230,10 @@ const StatsSchema = z.object({
 const statsDefault = StatsSchema.parse({});
 
 export const ConfigSchema = z.object({
+  /** Legacy configs retain their exact values rather than silently applying a preset. */
+  mode: z.enum(['short', 'normal', 'long', 'custom']).default('custom'),
+  /** Broke automation only; never changes host agent permissions. */
+  autonomy: z.enum(['autonomous', 'manual']).default('autonomous'),
   /** Master switch - /broke off disables the whole pipeline. */
   enabled: z.boolean().default(true),
   /**
@@ -262,7 +267,7 @@ export const ConfigSchema = z.object({
   flush: FlushSchema.default(flushDefault),
   search: SearchSchema.default(searchDefault),
   cache: CacheSchema.default(cacheDefault),
-});
+}).transform(normalizeMode);
 
 export type Config = z.infer<typeof ConfigSchema>;
 
@@ -508,6 +513,10 @@ export function applyConfigUpdates(current: Config, updates: Array<[string, unkn
       target = target[key] as Record<string, unknown>;
     }
     target[parts[parts.length - 1]] = value;
+  }
+  const modeUpdate = [...updates].reverse().find(([path]) => path === 'mode');
+  if (modeUpdate && ['short', 'normal', 'long', 'custom'].includes(String(modeUpdate[1]))) {
+    return ConfigSchema.parse(applyPreset(ConfigSchema.parse(clone), modeUpdate[1] as Mode));
   }
   return ConfigSchema.parse(clone);
 }

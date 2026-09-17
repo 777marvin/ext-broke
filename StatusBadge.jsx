@@ -131,8 +131,13 @@
     .join('\n');
 
   const ollamaDown = configured === 'local' && ollama && !ollama.reachable;
+  const mode = data?.mode ?? 'custom';
+  const autonomy = data?.autonomy ?? 'autonomous';
+  const statusLabel = `Broke: mode ${mode}, Broke automation ${autonomy}`;
   return (
     <div
+      role="status"
+      aria-label={statusLabel}
       title={title}
       style={{
         display: 'flex',
@@ -156,7 +161,8 @@
       ) : null}
       <button
         type="button"
-        title="broke settings"
+        aria-label={statusLabel}
+        title={statusLabel}
         onClick={(e) => {
           e.stopPropagation();
           openOverlay();

@@ -55,21 +55,27 @@ Numbering (F5+) is provisional.
 
 | # | Candidate | Type | Effort | Status |
 |---|-----------|------|--------|--------|
-| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | proposed |
+| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | shipped (1.3.0) |
 | F6 | Live-UI expansion: provable + estimated savings, colored activity dot | feat | M | proposed |
 | F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | proposed |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
 | F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
 
-- **F5 - Mode presets & autonomy selector.** Selectable presets
-  `short / normal / long` with tuned, sensible defaults per task length,
-  plus `custom` for fully user-defined values and settings. Additionally
-  an `autonomous` vs `manual` mode selector. Entry point: a minimalist
-  selector icon next to the savings badge (StatusBadge.jsx). Open
-  questions: which config fields each preset pins (compress levels,
-  summarize.afterTurns, slice/search defaults), how presets interact with
-  manual overrides, and whether autonomous mode implies different safety
-  defaults (e.g. flush.confirm).
+- **F5 - Mode presets & autonomy selector (shipped v1.3.0).** Selectable
+  presets `short / normal / long` with tuned defaults per task length, plus
+  `custom` for user-defined values. Presets apply ONCE (they set the
+  preset-owned fields `level`, `maxContextChars`, `protectedTurns`,
+  `truncate.maxLines/maxKB`, `summarize.afterTurns`); unrelated settings
+  (cache, backend, consent, privacy) are never touched, and an edit to any
+  preset-owned field flips the label to `custom`. Autonomy selector governs
+  BROKE automation only - `manual` keeps deterministic input compression but
+  suppresses automatic LLM summarization, tool-result rewriting, milestone
+  snapshots and index refreshes; explicit `/broke` commands keep working and
+  host agent permissions are untouched. Legacy configs migrate to
+  `custom` + `autonomous` without value changes. Entry point: the badge
+  (aria-label + tooltip) and selectors at the top of both settings surfaces;
+  the canonical preset table lives in presets.ts and is consumed via the
+  `previewMode` UI action (never duplicated in JSX).
 - **F6 - Live-UI expansion.** Show saved money twice: proven
   (measure-ledger backed) and estimated (chars/4-based, labeled) - the
   estimated value in addition to the proven one. Animated status dot with

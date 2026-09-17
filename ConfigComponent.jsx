@@ -1,5 +1,7 @@
-({ config, updateConfig, ui }) => {
-  const { Select, Checkbox, Input, Tooltip, Button } = ui;
+({ config, updateConfig, ui, executeExtensionAction }) => {
+  const { Select, Checkbox, Input, Tooltip } = ui;
+  const [presetError, setPresetError] = React.useState(null);
+  const [previewing, setPreviewing] = React.useState(false);
 
   // Validated number field: uncontrolled input (no re-render while typing),
   // value committed on blur/Enter, invalid input reset to the last valid
@@ -8,6 +10,7 @@
   // every numeric field is z.number().int() in the schema.
   const numberField = (label, value, onChange, min = 1, max = undefined) => (
     <Input
+      key={`${label}-${value}`}
       label={label}
       type="number"
       min={String(min)}
@@ -39,15 +42,17 @@
   const flushCfg = cfg.flush ?? {};
   const cacheCfg = cfg.cache ?? {};
 
-  // Presets (task 7 onboarding A): one-click coherent bundles. Every preset
-  // MERGES into the current config - unrelated sections are preserved.
-  const applyPreset = (name) => {
-    if (name === 'standard') {
-      updateConfig({ ...config, enabled: true, level: 'truncate', cache: { ...cacheCfg, profile: 'off', escapeHatch: true } });
-    } else if (name === 'cache') {
-      updateConfig({ ...config, enabled: true, cache: { ...cacheCfg, profile: 'auto', escapeHatch: true } });
-    } else if (name === 'max') {
-      updateConfig({ ...config, enabled: true, level: 'summarize', cache: { ...cacheCfg, profile: 'auto', escapeHatch: true } });
+  const selectMode = async (mode) => {
+    setPreviewing(true);
+    setPresetError(null);
+    try {
+      const next = await executeExtensionAction('previewMode', cfg, mode);
+      if (!next || typeof next !== 'object') throw new Error('Missing preset response');
+      updateConfig(next);
+    } catch {
+      setPresetError('Could not apply preset. Your settings were kept.');
+    } finally {
+      setPreviewing(false);
     }
   };
 
@@ -80,17 +85,44 @@
           The task's stored history is never touched - compression applies to the input of each model call.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-text-secondary">Presets:</span>
-          <Tooltip content="Standard behavior: level Truncate, cache profile Off. Good default when cache savings do not matter.">
-            <Button onClick={() => applyPreset('standard')}>Standard</Button>
-          </Tooltip>
-          <Tooltip content="Cache-friendly mode: cache profile Auto + escape hatch on. Keeps the provider prompt cache hitting - Claude bills cache writes at 1.25x and hits at 0.1x, GPT models bill cached input at 0.5x.">
-            <Button onClick={() => applyPreset('cache')}>Cache-optimiert</Button>
-          </Tooltip>
-          <Tooltip content="Most aggressive compression that still respects the provider cache: level Summarize + cache profile Auto + escape hatch on. Needs a configured summarizer backend.">
-            <Button onClick={() => applyPreset('max')}>Maximal komprimiert</Button>
-          </Tooltip>
+          <span className="text-xs text-text-secondary">Task length:</span>
+          {['short', 'normal', 'long', 'custom'].map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={(cfg.mode ?? 'custom') === value}
+              onClick={() => void selectMode(value)}
+              disabled={previewing}
+              className="text-xs px-2 py-1 rounded border"
+            >
+              {value}
+            </button>
+          ))}
+          {presetError ? <span style={{ color: '#e06c75' }}>{presetError}</span> : null}
         </div>
+        <Select
+          label="Task length"
+          value={cfg.mode ?? 'custom'}
+          onChange={(value) => void selectMode(value)}
+          options={[
+            { value: 'short', label: 'Short - fidelity first, lossless structural pass' },
+            { value: 'normal', label: 'Normal - truncation of old tool outputs (recommended)' },
+            { value: 'long', label: 'Long - summarization, tighter limits (needs backend)' },
+            { value: 'custom', label: 'Custom - keeps the current values' },
+          ]}
+        />
+        <Select
+          label="Broke automation"
+          value={cfg.autonomy ?? 'autonomous'}
+          onChange={(value) => updateConfig({ ...config, autonomy: value })}
+          options={[
+            { value: 'autonomous', label: 'Autonomous - all automatic features follow their switches' },
+            { value: 'manual', label: 'Manual - deterministic compression only; no automatic LLM calls' },
+          ]}
+        />
+        <p className="text-xs text-text-secondary -mt-2">
+          Autonomy affects Broke only - the host agent's approval settings are unchanged. /broke off remains the master switch.
+        </p>
       </div>
 
       {/* 2 - Thresholds */}

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **F5 mode presets & autonomy selector**: `/broke mode <short|normal|long|custom>`
+  applies a coherent task-length bundle (level, threshold, protected turns,
+  truncate limits, summarize-after) once; editing a preset-owned field flips
+  the label to `custom`. `/broke autonomy <autonomous|manual>` governs Broke
+  automation only (manual = no automatic summarization / tool rewrites /
+  auto-snapshots / index refresh; explicit commands still work; host agent
+  permissions unchanged). Both selectors lead in the settings panel and the
+  badge overlay; the badge shows the current mode/autonomy with an
+  accessible aria-label. Existing configs migrate to `custom`/`autonomous`.
+
 Post-release hardening and remediation for v1.2.0 (external security, architecture, and code review).
 
 ### Security

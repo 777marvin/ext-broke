@@ -77,3 +77,19 @@ describe('badge overlay UI actions (task 7)', () => {
     assert.equal(res.config.level, 'truncate', 'previous config kept');
   });
 });
+
+describe('F5 preset actions', () => {
+  it('previews canonical presets without saving; rejects invalid requests', async () => {
+    const ext = new Broke();
+    const host = makeHost();
+    const before = await ext.getConfigData();
+    const preview = await ext.executeUIExtensionAction('broke-status', 'previewMode', [before, 'long'], host) as { mode: string; level: string };
+    assert.equal(preview.mode, 'long');
+    assert.equal(preview.level, 'summarize');
+    assert.deepEqual(await ext.getConfigData(), before);
+    await assert.rejects(ext.executeUIExtensionAction('broke-status', 'previewMode', [before, 'bogus'], host));
+    const saved = await ext.executeUIExtensionAction('broke-status', 'setConfig', [preview], host) as { ok: boolean; config: { mode: string } };
+    assert.equal(saved.ok, true);
+    assert.equal(saved.config.mode, 'long');
+  });
+});
