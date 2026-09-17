@@ -23,9 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restoration; Cancel and Escape work during loading, previewing and errors
   but are blocked while saving); the badge shows the current
   mode/autonomy with an accessible aria-label. Existing configs migrate to
-  `custom`/`autonomous`. Rendered jsdom interaction tests cover the new UI
-  behavior (tests/ui-interactions.test.ts); live AiderDesk smoke test and
-  release are still pending.
+  `custom`/`autonomous`. Review-round hardening: batched config updates
+  apply mode bundles in order (later edits win; custom keeps an earlier
+  bundle), Long guidance follows the persistence value coercer, rapid
+  batched UI edits preserve every changed field and the `custom` label,
+  and `/broke` status reports mode/automation. Rendered jsdom interaction
+  tests cover the new UI behavior (tests/ui-interactions.test.ts); live
+  AiderDesk smoke test and release are still pending.
 
 Post-release hardening and remediation for v1.2.0 (external security, architecture, and code review).
 

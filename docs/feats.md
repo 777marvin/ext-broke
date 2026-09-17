@@ -80,9 +80,18 @@ idea-level, unscheduled candidates recorded 2026-08-28.
   but are blocked while saving; Task length + Broke automation selectors)
   and the top of the full settings panel; the canonical preset
   table lives in presets.ts and is consumed via the `previewMode` UI
-  action (never duplicated in JSX). Rendered jsdom interaction tests cover
-  Custom relabeling, stale-preview races, dialog focus/Escape/Save/Cancel
-  and command guidance ordering (tests/ui-interactions.test.ts).
+  action (never duplicated in JSX). Review-round hardening: batched config
+  updates apply each `mode` bundle at its position (later leaf edits win,
+  `custom` preserves an earlier bundle's values), the Long-guidance check
+  reuses the persistence value coercer (JSON escapes and whitespace cannot
+  bypass the pre-write disclosure), and the settings panel merges rapid
+  numeric/select edits through a synchronously tracked publish state so
+  batched edits neither lose values nor fake a preset label. Status and
+  badge surfaces report `mode`/`automation` explicitly. Rendered jsdom
+  interaction tests cover Custom relabeling (single and batched edits),
+  stale-preview races, dialog focus/Escape/Save/Cancel and command
+  guidance ordering (tests/ui-interactions.test.ts,
+  tests/ui-actions.test.ts, tests/config.test.ts).
 
   Exact preset table (canonical source: `presets.ts`):
 

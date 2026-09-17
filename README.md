@@ -458,11 +458,19 @@ Both it and the full settings panel offer **Task length**
 (`short / normal / long / custom`) and **Broke automation**
 (`autonomous / manual`) selectors. These settings are extension-wide;
 task-length presets leave the cache profile and escape hatch unchanged.
-The full settings panel retains cache controls and their inline tooltips.
-Cancel and Escape dismiss the badge dialog during loading, previewing, or
-errors, but are blocked while a save is in progress to avoid implying that
-an in-flight write was cancelled. `/broke measure` reports escape rewrites
-plus the provider-reported cache tokens (writes / reads / billed).
+Editing a preset-owned field (level, threshold, protected turns, truncate
+limits, summarize-after) relabels the mode to `custom` immediately, in the
+panel, in the badge dialog and on disk - a late write from the host or
+another surface cannot restore a stale preset label. Long-mode selection
+(`mode long` or `config set mode long`, any quoting that actually
+persists) shows the Ollama/cloud cost and consent guidance BEFORE the
+write; invalid spellings are reported as a rejection, never as pending
+Long guidance. The full settings panel retains cache controls and their
+inline tooltips. Cancel and Escape dismiss the badge dialog during
+loading, previewing, or errors, but are blocked while a save is in
+progress to avoid implying that an in-flight write was cancelled.
+`/broke measure` reports escape rewrites plus the provider-reported cache
+tokens (writes / reads / billed).
 
 ### ST-slicing (tool-level, opt-in)
 
@@ -597,6 +605,8 @@ the workspace root or target sensitive paths (`.env`, dot-directories, skipped f
 |---|---|---|
 | enabled | on | Master switch |
 | level | `truncate` | structural / truncate / summarize |
+| mode | `custom` | task-length preset label (short / normal / long / custom); an edit to any preset-owned field flips it to `custom` |
+| autonomy | `autonomous` | Broke automation only: `manual` suppresses automatic summarization, tool rewrites, auto-snapshots and index refreshes - explicit commands keep working |
 | maxContextChars | 60000 | ≈15k tokens, engages lossy passes |
 | protectedTurns | 2 | last N user turns never compressed |
 | cache.profile | `off` | off / auto / anthropic / openai - keep the provider prompt cache hitting (see Cache-friendly mode) |
