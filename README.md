@@ -640,10 +640,12 @@ first-class through `config set`.
 ## Status
 
 broke is in active development. The roadmap
-([docs/feats.md](docs/feats.md)) documents all four planned features with
-implementation specs (all four shipped; F4 local keyword search landed in
-v0.10.0) plus a candidate backlog of future ideas - mode presets with an
-autonomy selector, an expanded live UI (estimated savings next to proven
+([docs/feats.md](docs/feats.md)) documents the shipped features F1-F4 with
+implementation specs; Feature 5 (mode presets short/normal/long/custom with
+a Broke automation selector, reachable from the badge settings and the
+settings panel) is implemented on the development branch and pending its
+first release - see the exact preset table in docs/feats.md. Still on the
+candidate backlog: an expanded live UI (estimated savings next to proven
 ones, colored activity dot), minimalist operation and honest benchmarking -
 all unscheduled. Suggestions and bug reports are very welcome: just open an
 [issue](https://github.com/777marvin/ext-broke/issues).

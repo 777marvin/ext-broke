@@ -47,35 +47,52 @@ operation of the whole roadmap (flush) and must land after F1's stats/config
 mechanics exist. F4 is the largest and benefits from the patterns established
 by F1–F3.
 
-## Candidate backlog (proposed, unscheduled)
+## Feature 5 and candidate backlog
 
-Idea-level notes recorded 2026-08-28. None of these are scheduled or
-specified yet - a spec gets written here when a candidate is picked up.
-Numbering (F5+) is provisional.
+F5 is implemented in the unreleased development branch; live AiderDesk
+smoke verification and release remain separate gates. F6-F9 remain
+idea-level, unscheduled candidates recorded 2026-08-28.
 
 | # | Candidate | Type | Effort | Status |
 |---|-----------|------|--------|--------|
-| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | shipped (1.3.0) |
+| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | implemented (unreleased) |
 | F6 | Live-UI expansion: provable + estimated savings, colored activity dot | feat | M | proposed |
 | F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | proposed |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
 | F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
 
-- **F5 - Mode presets & autonomy selector (shipped v1.3.0).** Selectable
-  presets `short / normal / long` with tuned defaults per task length, plus
-  `custom` for user-defined values. Presets apply ONCE (they set the
-  preset-owned fields `level`, `maxContextChars`, `protectedTurns`,
-  `truncate.maxLines/maxKB`, `summarize.afterTurns`); unrelated settings
-  (cache, backend, consent, privacy) are never touched, and an edit to any
-  preset-owned field flips the label to `custom`. Autonomy selector governs
-  BROKE automation only - `manual` keeps deterministic input compression but
-  suppresses automatic LLM summarization, tool-result rewriting, milestone
-  snapshots and index refreshes; explicit `/broke` commands keep working and
-  host agent permissions are untouched. Legacy configs migrate to
-  `custom` + `autonomous` without value changes. Entry point: the badge
-  (aria-label + tooltip) and selectors at the top of both settings surfaces;
-  the canonical preset table lives in presets.ts and is consumed via the
-  `previewMode` UI action (never duplicated in JSX).
+- **F5 - Mode presets & autonomy selector (implemented, unreleased).**
+  Selectable presets `short / normal / long` with tuned defaults per task
+  length, plus `custom` for user-defined values. Presets apply ONCE (they
+  set the preset-owned fields `level`, `maxContextChars`,
+  `protectedTurns`, `truncate.maxLines/maxKB`, `summarize.afterTurns`);
+  unrelated settings (cache, backend, consent, privacy) are never touched,
+  and an edit to any preset-owned field flips the label to `custom`
+  immediately in the UI. Long-mode selection surfaces Ollama/cloud cost and
+  consent guidance BEFORE the command or selector persists it. Autonomy
+  selector governs BROKE automation only - `manual` keeps deterministic
+  input compression but suppresses automatic LLM summarization, tool-result
+  rewriting, milestone snapshots and index refreshes; explicit `/broke`
+  commands keep working and host agent permissions are untouched. Legacy
+  configs migrate to `custom` + `autonomous` without value changes. Entry
+  points: the badge gear (accessible dialog: focus trap, Escape, focus
+  restoration, always-available Cancel; Task length + Broke automation
+  selectors) and the top of the full settings panel; the canonical preset
+  table lives in presets.ts and is consumed via the `previewMode` UI
+  action (never duplicated in JSX). Rendered jsdom interaction tests cover
+  Custom relabeling, stale-preview races, dialog focus/Escape/Save/Cancel
+  and command guidance ordering (tests/ui-interactions.test.ts).
+
+  Exact preset table (canonical source: `presets.ts`):
+
+  | Setting | Short | Normal | Long |
+  |---|---|---|---|
+  | level | structural | truncate | summarize |
+  | maxContextChars | 60000 | 60000 | 60000 |
+  | protectedTurns | 2 | 2 | 2 |
+  | truncate.maxLines | 200 | 200 | 120 |
+  | truncate.maxKB | 20 | 20 | 12 |
+  | summarize.afterTurns | 8 | 8 | 4 |
 - **F6 - Live-UI expansion.** Show saved money twice: proven
   (measure-ledger backed) and estimated (chars/4-based, labeled) - the
   estimated value in addition to the proven one. Animated status dot with

@@ -1,7 +1,20 @@
-({ config, updateConfig, ui, executeExtensionAction }) => {
+({ config, updateConfig: publishConfig, ui, executeExtensionAction }) => {
   const { Select, Checkbox, Input, Tooltip } = ui;
   const [presetError, setPresetError] = React.useState(null);
   const [previewing, setPreviewing] = React.useState(false);
+  const revision = React.useRef(0);
+  const currentConfig = React.useRef(config);
+  currentConfig.current = config;
+  React.useEffect(() => () => { revision.current++; }, []);
+  const invalidatePreview = () => { revision.current++; setPreviewing(false); };
+  const updateConfig = (next) => {
+    invalidatePreview();
+    const ownedChanged = ['level', 'maxContextChars', 'protectedTurns'].some((key) => next[key] !== config?.[key])
+      || next.truncate?.maxLines !== config?.truncate?.maxLines
+      || next.truncate?.maxKB !== config?.truncate?.maxKB
+      || next.summarize?.afterTurns !== config?.summarize?.afterTurns;
+    publishConfig(ownedChanged ? { ...next, mode: 'custom' } : next);
+  };
 
   // Validated number field: uncontrolled input (no re-render while typing),
   // value committed on blur/Enter, invalid input reset to the last valid
@@ -43,63 +56,31 @@
   const cacheCfg = cfg.cache ?? {};
 
   const selectMode = async (mode) => {
+    const request = ++revision.current;
+    const source = config;
     setPreviewing(true);
     setPresetError(null);
     try {
       const next = await executeExtensionAction('previewMode', cfg, mode);
       if (!next || typeof next !== 'object') throw new Error('Missing preset response');
-      updateConfig(next);
+      if (revision.current === request && currentConfig.current === source) publishConfig(next);
     } catch {
-      setPresetError('Could not apply preset. Your settings were kept.');
+      if (revision.current === request) setPresetError('Could not apply preset. Your settings were kept.');
     } finally {
-      setPreviewing(false);
+      if (revision.current === request) setPreviewing(false);
     }
   };
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5" onChangeCapture={invalidatePreview}>
       <p className="text-xs text-text-secondary">
         Compresses the input context before it reaches the model - on every model call, not only at the built-in
         emergency threshold. Everything here can also be changed from the chat: <span className="font-mono">/broke help</span>.
       </p>
 
-      {/* 1 - Master switch + level */}
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium">Compression pipeline</p>
-        <Checkbox
-          label="Enable broke"
-          checked={cfg.enabled ?? true}
-          onChange={(checked) => updateConfig({ ...config, enabled: checked })}
-        />
-        <Select
-          label="Compression level"
-          value={cfg.level ?? 'truncate'}
-          onChange={(value) => updateConfig({ ...config, level: value })}
-          options={[
-            { value: 'structural', label: 'Structural - content-preserving only (empty/dedup/merge)' },
-            { value: 'truncate', label: 'Truncate - + head/tail truncation of old tool outputs (recommended)' },
-            { value: 'summarize', label: 'Summarize - + LLM summary of old turns (most aggressive)' },
-          ]}
-        />
-        <p className="text-xs text-text-secondary -mt-2">
-          The task's stored history is never touched - compression applies to the input of each model call.
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-text-secondary">Task length:</span>
-          {['short', 'normal', 'long', 'custom'].map((value) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={(cfg.mode ?? 'custom') === value}
-              onClick={() => void selectMode(value)}
-              disabled={previewing}
-              className="text-xs px-2 py-1 rounded border"
-            >
-              {value}
-            </button>
-          ))}
-          {presetError ? <span style={{ color: '#e06c75' }}>{presetError}</span> : null}
-        </div>
+      <section className="flex flex-col gap-2" aria-label="Mode settings">
+        <p className="text-xs text-text-secondary">Extension-wide settings: apply to every task using Broke.</p>
+        <p className="text-xs text-text-secondary">Before selecting Long: local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are not changed. Manual automation only reuses existing summaries.</p>
         <Select
           label="Task length"
           value={cfg.mode ?? 'custom'}
@@ -122,6 +103,31 @@
         />
         <p className="text-xs text-text-secondary -mt-2">
           Autonomy affects Broke only - the host agent's approval settings are unchanged. /broke off remains the master switch.
+        </p>
+        {previewing ? <p role="status">Previewing preset...</p> : null}
+        {presetError ? <p role="alert">{presetError}</p> : null}
+      </section>
+
+      {/* 1 - Master switch + level */}
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium">Compression pipeline</p>
+        <Checkbox
+          label="Enable broke"
+          checked={cfg.enabled ?? true}
+          onChange={(checked) => updateConfig({ ...config, enabled: checked })}
+        />
+        <Select
+          label="Compression level"
+          value={cfg.level ?? 'truncate'}
+          onChange={(value) => updateConfig({ ...config, level: value })}
+          options={[
+            { value: 'structural', label: 'Structural - content-preserving only (empty/dedup/merge)' },
+            { value: 'truncate', label: 'Truncate - + head/tail truncation of old tool outputs (recommended)' },
+            { value: 'summarize', label: 'Summarize - + LLM summary of old turns (most aggressive)' },
+          ]}
+        />
+        <p className="text-xs text-text-secondary -mt-2">
+          The task's stored history is never touched - compression applies to the input of each model call.
         </p>
       </div>
 

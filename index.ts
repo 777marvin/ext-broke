@@ -1142,6 +1142,10 @@ export default class Broke implements Extension {
             case 'unknown':
               return log(`broke: unknown command - ${cmd.raw} - /broke help lists all subcommands`);
             default: {
+              if ((cmd.kind === 'mode' && cmd.mode === 'long')
+                || (cmd.kind === 'config-set' && cmd.path === 'mode' && ['long', '"long"'].includes(cmd.value))) {
+                await log('Before applying Long (extension-wide): local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are unchanged. Manual automation only reuses existing summaries.');
+              }
               const updated = applyBrokeCommand(cmd, config);
               // Reconfiguring the summarizer backend/model is an explicit
               // retry intent: clear the auto-disable so the new setup runs.

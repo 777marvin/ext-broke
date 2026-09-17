@@ -93,3 +93,20 @@ describe('F5 preset actions', () => {
     assert.equal(saved.config.mode, 'long');
   });
 });
+
+describe('F5 Long guidance before command persistence', () => {
+  it('shows local/cloud guidance before both Long command entry points write settings', async () => {
+    const { getConfig, saveConfig, DEFAULT_CONFIG } = await import('../config');
+    for (const args of [['mode', 'long'], ['config', 'set', 'mode', 'long']]) {
+      saveConfig(DEFAULT_CONFIG);
+      const ext = new Broke();
+      const host = makeHost();
+      const seen: { text: string; mode: string }[] = [];
+      host.getTaskContext()!.addLogMessage = async (_level, text) => { seen.push({ text: text ?? '', mode: getConfig().mode }); };
+      await ext.getCommands(host)[0].execute(args, host);
+      assert.match(seen[0].text, /Ollama.*cloud.*cost/i);
+      assert.equal(seen[0].mode, 'custom', 'guidance precedes persistence');
+      assert.equal(getConfig().mode, 'long');
+    }
+  });
+});

@@ -8,49 +8,104 @@
   const [overlayCfg, setOverlayCfg] = React.useState(null);
   const [overlayError, setOverlayError] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
+  const [previewing, setPreviewing] = React.useState(false);
+  const revision = React.useRef(0);
+  const gearRef = React.useRef(null);
+  const dialogRef = React.useRef(null);
+  const draftRef = React.useRef(null);
+  const savingRef = React.useRef(false);
+  const setDraft = (next) => { draftRef.current = next; setOverlayCfg(next); };
+  const invalidatePreview = () => { revision.current++; setPreviewing(false); };
+  const closeOverlay = () => {
+    if (savingRef.current) return;
+    invalidatePreview();
+    setOverlayOpen(false);
+  };
+  React.useEffect(() => {
+    if (!overlayOpen) return undefined;
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    dialog?.focus();
+    return () => {
+      revision.current++;
+      dialog?.close();
+      gearRef.current?.focus();
+    };
+  }, [overlayOpen]);
 
-  const loadOverlayConfig = async () => {
+  const openOverlay = async () => {
+    const request = ++revision.current;
+    setOverlayOpen(true);
+    setDraft(null);
     setOverlayError(null);
     try {
       const c = await executeExtensionAction?.('getConfig');
-      setOverlayCfg(c && typeof c === 'object' ? c : null);
+      if (!c || typeof c !== 'object') throw new Error('Missing config');
+      if (revision.current === request) setDraft(c);
     } catch {
-      setOverlayError('could not load the config');
+      if (revision.current === request) setOverlayError('could not load the config');
     }
   };
-
-  const openOverlay = () => {
-    setOverlayOpen(true);
-    void loadOverlayConfig();
+  const selectMode = async (mode) => {
+    const request = ++revision.current;
+    setPreviewing(true);
+    setOverlayError(null);
+    try {
+      const next = await executeExtensionAction?.('previewMode', draftRef.current, mode);
+      if (!next || typeof next !== 'object') throw new Error('Missing preset response');
+      if (revision.current === request) setDraft(next);
+    } catch {
+      if (revision.current === request) setOverlayError('could not preview the preset; your settings were kept');
+    } finally {
+      if (revision.current === request) setPreviewing(false);
+    }
   };
-
   const saveOverlay = async () => {
+    if (savingRef.current || previewing || !draftRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
-      const res = (await executeExtensionAction?.('setConfig', overlayCfg)) as { ok?: boolean; config?: Record<string, unknown> } | undefined;
-      const ok = res?.ok === true;
-      if (res?.config && typeof res.config === 'object') {
-        setOverlayCfg(res.config);
-        setOverlayError(ok ? null : 'invalid value - the previous config was kept');
+      const res = (await executeExtensionAction?.('setConfig', draftRef.current)) as { ok?: boolean; config?: Record<string, unknown> } | undefined;
+      if (res?.ok !== true || !res.config) {
+        setOverlayError('invalid value - the previous config was kept');
+        return;
       }
-      if (ok) {
-        setOverlayOpen(false);
-        executeExtensionAction?.('refresh').catch?.(() => {});
-      }
+      setDraft(res.config);
+      revision.current++;
+      setOverlayOpen(false);
+      executeExtensionAction?.('refresh').catch?.(() => {});
     } catch {
       setOverlayError('could not save the config');
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
-
-  const patchOverlay = (patch) => setOverlayCfg((c) => (c && typeof c === 'object' ? { ...c, ...patch } : c));
-  const numberCommit = (key, fallback) => (e) => {
+  const patchOverlay = (patch) => {
+    if (savingRef.current) return;
+    invalidatePreview();
+    const c = draftRef.current;
+    if (!c) return;
+    const changed = ['level', 'maxContextChars', 'protectedTurns'].some((key) => key in patch && patch[key] !== c[key]);
+    setDraft({ ...c, ...patch, ...(changed ? { mode: 'custom' } : {}) });
+  };
+  const numberCommit = (key, fallback, max = Infinity) => (e) => {
     const n = Math.trunc(Number(e.target.value));
-    if (Number.isFinite(n) && n > 0) patchOverlay({ [key]: n });
-    else e.target.value = String(overlayCfg?.[key] ?? fallback);
+    if (Number.isFinite(n) && n >= 1 && n <= max) patchOverlay({ [key]: n });
+    else e.target.value = String(draftRef.current?.[key] ?? fallback);
   };
   const overlayCache = overlayCfg?.cache ?? {};
+  const dialogKeyDown = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeOverlay(); }
+    if (e.key === 'Tab') {
+      const controls = Array.from(dialogRef.current.querySelectorAll('button:not(:disabled),select:not(:disabled),input:not(:disabled)')) as HTMLElement[];
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (!first) { e.preventDefault(); return; }
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.current)) { e.preventDefault(); first.focus(); }
+    }
+  };
 
   // Polling fallback: re-fetches the data every 10s even if a push event
   // (triggerUIDataRefresh after a compression run) was missed by the
@@ -161,6 +216,9 @@
       ) : null}
       <button
         type="button"
+        ref={gearRef}
+        aria-haspopup="dialog"
+        aria-expanded={overlayOpen}
         aria-label={statusLabel}
         title={statusLabel}
         onClick={(e) => {
@@ -180,11 +238,21 @@
         ⚙
       </button>
       {overlayOpen ? (
-        <div
+        <dialog
+          ref={dialogRef}
+          tabIndex={-1}
+          aria-label="Broke settings"
+          aria-modal="true"
+          onCancel={(e) => { e.preventDefault(); closeOverlay(); }}
+          onKeyDown={dialogKeyDown}
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'fixed',
             inset: 0,
+            margin: 'auto',
+            padding: 0,
+            border: 0,
+            whiteSpace: 'normal',
             zIndex: 9999,
             display: 'flex',
             alignItems: 'center',
@@ -210,11 +278,29 @@
             }}
           >
             <div style={{ fontWeight: 600, fontSize: 13 }}>broke settings</div>
-            {overlayError ? <div style={{ color: '#e06c75' }}>{overlayError}</div> : null}
+            {overlayError ? <div role="alert" style={{ color: '#e06c75' }}>{overlayError}</div> : null}
+            <p>Extension-wide settings: apply to every task using Broke.</p>
+            <p>Before selecting Long: local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are not changed. Manual automation only reuses existing summaries.</p>
+            {previewing ? <p role="status">Previewing preset...</p> : null}
             {!overlayCfg ? (
               <div style={{ opacity: 0.7 }}>loading…</div>
             ) : (
-              <>
+              <fieldset disabled={saving} onChangeCapture={invalidatePreview} style={{ border: 0, padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <label>Task length
+                  <select value={overlayCfg.mode ?? 'custom'} onChange={(e) => void selectMode(e.target.value)}>
+                    <option value="short">Short - fidelity first</option>
+                    <option value="normal">Normal - truncate old outputs</option>
+                    <option value="long">Long - summarization (needs backend)</option>
+                    <option value="custom">Custom - keep current values</option>
+                  </select>
+                </label>
+                <label>Broke automation
+                  <select value={overlayCfg.autonomy ?? 'autonomous'} onChange={(e) => patchOverlay({ autonomy: e.target.value })}>
+                    <option value="autonomous">Autonomous - follow feature switches</option>
+                    <option value="manual">Manual - no automatic LLM calls or stored-history rewrites</option>
+                  </select>
+                </label>
+                <p>Host agent permissions are unchanged. Manual also pauses automatic snapshots and index refreshes; explicit commands still work. /broke off remains the master switch.</p>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <input
                     type="checkbox"
@@ -234,11 +320,11 @@
                 <div style={{ display: 'flex', gap: 8 }}>
                   <label style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
                     Max context chars
-                    <input type="number" min="1000" defaultValue={String(overlayCfg.maxContextChars ?? 60000)} onBlur={numberCommit('maxContextChars', 60000)} />
+                    <input key={overlayCfg.maxContextChars} type="number" min="1" defaultValue={String(overlayCfg.maxContextChars ?? 60000)} onBlur={numberCommit('maxContextChars', 60000)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
                   </label>
                   <label style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
                     Protected turns
-                    <input type="number" min="1" max="50" defaultValue={String(overlayCfg.protectedTurns ?? 2)} onBlur={numberCommit('protectedTurns', 2)} />
+                    <input key={overlayCfg.protectedTurns} type="number" min="1" max="50" defaultValue={String(overlayCfg.protectedTurns ?? 2)} onBlur={numberCommit('protectedTurns', 2, 50)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
                   </label>
                 </div>
                 <label
@@ -267,19 +353,15 @@
                   />
                   Escape hatch on budget overruns
                 </label>
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-                  <button type="button" onClick={() => setOverlayOpen(false)} style={{ padding: '4px 10px' }}>
-                    Cancel
-                  </button>
-                  <button type="button" onClick={() => void saveOverlay()} disabled={saving} style={{ padding: '4px 10px' }}>
-                    {saving ? 'saving…' : 'Save'}
-                  </button>
-                </div>
                 <div style={{ opacity: 0.6, fontSize: 11 }}>Full config: AiderDesk settings → Extensions → broke, or /broke help.</div>
-              </>
+              </fieldset>
             )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={closeOverlay} disabled={saving}>Cancel</button>
+              <button type="button" onClick={() => void saveOverlay()} disabled={saving || previewing || !overlayCfg}>{saving ? 'saving...' : 'Save'}</button>
+            </div>
           </div>
-        </div>
+        </dialog>
       ) : null}
     </div>
   );
