@@ -75,9 +75,10 @@ idea-level, unscheduled candidates recorded 2026-08-28.
   rewriting, milestone snapshots and index refreshes; explicit `/broke`
   commands keep working and host agent permissions are untouched. Legacy
   configs migrate to `custom` + `autonomous` without value changes. Entry
-  points: the badge gear (accessible dialog: focus trap, Escape, focus
-  restoration, always-available Cancel; Task length + Broke automation
-  selectors) and the top of the full settings panel; the canonical preset
+  points: the badge gear (accessible dialog: focus trap and focus
+  restoration; Cancel and Escape work during loading, previewing and errors
+  but are blocked while saving; Task length + Broke automation selectors)
+  and the top of the full settings panel; the canonical preset
   table lives in presets.ts and is consumed via the `previewMode` UI
   action (never duplicated in JSX). Rendered jsdom interaction tests cover
   Custom relabeling, stale-preview races, dialog focus/Escape/Save/Cancel

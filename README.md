@@ -453,10 +453,16 @@ byte-stable, so the provider's prompt cache keeps hitting between calls:
   With the hatch off, sent bytes are never rewritten - even over budget.
 
 
-The badge gear (⚙) opens a quick settings overlay with the core knobs;
-the settings dialog offers inline tooltips and presets (Standard /
-Cache-optimiert / Maximal komprimiert). `/broke measure` reports escape
-rewrites plus the provider-reported cache tokens (writes / reads / billed).
+The badge gear (⚙) opens a quick settings dialog with the core knobs.
+Both it and the full settings panel offer **Task length**
+(`short / normal / long / custom`) and **Broke automation**
+(`autonomous / manual`) selectors. These settings are extension-wide;
+task-length presets leave the cache profile and escape hatch unchanged.
+The full settings panel retains cache controls and their inline tooltips.
+Cancel and Escape dismiss the badge dialog during loading, previewing, or
+errors, but are blocked while a save is in progress to avoid implying that
+an in-flight write was cancelled. `/broke measure` reports escape rewrites
+plus the provider-reported cache tokens (writes / reads / billed).
 
 ### ST-slicing (tool-level, opt-in)
 

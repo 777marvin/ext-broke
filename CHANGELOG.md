@@ -19,8 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   automation only (manual = no automatic summarization / tool rewrites /
   auto-snapshots / index refresh; explicit commands still work; host agent
   permissions unchanged). Selectors lead in the settings panel and the
-  badge settings dialog (native dialog semantics: focus trap, Escape,
-  focus restoration, Cancel always available); the badge shows the current
+  badge settings dialog (native dialog semantics: focus trap and focus
+  restoration; Cancel and Escape work during loading, previewing and errors
+  but are blocked while saving); the badge shows the current
   mode/autonomy with an accessible aria-label. Existing configs migrate to
   `custom`/`autonomous`. Rendered jsdom interaction tests cover the new UI
   behavior (tests/ui-interactions.test.ts); live AiderDesk smoke test and
