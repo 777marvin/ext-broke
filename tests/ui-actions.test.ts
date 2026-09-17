@@ -97,7 +97,8 @@ describe('F5 preset actions', () => {
 describe('F5 Long guidance before command persistence', () => {
   it('shows local/cloud guidance before both Long command entry points write settings', async () => {
     const { getConfig, saveConfig, DEFAULT_CONFIG } = await import('../config');
-    for (const args of [['mode', 'long'], ['config', 'set', 'mode', 'long']]) {
+    const escapedLong = String.raw`"\u006cong"`;
+    for (const args of [['mode', 'long'], ['config', 'set', 'mode', 'long'], ['config', 'set', 'mode', escapedLong], ['config', 'set', 'mode', '  "long"  ']]) {
       saveConfig(DEFAULT_CONFIG);
       const ext = new Broke();
       const host = makeHost();
@@ -107,6 +108,23 @@ describe('F5 Long guidance before command persistence', () => {
       assert.match(seen[0].text, /Ollama.*cloud.*cost/i);
       assert.equal(seen[0].mode, 'custom', 'guidance precedes persistence');
       assert.equal(getConfig().mode, 'long');
+    }
+  });
+
+  it('fires Long guidance for every quoted config set spelling; persistence follows the coerce contract', async () => {
+    const { getConfig, saveConfig, DEFAULT_CONFIG } = await import('../config');
+    // Double quotes are unwrapped by coerceConfigValue (JSON) and persist;
+    // single quotes stay a raw string and are rejected by the schema.
+    for (const [raw, persisted] of [['"long"', 'long'], ["'long'", 'custom']] as const) {
+      saveConfig(DEFAULT_CONFIG);
+      const ext = new Broke();
+      const host = makeHost();
+      const seen: string[] = [];
+      host.getTaskContext()!.addLogMessage = async (_level, text) => { seen.push(text ?? ''); };
+      await ext.getCommands(host)[0].execute(['config', 'set', 'mode', raw], host);
+      if (persisted === 'long') assert.match(seen[0], /Ollama.*cloud.*cost/i);
+      else assert.match(seen[0], /rejected/i, 'invalid values are rejected without claiming Long will be applied');
+      assert.equal(getConfig().mode, persisted, `${raw} must ${persisted === 'long' ? 'persist through JSON unwrapping' : 'be rejected, keeping the previous config'}`);
     }
   });
 });

@@ -485,7 +485,7 @@ export function saveConfig(config: Config, filePath: string = CONFIG_PATH): void
 
 /** Apply dotted-path updates to a config WITHOUT touching the disk (pure). */
 export function applyConfigUpdates(current: Config, updates: Array<[string, unknown]>): Config {
-  const clone: Record<string, unknown> = {
+  let clone: Record<string, unknown> = {
     ...current,
     truncate: { ...current.truncate },
     errors: { ...current.errors },
@@ -513,10 +513,12 @@ export function applyConfigUpdates(current: Config, updates: Array<[string, unkn
       target = target[key] as Record<string, unknown>;
     }
     target[parts[parts.length - 1]] = value;
-  }
-  const modeUpdate = [...updates].reverse().find(([path]) => path === 'mode');
-  if (modeUpdate && ['short', 'normal', 'long', 'custom'].includes(String(modeUpdate[1]))) {
-    return ConfigSchema.parse(applyPreset(ConfigSchema.parse(clone), modeUpdate[1] as Mode));
+    if (path === 'mode') {
+      // Apply each bundle at its position, not after the batch. Custom keeps
+      // the values established by earlier presets; later leaf edits win.
+      const validated = ConfigSchema.parse(clone);
+      clone = applyPreset(validated, value as Mode);
+    }
   }
   return ConfigSchema.parse(clone);
 }

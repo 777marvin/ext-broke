@@ -108,6 +108,33 @@ describe('F5 rendered settings interactions', () => {
     assert.equal(calls.includes('setConfig'), false, 'full settings edits remain host-owned drafts');
   });
 
+  it('preserves owned edits and Custom when multiple fields publish before the next render', async () => {
+    await mount();
+    await React.act(async () => {
+      const chars = input('Max context chars');
+      chars.value = '72000';
+      chars.dispatchEvent(new win.FocusEvent('focusout', { bubbles: true }));
+      const turns = input('Protected turns');
+      turns.value = '3';
+      turns.dispatchEvent(new win.FocusEvent('focusout', { bubbles: true }));
+      const lines = input('Max lines');
+      lines.value = '80';
+      lines.dispatchEvent(new win.FocusEvent('focusout', { bubbles: true }));
+      const kb = input('Max KB');
+      kb.value = '8';
+      kb.dispatchEvent(new win.FocusEvent('focusout', { bubbles: true }));
+      const autonomy = input('Broke automation');
+      autonomy.value = 'manual';
+      autonomy.dispatchEvent(new win.Event('change', { bubbles: true }));
+    });
+    assert.equal(draft.maxContextChars, 72000);
+    assert.equal(draft.protectedTurns, 3);
+    assert.equal(draft.truncate.maxLines, 80);
+    assert.equal(draft.truncate.maxKB, 8);
+    assert.equal(draft.autonomy, 'manual');
+    assert.equal(draft.mode, 'custom');
+  });
+
   it('ignores stale previews after another selection or a newer unrelated draft edit', async () => {
     await mount();
     const base = action;

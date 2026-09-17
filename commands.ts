@@ -382,7 +382,7 @@ const formatConfigValue = (value: unknown): string => {
  * parses as JSON and falls back to a raw string. Zod validation happens
  * downstream in updateConfigPath.
  */
-function coerceConfigValue(path: string, raw: string): unknown {
+export function coerceConfigValue(path: string, raw: string): unknown {
   const hint = configValueAt(DEFAULT_CONFIG, path);
   if (typeof hint === 'boolean') {
     if (raw === 'true' || raw === 'on') return true;
@@ -682,7 +682,7 @@ export function formatMeasure(summary: MeasureSummary | null): string {
 export async function formatStatus(config: Config, stats: TaskStats | null, price?: TaskModelPrice | null): Promise<string> {
   const ollama = config.summarize.via === 'local' ? await ollamaStatus(config.summarize.ollamaUrl) : null;
   const lines = [
-    `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level})`,
+    `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level}, mode: ${config.mode}, automation: ${config.autonomy})`,
     `  maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} chars | protectedTurns: ${config.protectedTurns}`,
     `  truncate limits: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB | maxInputChars: ${config.truncate.maxInputChars}`,
     `  errors: ${config.errors.enabled ? 'on' : 'off'} | min ${config.errors.minChars.toLocaleString('en-US')} chars | ${config.errors.contextLines} context lines | tool-level: ${config.errors.toolLevel ? 'on' : 'off'} | archive: ${config.errors.archive ? 'on' : 'off'} (${config.errors.retentionDays} d retention)`,

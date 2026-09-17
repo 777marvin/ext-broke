@@ -13,7 +13,7 @@ import type {
   ToolFinishedEvent,
   UIComponentDefinition,
 } from '@aiderdesk/extensions';
-import { applyBrokeCommand, formatEstimate, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand, type BrokeCommand } from './commands';
+import { applyBrokeCommand, coerceConfigValue, formatEstimate, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand, type BrokeCommand } from './commands';
 import { applyPreset, type Mode } from './presets';
 import {
   ACTIVE_TURN_TAIL,
@@ -1142,8 +1142,10 @@ export default class Broke implements Extension {
             case 'unknown':
               return log(`broke: unknown command - ${cmd.raw} - /broke help lists all subcommands`);
             default: {
-              if ((cmd.kind === 'mode' && cmd.mode === 'long')
-                || (cmd.kind === 'config-set' && cmd.path === 'mode' && ['long', '"long"'].includes(cmd.value))) {
+              // Use the persistence coercer so JSON escapes and whitespace
+              // cannot select Long without the pre-write disclosure.
+              const setModeValue = cmd.kind === 'config-set' && cmd.path === 'mode' ? coerceConfigValue(cmd.path, cmd.value) : undefined;
+              if ((cmd.kind === 'mode' && cmd.mode === 'long') || setModeValue === 'long') {
                 await log('Before applying Long (extension-wide): local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are unchanged. Manual automation only reuses existing summaries.');
               }
               const updated = applyBrokeCommand(cmd, config);

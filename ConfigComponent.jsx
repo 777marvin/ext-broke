@@ -4,16 +4,34 @@
   const [previewing, setPreviewing] = React.useState(false);
   const revision = React.useRef(0);
   const currentConfig = React.useRef(config);
+  const lastPublished = React.useRef(config);
+  if (currentConfig.current !== config) lastPublished.current = config;
   currentConfig.current = config;
   React.useEffect(() => () => { revision.current++; }, []);
   const invalidatePreview = () => { revision.current++; setPreviewing(false); };
   const updateConfig = (next) => {
     invalidatePreview();
-    const ownedChanged = ['level', 'maxContextChars', 'protectedTurns'].some((key) => next[key] !== config?.[key])
-      || next.truncate?.maxLines !== config?.truncate?.maxLines
-      || next.truncate?.maxKB !== config?.truncate?.maxKB
-      || next.summarize?.afterTurns !== config?.summarize?.afterTurns;
-    publishConfig(ownedChanged ? { ...next, mode: 'custom' } : next);
+    // Handlers capture the last render. Apply only their changed fields to
+    // the latest published draft, preserving other edits in the same batch.
+    const previous = lastPublished.current ?? {};
+    const merged = { ...previous };
+    for (const key of Object.keys(next)) {
+      const value = next[key];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const block = { ...previous[key] };
+        for (const field of Object.keys(value)) {
+          if (value[field] !== config?.[key]?.[field]) block[field] = value[field];
+        }
+        merged[key] = block;
+      } else if (value !== config?.[key]) merged[key] = value;
+    }
+    const ownedChanged = ['level', 'maxContextChars', 'protectedTurns'].some((key) => merged[key] !== previous[key])
+      || merged.truncate?.maxLines !== previous.truncate?.maxLines
+      || merged.truncate?.maxKB !== previous.truncate?.maxKB
+      || merged.summarize?.afterTurns !== previous.summarize?.afterTurns;
+    const published = ownedChanged ? { ...merged, mode: 'custom' } : merged;
+    lastPublished.current = published;
+    publishConfig(published);
   };
 
   // Validated number field: uncontrolled input (no re-render while typing),
@@ -57,13 +75,16 @@
 
   const selectMode = async (mode) => {
     const request = ++revision.current;
-    const source = config;
+    const source = lastPublished.current;
     setPreviewing(true);
     setPresetError(null);
     try {
-      const next = await executeExtensionAction('previewMode', cfg, mode);
+      const next = await executeExtensionAction('previewMode', source ?? {}, mode);
       if (!next || typeof next !== 'object') throw new Error('Missing preset response');
-      if (revision.current === request && currentConfig.current === source) publishConfig(next);
+      if (revision.current === request && lastPublished.current === source) {
+        lastPublished.current = next;
+        publishConfig(next);
+      }
     } catch {
       if (revision.current === request) setPresetError('Could not apply preset. Your settings were kept.');
     } finally {
