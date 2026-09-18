@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **UI text readability fix**: All gray text in StatusBadge and ConfigComponent changed to black/dark gray (#000/#333)
+- **Quick Commands in status overlay**: 9 clickable `/broke` command buttons (status, stats, why, estimate, measure, summarize now, reset, selftest, help)
+- **Modernized UI design**: Card-based layouts with shadows, hover states, professional color scheme
+
+## [1.2.1] - 2026-09-18
+
+### Fixed
+
+- **Text readability**: Gray text in broke UI was barely readable - now black/dark gray
+  - StatusBadge: badge text, overlay dialog, all form fields use black (#000) or dark gray (#333)
+  - ConfigComponent: Replaced `text-text-secondary` with explicit `#333` color
+
+### Added
+
+- **Quick Commands section** in status badge overlay dialog with 9 clickable buttons:
+  - `/broke status` - Show config + stats
+  - `/broke stats` - Per-pass token savings
+  - `/broke why` - Why 0 saved?
+  - `/broke estimate` - Slice/flush/search avoided
+  - `/broke measure` - Per-run measurement ledger
+  - `/broke summarize now` - Pre-warm summary cache
+  - `/broke reset` - Clear task stats
+  - `/broke selftest` - Run pipeline self-test
+  - `/broke help` - Show all commands
+- **Modernized UI design**: Card-based layouts, proper shadows, hover/focus states, consistent spacing, professional color scheme
+
+### Added
+
 - **F5 mode presets & autonomy selector**: `/broke mode <short|normal|long|custom>`
   applies a coherent task-length bundle (level, threshold, protected turns,
   truncate limits, summarize-after) once; editing a preset-owned field
