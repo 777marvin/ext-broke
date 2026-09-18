@@ -15,6 +15,8 @@ function buildHelpText(d: Config): string {
 Usage: /broke <subcommand>
 
   status                        config + current task stats + Ollama status
+  mode <short|normal|long|custom> apply a task-length preset (extension-wide)
+  autonomy <autonomous|manual>  Broke automation only, not host agent permissions
   on | off                      enable / disable the compression pipeline
   level <structural|truncate|summarize>
                                 compression depth (default: truncate)
@@ -77,6 +79,8 @@ export const HELP_TEXT = buildHelpText(DEFAULT_CONFIG);
 
 export type BrokeCommand =
   | { kind: 'status' }
+  | { kind: 'mode'; mode: Config['mode'] }
+  | { kind: 'autonomy'; autonomy: Config['autonomy'] }
   | { kind: 'toggle'; enabled: boolean }
   | { kind: 'level'; level: Config['level'] }
   | { kind: 'maxchars'; value: number }
@@ -137,6 +141,12 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
     case undefined:
     case 'status':
       return { kind: 'status' };
+    case 'mode':
+      if (rest.length === 1 && ['short', 'normal', 'long', 'custom'].includes(rest[0])) return { kind: 'mode', mode: rest[0] as Config['mode'] };
+      return { kind: 'unknown', raw: args.join(' ') };
+    case 'autonomy':
+      if (rest.length === 1 && (rest[0] === 'autonomous' || rest[0] === 'manual')) return { kind: 'autonomy', autonomy: rest[0] };
+      return { kind: 'unknown', raw: args.join(' ') };
     case 'on':
       return { kind: 'toggle', enabled: true };
     case 'off':
@@ -372,7 +382,7 @@ const formatConfigValue = (value: unknown): string => {
  * parses as JSON and falls back to a raw string. Zod validation happens
  * downstream in updateConfigPath.
  */
-function coerceConfigValue(path: string, raw: string): unknown {
+export function coerceConfigValue(path: string, raw: string): unknown {
   const hint = configValueAt(DEFAULT_CONFIG, path);
   if (typeof hint === 'boolean') {
     if (raw === 'true' || raw === 'on') return true;
@@ -423,6 +433,10 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
         return { config, message: `rejected: ${cmd.path} = ${cmd.value} - ${reason}` };
       }
     }
+    case 'mode':
+      return { config: updateConfigPath('mode', cmd.mode, filePath), message: `mode → ${cmd.mode} (extension-wide)${cmd.mode === 'long' ? ' - summarization needs a configured backend; cloud use may incur costs' : ''}` };
+    case 'autonomy':
+      return { config: updateConfigPath('autonomy', cmd.autonomy, filePath), message: `Broke automation → ${cmd.autonomy} (host agent permissions unchanged)` };
     case 'toggle':
       return { config: updateConfigPath('enabled', cmd.enabled, filePath), message: `broke ${cmd.enabled ? 'enabled' : 'disabled'}` };
     case 'level':
@@ -668,7 +682,7 @@ export function formatMeasure(summary: MeasureSummary | null): string {
 export async function formatStatus(config: Config, stats: TaskStats | null, price?: TaskModelPrice | null): Promise<string> {
   const ollama = config.summarize.via === 'local' ? await ollamaStatus(config.summarize.ollamaUrl) : null;
   const lines = [
-    `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level})`,
+    `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level}, mode: ${config.mode}, automation: ${config.autonomy})`,
     `  maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} chars | protectedTurns: ${config.protectedTurns}`,
     `  truncate limits: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB | maxInputChars: ${config.truncate.maxInputChars}`,
     `  errors: ${config.errors.enabled ? 'on' : 'off'} | min ${config.errors.minChars.toLocaleString('en-US')} chars | ${config.errors.contextLines} context lines | tool-level: ${config.errors.toolLevel ? 'on' : 'off'} | archive: ${config.errors.archive ? 'on' : 'off'} (${config.errors.retentionDays} d retention)`,

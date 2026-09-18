@@ -66,10 +66,11 @@ describe('vendored host UI contract (BRK-024)', () => {
     assert.match(configComponent, /Cache profile/, 'the cache profile select exists');
     assert.match(configComponent, /value:\s*'auto'/, 'the auto profile option exists');
     assert.match(configComponent, /Escape hatch/, 'the escape hatch checkbox exists');
-    assert.match(configComponent, /Cache-optimiert/, 'the cache-friendly preset exists');
-    assert.match(configComponent, /Maximal komprimiert/, 'the max-compression preset exists');
+    assert.match(configComponent, /Task length/, 'F5 mode selector exists');
+    assert.match(configComponent, /Broke automation/, 'F5 autonomy selector exists');
+    assert.match(configComponent, /previewMode/, 'presets use the canonical backend');
     assert.match(configComponent, /<Tooltip/, 'options carry inline onboarding tooltips');
-    assert.match(configComponent, /<Button/, 'presets use the host Button primitive');
+    assert.match(configComponent, /key=\{.*value/, 'numeric inputs refresh after preset changes');
   });
 
   it('the badge wires the settings overlay to the validated config actions', () => {

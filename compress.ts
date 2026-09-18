@@ -913,6 +913,8 @@ function chunkRegionForSummarizer(
  * where the escape hatch sanctions rewriting them.
  */
 export interface SummarizeCacheGate {
+  /** Manual automation permits cached reuse, but never a new backend call. */
+  reuseOnly?: boolean;
   frozen?: (msg: ContextMessage) => boolean;
   escaping?: boolean;
 }
@@ -1029,6 +1031,8 @@ export async function summarizePass(
     const sentSummary = cached ? frozenFn(cached.message) : false;
     if (sentOriginals || sentSummary) return noop;
   }
+
+  if (gate?.reuseOnly) return noop;
 
   // --- Generate: full (re-)summarization -------------------------------------
   // Flatten the region once; both the single-call and the hierarchical path
@@ -1292,7 +1296,7 @@ async function executePasses(
   // discard the structural/truncate savings nor break the model call.
   if (config.level === 'summarize' && !opts.summarizeDisabled && totalCharsBefore > config.maxContextChars) {
     try {
-      const summarized = await summarizePass(work, config.protectedTurns, config, deps, state, taskId, { frozen: opts.cache?.frozen, escaping });
+      const summarized = await summarizePass(work, config.protectedTurns, config, deps, state, taskId, { frozen: opts.cache?.frozen, escaping, reuseOnly: config.autonomy === 'manual' });
       report.summarizeChars = summarized.removedChars;
       report.summarizedRanges = summarized.summarizedRanges;
       report.summarizeCalls = summarized.summarizeCalls;

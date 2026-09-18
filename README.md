@@ -223,6 +223,11 @@ commands) or from the gear icon on the extension card:
 
 ```
 /broke                             status + stats + ollama status
+/broke mode <short|normal|long|custom>
+                                   task-length preset (extension-wide)
+/broke autonomy <autonomous|manual>
+                                   Broke automation only; manual = no automatic
+                                   LLM summaries, tool rewrites or auto-snapshots
 /broke on | off                    enable / disable
 /broke level <structural|truncate|summarize>
 /broke maxchars <n>                engage lossy passes above ~n chars
@@ -448,10 +453,24 @@ byte-stable, so the provider's prompt cache keeps hitting between calls:
   With the hatch off, sent bytes are never rewritten - even over budget.
 
 
-The badge gear (⚙) opens a quick settings overlay with the core knobs;
-the settings dialog offers inline tooltips and presets (Standard /
-Cache-optimiert / Maximal komprimiert). `/broke measure` reports escape
-rewrites plus the provider-reported cache tokens (writes / reads / billed).
+The badge gear (⚙) opens a quick settings dialog with the core knobs.
+Both it and the full settings panel offer **Task length**
+(`short / normal / long / custom`) and **Broke automation**
+(`autonomous / manual`) selectors. These settings are extension-wide;
+task-length presets leave the cache profile and escape hatch unchanged.
+Editing a preset-owned field (level, threshold, protected turns, truncate
+limits, summarize-after) relabels the mode to `custom` immediately, in the
+panel, in the badge dialog and on disk - a late write from the host or
+another surface cannot restore a stale preset label. Long-mode selection
+(`mode long` or `config set mode long`, any quoting that actually
+persists) shows the Ollama/cloud cost and consent guidance BEFORE the
+write; invalid spellings are reported as a rejection, never as pending
+Long guidance. The full settings panel retains cache controls and their
+inline tooltips. Cancel and Escape dismiss the badge dialog during
+loading, previewing, or errors, but are blocked while a save is in
+progress to avoid implying that an in-flight write was cancelled.
+`/broke measure` reports escape rewrites plus the provider-reported cache
+tokens (writes / reads / billed).
 
 ### ST-slicing (tool-level, opt-in)
 
@@ -586,6 +605,8 @@ the workspace root or target sensitive paths (`.env`, dot-directories, skipped f
 |---|---|---|
 | enabled | on | Master switch |
 | level | `truncate` | structural / truncate / summarize |
+| mode | `custom` | task-length preset label (short / normal / long / custom); an edit to any preset-owned field flips it to `custom` |
+| autonomy | `autonomous` | Broke automation only: `manual` suppresses automatic summarization, tool rewrites, auto-snapshots and index refreshes - explicit commands keep working |
 | maxContextChars | 60000 | ≈15k tokens, engages lossy passes |
 | protectedTurns | 2 | last N user turns never compressed |
 | cache.profile | `off` | off / auto / anthropic / openai - keep the provider prompt cache hitting (see Cache-friendly mode) |
@@ -635,10 +656,12 @@ first-class through `config set`.
 ## Status
 
 broke is in active development. The roadmap
-([docs/feats.md](docs/feats.md)) documents all four planned features with
-implementation specs (all four shipped; F4 local keyword search landed in
-v0.10.0) plus a candidate backlog of future ideas - mode presets with an
-autonomy selector, an expanded live UI (estimated savings next to proven
+([docs/feats.md](docs/feats.md)) documents the shipped features F1-F4 with
+implementation specs; Feature 5 (mode presets short/normal/long/custom with
+a Broke automation selector, reachable from the badge settings and the
+settings panel) is implemented on the development branch and pending its
+first release - see the exact preset table in docs/feats.md. Still on the
+candidate backlog: an expanded live UI (estimated savings next to proven
 ones, colored activity dot), minimalist operation and honest benchmarking -
 all unscheduled. Suggestions and bug reports are very welcome: just open an
 [issue](https://github.com/777marvin/ext-broke/issues).

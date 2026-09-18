@@ -716,3 +716,14 @@ describe('config get/set/list (BRK-028)', () => {
     assert.ok(proto.message.includes('rejected'), 'prototype-path writes are refused');
   });
 });
+
+
+describe('F5 status visibility', () => {
+  it('reports mode and automation without probing a local backend', async () => {
+    const { formatStatus } = await import('../commands');
+    const { applyPreset } = await import('../presets');
+    const config = applyPreset(DEFAULT_CONFIG, 'long');
+    const text = await formatStatus({ ...config, autonomy: 'manual', summarize: { ...config.summarize, via: 'cloud' } }, null);
+    assert.match(text, /mode: long, automation: manual/);
+  });
+});

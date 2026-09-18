@@ -13,7 +13,8 @@ import type {
   ToolFinishedEvent,
   UIComponentDefinition,
 } from '@aiderdesk/extensions';
-import { applyBrokeCommand, formatEstimate, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand, type BrokeCommand } from './commands';
+import { applyBrokeCommand, coerceConfigValue, formatEstimate, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand, type BrokeCommand } from './commands';
+import { applyPreset, type Mode } from './presets';
 import {
   ACTIVE_TURN_TAIL,
   compressibleRange,
@@ -608,7 +609,7 @@ export default class Broke implements Extension {
   async onAfterCommit(event: AfterCommitEvent, context: ExtensionContext): Promise<void> {
     try {
       const config = getConfig();
-      if (!config.enabled || !config.snapshot.onCommit || !event.message) return;
+      if (!config.enabled || config.autonomy === 'manual' || !config.snapshot.onCommit || !event.message) return;
       await this.snapshotMilestone(context, 'commit', event.message.split('\n')[0].slice(0, 200));
       // F4 trigger (throttled inside): keep the keyword index warm so the
       // next broke-search call does not pay the whole incremental walk.
@@ -624,7 +625,7 @@ export default class Broke implements Extension {
 
   private async toolFinished(event: ToolFinishedEvent, context: ExtensionContext): Promise<Partial<ToolFinishedEvent> | void> {
     const config = getConfig();
-    if (!config.enabled) return;
+    if (!config.enabled || config.autonomy === 'manual') return;
 
     const sliced = await this.sliceOnToolFinished(event, config, context);
     if (sliced) return sliced;
@@ -1141,6 +1142,12 @@ export default class Broke implements Extension {
             case 'unknown':
               return log(`broke: unknown command - ${cmd.raw} - /broke help lists all subcommands`);
             default: {
+              // Use the persistence coercer so JSON escapes and whitespace
+              // cannot select Long without the pre-write disclosure.
+              const setModeValue = cmd.kind === 'config-set' && cmd.path === 'mode' ? coerceConfigValue(cmd.path, cmd.value) : undefined;
+              if ((cmd.kind === 'mode' && cmd.mode === 'long') || setModeValue === 'long') {
+                await log('Before applying Long (extension-wide): local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are unchanged. Manual automation only reuses existing summaries.');
+              }
               const updated = applyBrokeCommand(cmd, config);
               // Reconfiguring the summarizer backend/model is an explicit
               // retry intent: clear the auto-disable so the new setup runs.
@@ -1629,6 +1636,8 @@ export default class Broke implements Extension {
     const savedUsd = price ? savedCostUsd(totalTokens, price.inputPerMToken) : null;
     return {
       level: config.enabled ? config.level : 'off',
+      mode: config.mode,
+      autonomy: config.autonomy,
       // What the user configured (the badge must show this even when the
       // summarizer never fired yet) vs. what was actually used.
       summarizerConfigured: config.enabled && config.level === 'summarize' ? config.summarize.via : 'none',
@@ -1687,6 +1696,11 @@ export default class Broke implements Extension {
   async executeUIExtensionAction(_componentId: string, action: string, args: unknown[], _context: ExtensionContext): Promise<unknown> {
     if (action === 'refresh') this.refreshUI();
     if (action === 'getConfig') return getConfig();
+    if (action === 'previewMode') {
+      const mode = args[1];
+      if (typeof mode !== 'string' || !['short', 'normal', 'long', 'custom'].includes(mode)) throw new Error('Invalid mode');
+      return ConfigSchema.parse(applyPreset(ConfigSchema.parse(args[0]), mode as Mode));
+    }
     if (action === 'setConfig') {
       // saveConfigData returns the PREVIOUS config when the schema rejected
       // the value - the overlay must SEE that rejection instead of silently

@@ -128,6 +128,40 @@ describe('applyConfigUpdates', () => {
     assert.throws(() => applyConfigUpdates({ ...DEFAULT_CONFIG }, [['summarize.afterTurns', 1]]));
   });
 
+  it('applies mode in a batch like the last update: later explicit edits win over the preset bundle (R1)', () => {
+    // Later-wins order: an explicit leaf update AFTER the mode update must
+    // survive - the preset bundle must not clobber it retroactively.
+    const laterWins = applyConfigUpdates(DEFAULT_CONFIG, [['mode', 'long'], ['maxContextChars', 90000]]);
+    assert.equal(laterWins.mode, 'custom', 'a later preset-owned edit relabels to custom (F5 rule)');
+    assert.equal(laterWins.maxContextChars, 90000, 'a later explicit edit must beat the preset bundle');
+    assert.equal(laterWins.level, 'summarize', 'earlier preset fields still apply');
+    // First-wins order: an explicit leaf edit BEFORE the mode update is
+    // superseded by the preset - the bundle applies on top, as a user would
+    // expect from "set mode long".
+    const firstWins = applyConfigUpdates(DEFAULT_CONFIG, [['maxContextChars', 90000], ['mode', 'long']]);
+    assert.equal(firstWins.mode, 'long');
+    assert.equal(firstWins.maxContextChars, 60000);
+  });
+
+  it('applies every mode update in sequence, including Custom preserving an earlier bundle', () => {
+    const sequences: Array<Array<[string, unknown]>> = [
+      [['mode', 'long'], ['mode', 'custom']],
+      [['mode', 'long'], ['maxContextChars', 90000], ['mode', 'custom']],
+      [['mode', 'short'], ['mode', 'long'], ['autonomy', 'manual'], ['mode', 'custom']],
+      [['mode', 'long'], ['mode', 'normal'], ['truncate.maxKB', 10]],
+    ];
+    const before = structuredClone(DEFAULT_CONFIG);
+    for (const updates of sequences) {
+      const sequential = updates.reduce((config, update) => applyConfigUpdates(config, [update]), DEFAULT_CONFIG);
+      assert.deepEqual(applyConfigUpdates(DEFAULT_CONFIG, updates), sequential);
+    }
+    assert.deepEqual(DEFAULT_CONFIG, before, 'batch updates must not mutate the input');
+    const custom = applyConfigUpdates(DEFAULT_CONFIG, [['mode', 'long'], ['mode', 'custom']]);
+    assert.equal(custom.mode, 'custom');
+    assert.equal(custom.level, 'summarize');
+    assert.equal(custom.truncate.maxLines, 120);
+  });
+
   it('CONF-001: preserves cache block immutability when applying updates', () => {
     const before = mergeConfig({});
     const previous = before.cache.profile;

@@ -848,3 +848,35 @@ describe('project-scoped indexing via execution contexts (regression: "no open p
     assert.equal(lines[0], 'broke: no open project - indexing is project-scoped');
   });
 });
+
+describe('F5 manual automation policy', () => {
+  it('keeps deterministic compression but generates no automatic summaries', async () => {
+    writeConfig({ autonomy: 'manual' });
+    const messages = buildSyntheticMessages();
+    const { context, state } = makeHost('manual-optimize', () => 'summary', messages);
+    const ext = new Broke();
+    attachContext(ext, context);
+    const result = await ext.onOptimizeMessages({ originalMessages: messages, optimizedMessages: messages } as OptimizeMessagesEvent, context);
+    assert.equal(state.summarizeCalls, 0);
+    assert.ok(result?.optimizedMessages, 'deterministic input compression still works');
+  });
+
+  it('suppresses tool rewrites and automatic milestones but allows explicit summary commands', async () => {
+    writeConfig({ autonomy: 'manual', snapshot: { ...DEFAULT_CONFIG.snapshot, onCommit: true, onTestPass: true } });
+    const messages = buildSyntheticMessages();
+    const { context, state } = makeHost('manual-tools', () => 'Concise summary', messages);
+    const ext = new Broke();
+    attachContext(ext, context);
+    let milestones = 0;
+    let refreshes = 0;
+    (ext as any).snapshotMilestone = async () => { milestones++; return 'snapshot'; };
+    (ext as any).refreshIndexFromSignal = () => { refreshes++; };
+    const event = { toolName: 'power---bash', output: bigTscError() } as ToolFinishedEvent;
+    assert.equal(await ext.onToolFinished(event, context), undefined);
+    await ext.onAfterCommit({ message: 'commit' } as any, context);
+    assert.equal(milestones, 0);
+    assert.equal(refreshes, 0);
+    await (ext as any).summarizeNow(context);
+    assert.ok(state.summarizeCalls > 0, 'explicit summarize now remains available');
+  });
+});

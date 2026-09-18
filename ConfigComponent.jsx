@@ -1,5 +1,38 @@
-({ config, updateConfig, ui }) => {
-  const { Select, Checkbox, Input, Tooltip, Button } = ui;
+({ config, updateConfig: publishConfig, ui, executeExtensionAction }) => {
+  const { Select, Checkbox, Input, Tooltip } = ui;
+  const [presetError, setPresetError] = React.useState(null);
+  const [previewing, setPreviewing] = React.useState(false);
+  const revision = React.useRef(0);
+  const currentConfig = React.useRef(config);
+  const lastPublished = React.useRef(config);
+  if (currentConfig.current !== config) lastPublished.current = config;
+  currentConfig.current = config;
+  React.useEffect(() => () => { revision.current++; }, []);
+  const invalidatePreview = () => { revision.current++; setPreviewing(false); };
+  const updateConfig = (next) => {
+    invalidatePreview();
+    // Handlers capture the last render. Apply only their changed fields to
+    // the latest published draft, preserving other edits in the same batch.
+    const previous = lastPublished.current ?? {};
+    const merged = { ...previous };
+    for (const key of Object.keys(next)) {
+      const value = next[key];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const block = { ...previous[key] };
+        for (const field of Object.keys(value)) {
+          if (value[field] !== config?.[key]?.[field]) block[field] = value[field];
+        }
+        merged[key] = block;
+      } else if (value !== config?.[key]) merged[key] = value;
+    }
+    const ownedChanged = ['level', 'maxContextChars', 'protectedTurns'].some((key) => merged[key] !== previous[key])
+      || merged.truncate?.maxLines !== previous.truncate?.maxLines
+      || merged.truncate?.maxKB !== previous.truncate?.maxKB
+      || merged.summarize?.afterTurns !== previous.summarize?.afterTurns;
+    const published = ownedChanged ? { ...merged, mode: 'custom' } : merged;
+    lastPublished.current = published;
+    publishConfig(published);
+  };
 
   // Validated number field: uncontrolled input (no re-render while typing),
   // value committed on blur/Enter, invalid input reset to the last valid
@@ -8,6 +41,7 @@
   // every numeric field is z.number().int() in the schema.
   const numberField = (label, value, onChange, min = 1, max = undefined) => (
     <Input
+      key={`${label}-${value}`}
       label={label}
       type="number"
       min={String(min)}
@@ -39,24 +73,61 @@
   const flushCfg = cfg.flush ?? {};
   const cacheCfg = cfg.cache ?? {};
 
-  // Presets (task 7 onboarding A): one-click coherent bundles. Every preset
-  // MERGES into the current config - unrelated sections are preserved.
-  const applyPreset = (name) => {
-    if (name === 'standard') {
-      updateConfig({ ...config, enabled: true, level: 'truncate', cache: { ...cacheCfg, profile: 'off', escapeHatch: true } });
-    } else if (name === 'cache') {
-      updateConfig({ ...config, enabled: true, cache: { ...cacheCfg, profile: 'auto', escapeHatch: true } });
-    } else if (name === 'max') {
-      updateConfig({ ...config, enabled: true, level: 'summarize', cache: { ...cacheCfg, profile: 'auto', escapeHatch: true } });
+  const selectMode = async (mode) => {
+    const request = ++revision.current;
+    const source = lastPublished.current;
+    setPreviewing(true);
+    setPresetError(null);
+    try {
+      const next = await executeExtensionAction('previewMode', source ?? {}, mode);
+      if (!next || typeof next !== 'object') throw new Error('Missing preset response');
+      if (revision.current === request && lastPublished.current === source) {
+        lastPublished.current = next;
+        publishConfig(next);
+      }
+    } catch {
+      if (revision.current === request) setPresetError('Could not apply preset. Your settings were kept.');
+    } finally {
+      if (revision.current === request) setPreviewing(false);
     }
   };
 
   return (
-    <div className="flex flex-col gap-5">
-      <p className="text-xs text-text-secondary">
+    <div className="flex flex-col gap-5" onChangeCapture={invalidatePreview}>
+      <p style={{ fontSize: '12px', color: '#333' }}>
         Compresses the input context before it reaches the model - on every model call, not only at the built-in
-        emergency threshold. Everything here can also be changed from the chat: <span className="font-mono">/broke help</span>.
+        emergency threshold. Everything here can also be changed from the chat: <span style={{ fontFamily: 'monospace' }}>/broke help</span>.
       </p>
+
+      <section className="flex flex-col gap-2" aria-label="Mode settings">
+        <p style={{ fontSize: '12px', color: '#333' }}>Extension-wide settings: apply to every task using Broke.</p>
+        <p style={{ fontSize: '12px', color: '#333' }}>Before selecting Long: local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are not changed. Manual automation only reuses existing summaries.</p>
+        <Select
+          label="Task length"
+          value={cfg.mode ?? 'custom'}
+          onChange={(value) => void selectMode(value)}
+          options={[
+            { value: 'short', label: 'Short - fidelity first, lossless structural pass' },
+            { value: 'normal', label: 'Normal - truncation of old tool outputs (recommended)' },
+            { value: 'long', label: 'Long - summarization, tighter limits (needs backend)' },
+            { value: 'custom', label: 'Custom - keeps the current values' },
+          ]}
+        />
+        <Select
+          label="Broke automation"
+          value={cfg.autonomy ?? 'autonomous'}
+          onChange={(value) => updateConfig({ ...config, autonomy: value })}
+          options={[
+            { value: 'autonomous', label: 'Autonomous - all automatic features follow their switches' },
+            { value: 'manual', label: 'Manual - deterministic compression only; no automatic LLM calls' },
+          ]}
+        />
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
+          Autonomy affects Broke only - the host agent's approval settings are unchanged. /broke off remains the master switch.
+        </p>
+        {previewing ? <p role="status">Previewing preset...</p> : null}
+        {presetError ? <p role="alert">{presetError}</p> : null}
+      </section>
 
       {/* 1 - Master switch + level */}
       <div className="flex flex-col gap-2">
@@ -76,21 +147,9 @@
             { value: 'summarize', label: 'Summarize - + LLM summary of old turns (most aggressive)' },
           ]}
         />
-        <p className="text-xs text-text-secondary -mt-2">
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
           The task's stored history is never touched - compression applies to the input of each model call.
         </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-text-secondary">Presets:</span>
-          <Tooltip content="Standard behavior: level Truncate, cache profile Off. Good default when cache savings do not matter.">
-            <Button onClick={() => applyPreset('standard')}>Standard</Button>
-          </Tooltip>
-          <Tooltip content="Cache-friendly mode: cache profile Auto + escape hatch on. Keeps the provider prompt cache hitting - Claude bills cache writes at 1.25x and hits at 0.1x, GPT models bill cached input at 0.5x.">
-            <Button onClick={() => applyPreset('cache')}>Cache-optimiert</Button>
-          </Tooltip>
-          <Tooltip content="Most aggressive compression that still respects the provider cache: level Summarize + cache profile Auto + escape hatch on. Needs a configured summarizer backend.">
-            <Button onClick={() => applyPreset('max')}>Maximal komprimiert</Button>
-          </Tooltip>
-        </div>
       </div>
 
       {/* 2 - Thresholds */}
@@ -104,7 +163,7 @@
             updateConfig({ ...config, protectedTurns: n }),
           1, 50)}
         </div>
-        <p className="text-xs text-text-secondary -mt-2">
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
           chars/4 ≈ tokens. The default (60000 chars ≈ 15k tokens) engages before AiderDesk's built-in compaction
           (default 30% of the context window).
         </p>
@@ -133,11 +192,11 @@
             onChange={(checked) => updateConfig({ ...config, cache: { ...cacheCfg, escapeHatch: checked } })}
           />
         </Tooltip>
-        <p className="text-xs text-text-secondary -mt-2">
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
           Cache-friendly mode keeps every byte already sent to the model byte-stable, so the provider's prompt cache
           keeps hitting instead of being rewritten on every call. Real overruns of the max context chars budget use the
           escape hatch (one rewrite, cache re-stabilizes afterwards). Measured effects show up in{' '}
-          <span className="font-mono">/broke measure</span>.
+          <span style={{ fontFamily: 'monospace' }}>/broke measure</span>.
         </p>
       </div>
 
@@ -174,10 +233,10 @@
             1, 365)}
           </div>
         ) : null}
-        <p className="text-xs text-text-secondary -mt-2">
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
           Privacy note: the archive stores raw tool output (source code, URLs, paths) locally on disk, redacted on a
           best-effort basis. It is capped at 100 MB and files older than the retention age are deleted;{' '}
-          <span className="font-mono">/broke errors clear</span> removes everything now.
+          <span style={{ fontFamily: 'monospace' }}>/broke errors clear</span> removes everything now.
         </p>
       </div>
 
@@ -251,9 +310,9 @@
             updateConfig({ ...config, summarize: { ...summarize, maxSummaryChars: n } }),
           )}
         </div>
-        <p className="text-xs text-text-secondary -mt-2">
-          Local summarization needs Ollama running (<span className="font-mono">ollama serve</span>) with the model
-          pulled (<span className="font-mono">ollama pull {summarize.localModel ?? 'qwen2.5-coder:3b'}</span>). The
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
+          Local summarization needs Ollama running (<span style={{ fontFamily: 'monospace' }}>ollama serve</span>) with the model
+          pulled (<span style={{ fontFamily: 'monospace' }}>ollama pull {summarize.localModel ?? 'qwen2.5-coder:3b'}</span>). The
           first summary after the threshold adds a short delay; later runs reuse the cached summary until new turns arrive.
         </p>
       </div>
@@ -280,11 +339,11 @@
             updateConfig({ ...config, search: { ...searchCfg, maxFileKB: n } }),
           )}
         </div>
-        <p className="text-xs text-text-secondary -mt-2">
-          The per-project index under <span className="font-mono">index/</span> stores term postings and metadata only -
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
+          The per-project index under <span style={{ fontFamily: 'monospace' }}>index/</span> stores term postings and metadata only -
           never file contents; snippets are read live from disk. Honest tradeoff: every registered tool ships its JSON
           schema with each model call, so disable this if every token counts.{' '}
-          <span className="font-mono">/broke index status</span> reports what was built.
+          <span style={{ fontFamily: 'monospace' }}>/broke index status</span> reports what was built.
         </p>
       </div>
 
@@ -301,9 +360,9 @@
           checked={statsCfg.measure ?? true}
           onChange={(checked) => updateConfig({ ...config, stats: { ...statsCfg, measure: checked } })}
         />
-        <p className="text-xs text-text-secondary -mt-2">
-          Per-run records (sizes + per-pass removals, no content, no paths) are what <span className="font-mono">/broke
-          measure</span> and <span className="font-mono">npm run measure</span> analyze - the provable real-session
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
+          Per-run records (sizes + per-pass removals, no content, no paths) are what <span style={{ fontFamily: 'monospace' }}>/broke
+          measure</span> and <span style={{ fontFamily: 'monospace' }}>npm run measure</span> analyze - the provable real-session
           numbers. At 5 MB the file is rotated aside (kept as .1/.2/.3) instead of being rewritten.
         </p>
       </div>
@@ -336,9 +395,9 @@
           checked={flushCfg.undo ?? true}
           onChange={(checked) => updateConfig({ ...config, flush: { ...flushCfg, undo: checked } })}
         />
-        <p className="text-xs text-text-secondary -mt-2">
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
           Snapshots are small JSON milestones; only the destructive flush writes raw history (undo file), and only when
-          this switch is on. Every option here is also reachable via <span className="font-mono">/broke config get|set</span>.
+          this switch is on. Every option here is also reachable via <span style={{ fontFamily: 'monospace' }}>/broke config get|set</span>.
         </p>
       </div>
     </div>
