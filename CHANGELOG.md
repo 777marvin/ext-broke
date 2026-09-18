@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Quick Commands in status overlay**: 9 clickable `/broke` command buttons (status, stats, why, estimate, measure, summarize now, reset, selftest, help)
 - **Modernized UI design**: Card-based layouts with shadows, hover states, professional color scheme
 
+## [1.2.2] - 2026-09-18
+
+### Fixed
+
+- Release artifact signing: fix tag/commit mismatch (v1.2.1 tag pointed to wrong commit)
+
+### Added
+
+- Same UI improvements as v1.2.1 (text readability, quick commands, modernized design)
+
 ## [1.2.1] - 2026-09-18
 
 ### Fixed
