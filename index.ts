@@ -177,8 +177,14 @@ function scanBiggestCommandResultChars(messages: ReadonlyArray<{ role?: unknown;
     if (m.role !== 'tool' || !Array.isArray(m.content)) continue;
     for (const part of m.content as Array<Record<string, unknown>>) {
       if (part.type !== 'tool-result') continue;
-      const out = part.output as { value?: unknown } | undefined;
-      const text = typeof out?.value === 'string' ? out.value : '';
+      // L1: command tools return the STRUCTURED {type:'json', value:
+      // {stdout,stderr,exitCode}} shape, not a plain string. Reading only
+      // string values made this report "0 chars" for a 100 KB bash dump -
+      // the diagnostic meant to explain a zero was lying (the error pass
+      // itself was fine: it uses the canonical extractor). Only the
+      // LENGTH is used, so privacy parity with the ledger is preserved.
+      const extracted = extractOutputText(part.output);
+      const text = extracted ? extracted.text : '';
       if (!isCommandTool(typeof part.toolName === 'string' ? part.toolName : '')) continue;
       if (text.length > biggest) biggest = text.length;
     }

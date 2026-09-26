@@ -63,6 +63,12 @@ function input(label: string): HTMLInputElement | HTMLSelectElement {
   assert.ok(el, `missing field: ${label}`);
   return el as HTMLInputElement;
 }
+/** Narrowed accessor for attributes that only exist on <input>. */
+function numberInput(label: string): HTMLInputElement {
+  const el = input(label);
+  assert.ok(el instanceof win.HTMLInputElement, `not a number field: ${label}`);
+  return el as HTMLInputElement;
+}
 function button(text: string): HTMLButtonElement {
   const el = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === text);
   assert.ok(el, `missing button: ${text}`);
@@ -221,6 +227,45 @@ describe('F5 rendered badge dialog interactions', () => {
     await click(button('Save'));
     assert.match(container.textContent!, /could not save/i);
     await click(button('Cancel'));
+  });
+});
+
+describe('L2 search fields mirror the schema bounds', () => {
+  it('carries the schema min/max on both search number fields', async () => {
+    await mount(false, applyPreset(DEFAULT_CONFIG, 'long'));
+    const budget = numberInput('Total char budget per query');
+    const size = numberInput('Skip files larger than (KB)');
+    assert.equal(budget.min, '500');
+    assert.equal(budget.max, '50000');
+    assert.equal(size.min, '1');
+    assert.equal(size.max, '2048');
+  });
+
+  it('resets an out-of-schema search maxChars to the last valid value', async () => {
+    await mount(false, applyPreset(DEFAULT_CONFIG, 'long'));
+    await number('Total char budget per query', '100');
+    assert.equal(input('Total char budget per query').value, '6000', 'below the floor resets');
+    await number('Total char budget per query', '60000');
+    assert.equal(input('Total char budget per query').value, '6000', 'above the ceiling resets');
+  });
+
+  it('resets an out-of-schema search maxFileKB to the last valid value', async () => {
+    await mount(false, applyPreset(DEFAULT_CONFIG, 'long'));
+    await number('Skip files larger than (KB)', '0');
+    assert.equal(input('Skip files larger than (KB)').value, '512', 'below the floor resets');
+    await number('Skip files larger than (KB)', '5000');
+    assert.equal(input('Skip files larger than (KB)').value, '512', 'above the ceiling resets');
+  });
+
+  it('still commits an in-range search value', async () => {
+    await mount(false, applyPreset(DEFAULT_CONFIG, 'long'));
+    // Assert the published draft, not the uncontrolled input's DOM value -
+    // numberField re-keys on change, which the rest of this suite also
+    // avoids depending on.
+    await number('Total char budget per query', '12000');
+    assert.equal(draft.search.maxChars, 12000);
+    await number('Skip files larger than (KB)', '2048');
+    assert.equal(draft.search.maxFileKB, 2048, 'the ceiling itself is still accepted');
   });
 });
 

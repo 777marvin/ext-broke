@@ -420,6 +420,47 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.match(out, /structural: 0 is honest/);
   });
 
+  // L1 (external review): command tools do NOT return a plain string - they
+  // return the structured {type:'json', value:{stdout,stderr,exitCode}} shape
+  // that output.ts/extractOutputText exists to normalize. The /broke why
+  // diagnostic counted only string values, so a 100 KB bash dump was
+  // reported as "0 chars" - the very tool meant to answer "why did broke
+  // save nothing?" was lying.
+  it('/broke why counts structured command outputs, not just string ones', async () => {
+    writeConfig({ level: 'summarize' });
+    const ext = new Broke();
+    const bigDump = Array.from({ length: 120 }, (_, i) => `src/x.ts:${i}: error E: nope`).join('\n');
+    const messages = [
+      { id: 'u0', role: 'user', content: 'brief' },
+      {
+        id: 't1',
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'c1',
+            toolName: 'power---bash',
+            output: { type: 'json', value: { stdout: bigDump, stderr: '', exitCode: 0 } },
+          },
+        ],
+      },
+    ] as unknown as ContextMessage[];
+    const { context, state } = makeHost('task-why-structured', () => 'stub', messages);
+    const stats: TaskStats = emptyStats('task-why-structured');
+    stats.passes = 3;
+    stats.savedChars.truncate = 5;
+    (ext as unknown as { statsByTask: Map<string, TaskStats> }).statsByTask.set('task-why-structured', stats);
+
+    await ext.getCommands(context)[0].execute(['why'], context);
+    const out = state.logLines.map((l) => l.line).join('\n');
+
+    assert.doesNotMatch(out, /largest command-tool output still in the region is 0 chars/, 'the old shape-blind count');
+    // The size is now recognised, so the report takes the "big output, no
+    // pattern matched" branch - the same verdict as the text-shaped twin.
+    assert.match(out, new RegExp(`error: 0 even though a ${bigDump.length.toLocaleString('en-US')}-char command output exists`));
+    assert.doesNotMatch(out, /< errors\.minChars/, 'a 3k dump is not below minChars');
+  });
+
   it('/broke summarize now pre-warms the cache; the next real run reuses it free', async () => {
     // Tiny threshold: the REAL pipeline gate is "input > maxContextChars" -
     // the manual warm bypasses it, the pipeline must not.
