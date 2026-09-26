@@ -1,10 +1,14 @@
 # Project Overview
 
-*Snapshot: release v1.2.2 (2026-09-18) - cache-friendly mode (sent-ledger
-freeze, escape hatch with hysteresis, provider-cache pricing, badge
-settings overlay with Quick Commands) plus the v1.2.1/1.2.2 UI rework.
-Prior snapshot: release v1.1.0 (2026-08-29), review rounds F1-F24,
-XF1-XF16, R1-R15 and remediation F-01..F-16 closed, external-review
+*Snapshot: release v1.2.3 (2026-09-26) - remediation of the external
+senior-level review of v1.2.2: the badge Quick Commands are actually wired,
+the updater post-commit safety net is reachable, the cache-friendly frozen
+gate is enforced on every path that can rewrite sent bytes, and the indexer
+has real scan and merge budgets. Prior snapshot: release v1.2.2
+(2026-09-18) - cache-friendly mode (sent-ledger freeze, escape hatch with
+hysteresis, provider-cache pricing, badge settings overlay) plus the
+v1.2.1/1.2.2 UI rework. Before that: v1.1.0 (2026-08-29), review rounds
+F1-F24, XF1-XF16, R1-R15 and remediation F-01..F-16 closed, external-review
 findings BRK-001..030 fixed.*
 
 *This file deliberately carries no per-module line counts and no test-count

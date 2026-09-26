@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-09-26
+
+Remediation release for the external senior-level code review of v1.2.2.
+
 ### Fixed
 
 - **Quick Commands were not wired to anything (H1)**: the 9 buttons in the badge
