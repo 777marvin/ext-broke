@@ -743,6 +743,65 @@ describe('BRK-013: bounded indexing', () => {
     assert.equal(budget.exhausted, true, 'the budget reports honest exhaustion');
   });
 
+  // M4 (external review): an inverted index deletes a document by walking
+  // EVERY term, so the merge after a branch switch cost
+  // changedFiles x totalTerms synchronously on the tool path. The byte
+  // budget covers re-tokenization only, not those deletion scans.
+  it('caps how many files one merge re-indexes, without losing the rest (M4)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-docbudget-'));
+    tmpRoots.push(root);
+    const names = ['a', 'b', 'c', 'd', 'e'];
+    const write = (rev: number) => {
+      for (const name of names) {
+        writeFile(root, ['src', `${name}.ts`], `export const alphaFind${name} = '${name.repeat(200)}${rev}';`);
+      }
+    };
+    write(1);
+    const state = emptyState();
+    state.projectRoot = root;
+    mergeIntoState(state, root, scanProject(root, 512).entries, false);
+    assert.equal(Object.keys(state.files).length, 5, 'baseline: everything indexed');
+
+    // The branch-switch shape: every file already has an index entry and
+    // all of them changed. This is the case where breaking out of a single
+    // seen/merge loop would make the files the budget never reached look
+    // DELETED - the removal pass would drop valid entries.
+    write(2);
+    const entries = scanProject(root, 512).entries;
+    const budget = { remainingBytes: 10 * 1024 * 1024, exhausted: false, remainingDocs: 3 };
+    const delta = mergeIntoState(state, root, entries, true, budget);
+
+    assert.equal(delta.updated, 3, 'only the budgeted number of files was re-indexed');
+    assert.equal(budget.exhausted, true, 'the doc budget reports honest exhaustion');
+    assert.equal(Object.keys(state.files).length, 5, 'the files the cap skipped keep their entries');
+    assert.equal(delta.removed, 0, 'nothing was reported as removed');
+
+    // A following merge with a fresh budget picks the remainder up.
+    const rest = { remainingBytes: 10 * 1024 * 1024, exhausted: false, remainingDocs: 10 };
+    const delta2 = mergeIntoState(state, root, entries, false, rest);
+    assert.equal(delta2.updated, 2, 'the next refresh indexes what was left over');
+    assert.equal(Object.keys(state.files).length, 5);
+    assert.equal(rest.exhausted, false);
+  });
+
+  it('still removes files that really disappeared from disk under a doc budget (M4)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'broke-indexer-docbudget-rm-'));
+    tmpRoots.push(root);
+    writeFile(root, ['src', 'a.ts'], 'export const alphaFindA = 1;');
+    writeFile(root, ['src', 'b.ts'], 'export const alphaFindB = 1;');
+    const state = emptyState();
+    state.projectRoot = root;
+    mergeIntoState(state, root, scanProject(root, 512).entries, false);
+    assert.equal(Object.keys(state.files).length, 2);
+
+    rmSync(join(root, 'src', 'b.ts'));
+    const budget = { remainingBytes: 10 * 1024 * 1024, exhausted: false, remainingDocs: 10 };
+    const delta = mergeIntoState(state, root, scanProject(root, 512).entries, false, budget);
+    assert.equal(delta.removed, 1, 'a genuinely deleted file is still removed');
+    assert.equal('src/b.ts' in state.files, false);
+    assert.equal('b' in state.postings, false, 'and its postings go with it');
+  });
+
   it('honors a scan deadline (truncated, honest)', () => {
     const root = mkdtempSync(join(tmpdir(), 'broke-indexer-deadline-'));
     tmpRoots.push(root);
