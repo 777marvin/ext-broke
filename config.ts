@@ -175,6 +175,18 @@ const SearchSchema = z.object({
    * remainder, never to conventionally private files.
    */
   includeGitIgnored: z.boolean().default(false),
+  /**
+   * Wall-clock budget for ONE index scan pass, in ms (BRK-013, external
+   * review M3). The scan is synchronous and runs on the host event loop
+   * (in the broke-search tool path and in the post-commit refresh), so a
+   * very large repository could otherwise block the UI for seconds. Hitting
+   * the budget marks the index `truncated`, which the search footer reports
+   * honestly - the remaining files are picked up by a later refresh.
+   *
+   * The 2s default is deliberately conservative: ordinary repositories
+   * finish far below it. Raise it if a huge monorepo reports TRUNCATED.
+   */
+  scanBudgetMs: z.number().int().min(100).max(60_000).default(2000),
 });
 const searchDefault = SearchSchema.parse({});
 

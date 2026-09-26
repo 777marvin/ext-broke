@@ -44,6 +44,17 @@ export const SKIP_DIRS: ReadonlySet<string> = new Set([
 
 /** BRK-013: default aggregate budget for re-tokenizing changed files per refresh. */
 export const DEFAULT_MERGE_BUDGET_BYTES = 64 * 1024 * 1024;
+/**
+ * BRK-013: default cap on how many files one merge may (re-)index.
+ *
+ * M4 (external review): an inverted index deletes a document by walking
+ * EVERY term in the index, so the merge after a branch switch cost
+ * changedFiles x totalTerms synchronously on the tool path. The byte budget
+ * only covers re-tokenization, not those deletion scans. Files beyond this
+ * cap keep their previous entries and the index is reported truncated, so
+ * the work is spread over several refreshes instead of stalling one.
+ */
+export const DEFAULT_MERGE_BUDGET_DOCS = 2_000;
 /** BRK-013: hard wall-clock budget for one scan pass. */
 export const INDEX_SCAN_BUDGET_MS = 2_000;
 
@@ -293,7 +304,13 @@ export type ScanSource = 'git' | 'git-unavailable' | 'walk';
 export interface ScanOptions {
   /** BRK-003 opt-in: index gitignored files too (denylists stay ON). */
   includeGitIgnored?: boolean;
-  /** BRK-013: wall-clock deadline for the scan; hitting it sets truncated. */
+  /**
+   * BRK-013: wall-clock BUDGET for the scan, in milliseconds; hitting it
+   * sets truncated. A duration, not an absolute timestamp - comparing
+   * Date.now() against a raw budget was the second half of the M3 defect
+   * (an unwired option that could not have worked either: Date.now() >=
+   * 2000 is always true, so every deadline handed in truncated instantly).
+   */
   deadlineMs?: number;
 }
 
@@ -315,7 +332,8 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
   const maxBytes = maxFileKB * 1024;
   const entries: ScannedEntry[] = [];
   let truncated = false;
-  const deadline = opts.deadlineMs ?? Number.POSITIVE_INFINITY;
+  // A DURATION, turned into an absolute deadline once (M3).
+  const deadline = Date.now() + (opts.deadlineMs ?? Number.POSITIVE_INFINITY);
   const outOfTime = (): boolean => Date.now() >= deadline;
   let canonicalRoot: string;
   try {
@@ -458,35 +476,63 @@ function addDocument(state: IndexState, root: string, entry: ScannedEntry, budge
  * Diff-and-merge an existing state against a fresh scan: only NEW and
  * CHANGED files (mtime/size) are re-tokenized, deletions leave both the
  * meta map and every posting. Mutates and returns the SAME state object.
+ *
+ * `budget` optionally caps the WORK, not the result:
+ * - remainingBytes: re-tokenization bytes (the caller supplies the total).
+ * - remainingDocs: how many files may be (re-)indexed in this merge. An
+ *   inverted index deletes a document by walking EVERY term in the index, so
+ *   an incremental merge after a branch switch costs
+ *   changedFiles x totalTerms - seconds, synchronously, on the tool path.
+ *
+ * When the doc budget runs out the remaining files keep their previous index
+ * entries and the caller reports the index as truncated; a later refresh
+ * picks them up. The two passes are therefore SEPARATE on purpose: `seen`
+ * must be complete before the removal pass runs, otherwise every file that
+ * the budgeted loop never reached would look deleted and be dropped from
+ * the index (the review's suggested single-loop `break` does exactly that).
  */
 export function mergeIntoState(
   state: IndexState,
   root: string,
   entries: ScannedEntry[],
   truncated: boolean,
-  budget?: { remainingBytes: number; exhausted: boolean },
+  budget?: { remainingBytes: number; exhausted: boolean; remainingDocs?: number },
 ): { added: number; updated: number; removed: number } {
   let added = 0;
   let updated = 0;
+  // Pass 1: the full set of paths this scan SAW. Independent of the budget,
+  // because "not seen" must mean "gone from disk", never "not reached yet".
   const seen = new Set<string>();
+
+  // Pass 2: re-tokenize, bounded.
   for (const entry of entries) {
     seen.add(entry.relPath);
+    if (budget?.remainingDocs !== undefined && budget.remainingDocs <= 0) {
+      budget.exhausted = true;
+      break;
+    }
     const old = state.files[entry.relPath];
     if (!old) {
       if (addDocument(state, root, entry, budget)) {
         added++;
+        if (budget?.remainingDocs !== undefined) budget.remainingDocs -= 1;
       }
     } else if (old.mtimeMs !== entry.mtimeMs || old.sizeBytes !== entry.sizeBytes) {
       if (addDocument(state, root, entry, budget)) {
         updated++;
+        if (budget?.remainingDocs !== undefined) budget.remainingDocs -= 1;
       }
     }
   }
+  // Pass 3: removals. Skipped entirely when the budget cut pass 2 short -
+  // without the complete `seen` above this would delete valid entries.
   let removed = 0;
-  for (const relPath of Object.keys(state.files)) {
-    if (!seen.has(relPath)) {
-      removeDocument(state, relPath);
-      removed++;
+  if (!budget?.exhausted) {
+    for (const relPath of Object.keys(state.files)) {
+      if (!seen.has(relPath)) {
+        removeDocument(state, relPath);
+        removed++;
+      }
     }
   }
   state.truncated = truncated;
@@ -533,7 +579,7 @@ function removeLegacyIndexDirs(indexBase: string, currentHash: string): void {
 
 export function ensureFresh(
   root: string,
-  opts: { maxFileKB: number; includeGitIgnored?: boolean; ttlMs?: number; mergeBudgetBytes?: number },
+  opts: { maxFileKB: number; includeGitIgnored?: boolean; ttlMs?: number; mergeBudgetBytes?: number; mergeBudgetDocs?: number; deadlineMs?: number },
   dirOverride?: string,
 ): { state: IndexState; delta: { added: number; updated: number; removed: number } } {
   const dir = dirOverride ?? indexDirFor(root);
@@ -564,8 +610,22 @@ export function ensureFresh(
       return { state, delta: { added: 0, updated: 0, removed: 0 } };
     }
   }
-  const scan = scanProject(root, opts.maxFileKB, { includeGitIgnored: opts.includeGitIgnored });
-  const budget = { remainingBytes: opts.mergeBudgetBytes ?? DEFAULT_MERGE_BUDGET_BYTES, exhausted: false };
+  // M3 (external review): the budget was exported with a "hard wall-clock
+  // budget for one scan pass" comment but never wired - the deadlineMs
+  // default was Infinity, so every scan ran unbounded. This is a SYNCHRONOUS
+  // scan (execFileSync + lstatSync per candidate) on the tool-call and
+  // post-commit paths, i.e. straight on the host event loop. The default is
+  // the documented budget so the promise holds for every caller; tests and
+  // the selftest can still pass an explicit value.
+  const scan = scanProject(root, opts.maxFileKB, {
+    includeGitIgnored: opts.includeGitIgnored,
+    deadlineMs: opts.deadlineMs ?? INDEX_SCAN_BUDGET_MS,
+  });
+  const budget = {
+    remainingBytes: opts.mergeBudgetBytes ?? DEFAULT_MERGE_BUDGET_BYTES,
+    exhausted: false,
+    remainingDocs: opts.mergeBudgetDocs ?? DEFAULT_MERGE_BUDGET_DOCS,
+  };
   // BRK-017: compare the truncation flag BEFORE mergeIntoState mutates it -
   // the previous post-mutation compare could never observe a flip.
   const previousTruncated = state.truncated;

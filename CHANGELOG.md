@@ -7,11 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Fixed
 
-- **UI text readability fix**: All gray text in StatusBadge and ConfigComponent changed to black/dark gray (#000/#333)
-- **Quick Commands in status overlay**: 9 clickable `/broke` command buttons (status, stats, why, estimate, measure, summarize now, reset, selftest, help)
-- **Modernized UI design**: Card-based layouts with shadows, hover states, professional color scheme
+- **Quick Commands were not wired to anything (H1)**: the 9 buttons in the badge
+  settings overlay called the UI action `runCommand`, which neither the
+  extension nor the host implemented - a click did nothing and the
+  `.catch(() => {})` around it kept the failure invisible. The feature was
+  announced in v1.2.1 and v1.2.2. The buttons now run the real command
+  dispatcher, behind an allowlist on the parsed subcommand; the
+  state-changing/spending ones (`reset`, `summarize now`, `selftest`) need a
+  second click, and the command output is shown in the overlay.
+- **The post-commit updater safety net was unreachable (M1)**: an inner
+  `let targetTag` shadowed the outer binding, so the failure path always
+  compared the commit marker against `''` and a failure *after* a committed
+  swap was reported as "the installed version is unchanged". The BRK-005
+  guarantee now holds on the integration level, covered by a test through
+  `runUpdate` rather than the helper alone.
+- **`/broke summarize now` no longer rewrites already-sent bytes (M2)**: in
+  cache-friendly mode the manual warm-up generated a summary over a frozen
+  region and the next model call injected it, invalidating the provider
+  prompt cache without the escape hatch - contradicting `escapeHatch: false`
+  ("sent bytes are never touched"). The frozen gate is now enforced in the
+  cache-reuse branch as well, the command builds the same gate the pipeline
+  builds, and it reports the skip honestly instead of claiming success. The
+  escape hatch remains the only sanctioned way to rewrite sent bytes.
+- **`/broke why` misreported command output as 0 chars (L1)**: command tools
+  return the structured `{type:'json', value:{stdout,stderr,exitCode}}` shape,
+  but the diagnostic only counted string values - so a 100 KB bash dump was
+  reported as "0 chars" by the very command meant to explain a zero saving.
+  It now uses the canonical extractor (`extractOutputText`), lengths only.
+- **Search settings accepted values the schema would reject (L2)**:
+  `search.maxChars` and `search.maxFileKB` had no min/max in the settings
+  dialog, so an out-of-range value survived until save and came back as a
+  generic "invalid value" that never named the field. Both now carry the
+  schema bounds (500-50000, 1-2048).
+
+### Changed
+
+- **Index scans are actually bounded now (M3)**: `INDEX_SCAN_BUDGET_MS` was
+  documented as a "hard wall-clock budget for one scan pass" but no caller
+  ever passed one, and the option was compared as an absolute timestamp
+  rather than a duration, so it could not have worked either. Scans are
+  synchronous and run in the `broke-search` tool call and the post-commit
+  refresh, so a large repository could block the host UI for seconds. New
+  `search.scanBudgetMs` option (default 2000, range 100-60000); exhausting it
+  reports the index as `TRUNCATED` in the search footer.
+- **Merge work per refresh is capped (M4)**: deleting a document from the
+  inverted index walks every term in it, so a branch switch cost
+  changedFiles x totalTerms synchronously. A merge now re-indexes at most
+  2000 files per pass; the rest keep their entries and are finished by a later
+  refresh. The index reports `TRUNCATED` while that is pending.
+
+### Removed
+
+- `release-payload.json` is no longer committed. It was a local release
+  working file that was accidentally included in the v1.2.2 tag and therefore
+  in every installation; `release-payload*.json` and `*.tar.gz` are now
+  ignored, and release notes come from `gh release create --generate-notes`.
+
+### Housekeeping
+
+- `pretest` now fails with an explicit message on Node < 22 instead of the
+  confusing `Could not find 'tests/*.test.ts'` the test glob produces there.
+- `docs/overview.md` no longer carries hand-maintained line counts, which had
+  drifted two releases behind.
+- `.gitignore` is UTF-8 without a BOM.
 
 ## [1.2.2] - 2026-09-18
 
@@ -44,9 +104,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `/broke selftest` - Run pipeline self-test
   - `/broke help` - Show all commands
 - **Modernized UI design**: Card-based layouts, proper shadows, hover/focus states, consistent spacing, professional color scheme
-
-### Added
-
 - **F5 mode presets & autonomy selector**: `/broke mode <short|normal|long|custom>`
   applies a coherent task-length bundle (level, threshold, protected turns,
   truncate limits, summarize-after) once; editing a preset-owned field
@@ -69,7 +126,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests cover the new UI behavior (tests/ui-interactions.test.ts); live
   AiderDesk smoke test and release are still pending.
 
-Post-release hardening and remediation for v1.2.0 (external security, architecture, and code review).
+### Post-release hardening for v1.2.0 (shipped in v1.2.1)
+
+The items below remediate v1.2.0; they are listed here because that is the
+release they actually shipped in.
 
 ### Security
 

@@ -565,4 +565,36 @@ describe('summarizePass cache gating (unit)', () => {
     assert.equal(calls.n, 1, 'no regeneration');
     assert.equal(r2.messages, edited, 'region untouched');
   });
+
+  // M2 (external review): `/broke summarize now` called summarizePass with
+  // NO gate at all, so it generated and cached a summary over a region whose
+  // bytes were already sent. The next real run then took the CACHE-REUSE
+  // branch - which had no gate either - and swapped the frozen originals
+  // for that summary: a rewrite of sent bytes with no escape sanction,
+  // contradicting escapeHatch:false ("sent bytes are never touched").
+  it('M2: the cache-reuse branch may not replace frozen originals', async () => {
+    const calls = { n: 0 };
+    const state = createCompressState();
+    const input = conv();
+
+    // The gate-free warm-up the manual command performs.
+    const warm = await summarizePass(input, 1, sumCfg(), deps(calls), state, 'sg-m2');
+    assert.equal(calls.n, 1, 'the warm-up generated a summary over already-sent bytes');
+    assert.ok(warm.messages.some(isSummaryMessage), 'and cached it');
+
+    // Sent ledger: every ORIGINAL is frozen, the freshly minted summary is
+    // not (it was never sent).
+    const frozen = (m: ContextMessage) => !isSummaryMessage(m);
+
+    const gated = await summarizePass(input, 1, sumCfg(), deps(calls), state, 'sg-m2', { frozen });
+    assert.equal(bytes(gated.messages), bytes(input), 'sent bytes stay byte-identical');
+    assert.equal(gated.summarizedRanges, 0, 'nothing was summarized');
+    assert.equal(gated.summarizeCalls, 0, 'and no summarizer call was paid for');
+    assert.equal(calls.n, 1, 'the reuse branch does not regenerate either');
+
+    // The escape hatch is the ONLY thing that may sanction the swap.
+    const escaped = await summarizePass(input, 1, sumCfg(), deps(calls), state, 'sg-m2', { frozen, escaping: true });
+    assert.ok(escaped.messages.some(isSummaryMessage), 'an escape still allows the cached reuse');
+    assert.equal(escaped.summarizeCalls, 0, 'and it stays free');
+  });
 });

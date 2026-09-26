@@ -41,12 +41,14 @@ let messagesChars: (typeof import('../tokens'))['messagesChars'];
 let emptyStats: (typeof import('../tokens'))['emptyStats'];
 let persistStats: (typeof import('../tokens'))['persistStats'];
 let buildSyntheticMessages: (typeof import('../selftest'))['buildSyntheticMessages'];
+let markSent: (typeof import('../cache'))['markSent'];
 
 before(async () => {
   ({ default: Broke } = await import('../index'));
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
   ({ loadRunRecords, loadTaskStats, messagesChars, emptyStats, persistStats } = await import('../tokens'));
   ({ buildSyntheticMessages } = await import('../selftest'));
+  ({ markSent } = await import('../cache'));
 });
 
 after(() => {
@@ -420,6 +422,47 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.match(out, /structural: 0 is honest/);
   });
 
+  // L1 (external review): command tools do NOT return a plain string - they
+  // return the structured {type:'json', value:{stdout,stderr,exitCode}} shape
+  // that output.ts/extractOutputText exists to normalize. The /broke why
+  // diagnostic counted only string values, so a 100 KB bash dump was
+  // reported as "0 chars" - the very tool meant to answer "why did broke
+  // save nothing?" was lying.
+  it('/broke why counts structured command outputs, not just string ones', async () => {
+    writeConfig({ level: 'summarize' });
+    const ext = new Broke();
+    const bigDump = Array.from({ length: 120 }, (_, i) => `src/x.ts:${i}: error E: nope`).join('\n');
+    const messages = [
+      { id: 'u0', role: 'user', content: 'brief' },
+      {
+        id: 't1',
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'c1',
+            toolName: 'power---bash',
+            output: { type: 'json', value: { stdout: bigDump, stderr: '', exitCode: 0 } },
+          },
+        ],
+      },
+    ] as unknown as ContextMessage[];
+    const { context, state } = makeHost('task-why-structured', () => 'stub', messages);
+    const stats: TaskStats = emptyStats('task-why-structured');
+    stats.passes = 3;
+    stats.savedChars.truncate = 5;
+    (ext as unknown as { statsByTask: Map<string, TaskStats> }).statsByTask.set('task-why-structured', stats);
+
+    await ext.getCommands(context)[0].execute(['why'], context);
+    const out = state.logLines.map((l) => l.line).join('\n');
+
+    assert.doesNotMatch(out, /largest command-tool output still in the region is 0 chars/, 'the old shape-blind count');
+    // The size is now recognised, so the report takes the "big output, no
+    // pattern matched" branch - the same verdict as the text-shaped twin.
+    assert.match(out, new RegExp(`error: 0 even though a ${bigDump.length.toLocaleString('en-US')}-char command output exists`));
+    assert.doesNotMatch(out, /< errors\.minChars/, 'a 3k dump is not below minChars');
+  });
+
   it('/broke summarize now pre-warms the cache; the next real run reuses it free', async () => {
     // Tiny threshold: the REAL pipeline gate is "input > maxContextChars" -
     // the manual warm bypasses it, the pipeline must not.
@@ -478,6 +521,50 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.ok(reused, 'the cache-reuse run must be recorded');
     assert.equal(reused?.passes, 1);
     assert.equal(reused?.summarizeCalls, 0, 'zero fresh summarizer calls on the reuse path');
+  });
+
+  // M2 (external review): the manual warm-up used to run with NO cache gate,
+  // so in cache-friendly mode it generated a summary over already-sent bytes
+  // and the next real run injected it - a rewrite of the sent prefix with no
+  // escape sanction, for a config whose escapeHatch is false ("hard promise:
+  // sent bytes are never touched"). Decision: the freeze wins; the escape
+  // hatch stays the only thing that may rewrite sent bytes.
+  it('/broke summarize now refuses to rewrite sent bytes in cache-friendly mode (M2)', async () => {
+    writeConfig({
+      maxContextChars: 100,
+      level: 'summarize',
+      cache: { profile: 'anthropic', escapeHatch: false },
+    });
+    const ext = new Broke();
+    const bigToolOutput = ('line-of-output '.repeat(120)).trim();
+    const messages = [
+      { id: 'u-brief', role: 'user', content: 'Brief: fix the failing tests.' },
+      { id: 'a-1', role: 'assistant', content: 'Step 1: collecting failures.' },
+      { id: 't-1', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'power---bash', output: { type: 'text', value: bigToolOutput } }] },
+      { id: 'a-2', role: 'assistant', content: 'Step 2: patching module A.' },
+      { id: 't-2', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c2', toolName: 'power---bash', output: { type: 'text', value: bigToolOutput } }] },
+      { id: 'a-3', role: 'assistant', content: 'Step 3: re-running the suite.' },
+      { id: 'u-wrap', role: 'user', content: 'Wrap up this iteration.' },
+    ] as unknown as ContextMessage[];
+    const { context, state } = makeHost('task-warm-frozen', () => 'Stub summary of the compressed region.', messages);
+    attachContext(ext, context);
+
+    // These exact bytes already went to the model.
+    markSent('task-warm-frozen', messages);
+
+    await ext.getCommands(context)[0].execute(['summarize', 'now'], context);
+    const out = state.logLines.map((l) => l.line).join('\n');
+    assert.match(out, /summarize now skipped/, `the command must say why: ${out}`);
+    assert.match(out, /frozen/i, 'and name the reason honestly');
+    assert.equal(state.summarizeCalls, 0, 'no summarizer call may be paid for a refused warm-up');
+
+    // The next REAL run must not swap the frozen originals either.
+    const result = (await ext.onOptimizeMessages(
+      { originalMessages: messages, optimizedMessages: messages },
+      context,
+    )) as { optimizedMessages: ContextMessage[] } | undefined;
+    const json = JSON.stringify(result?.optimizedMessages ?? messages);
+    assert.equal(json.includes('broke-compacted'), false, 'sent bytes must not be summarized behind an active cache profile');
   });
 
   it('/broke summarize now refuses cleanly below summarize.minChars without an LLM call', async () => {

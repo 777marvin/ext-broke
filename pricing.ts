@@ -9,6 +9,7 @@
  */
 
 import type { ExtensionContext } from '@aiderdesk/extensions';
+import { boundedMapSet } from './compress';
 
 export interface TaskModelPrice {
   /** Model id as used by the task profile (e.g. 'gpt-4o'). */
@@ -70,7 +71,9 @@ export async function resolveTaskModelPrice(context: ExtensionContext): Promise<
     } catch {
       price = { modelId: profile.model, providerId: profile.provider, inputPerMToken: null };
     }
-    priceCache.set(key, { at: Date.now(), price });
+    // I2: bounded like the other per-key caches in the codebase, so a session
+    // that touches many provider/model combinations cannot grow this forever.
+    boundedMapSet(priceCache, key, { at: Date.now(), price }, 200);
     return price;
   } catch {
     return null;

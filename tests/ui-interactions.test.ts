@@ -42,6 +42,7 @@ async function mount(badge = false, initial = applyPreset(DEFAULT_CONFIG, 'long'
     if (name === 'getConfig') return structuredClone(persisted);
     if (name === 'previewMode') return ConfigSchema.parse(applyPreset(ConfigSchema.parse(args[0]), args[1]));
     if (name === 'setConfig') { persisted = ConfigSchema.parse(args[0]); return { ok: true, config: persisted }; }
+    if (name === 'runCommand') return { ok: true, message: `ran ${args[0]}` };
     return null;
   };
   container = win.document.createElement('div');
@@ -60,6 +61,12 @@ afterEach(async () => { if (root) await React.act(async () => root.unmount()); c
 function input(label: string): HTMLInputElement | HTMLSelectElement {
   const el = [...container.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith(label))?.querySelector('input,select');
   assert.ok(el, `missing field: ${label}`);
+  return el as HTMLInputElement;
+}
+/** Narrowed accessor for attributes that only exist on <input>. */
+function numberInput(label: string): HTMLInputElement {
+  const el = input(label);
+  assert.ok(el instanceof win.HTMLInputElement, `not a number field: ${label}`);
   return el as HTMLInputElement;
 }
 function button(text: string): HTMLButtonElement {
@@ -220,5 +227,99 @@ describe('F5 rendered badge dialog interactions', () => {
     await click(button('Save'));
     assert.match(container.textContent!, /could not save/i);
     await click(button('Cancel'));
+  });
+});
+
+describe('L2 search fields mirror the schema bounds', () => {
+  it('carries the schema min/max on both search number fields', async () => {
+    await mount(false, applyPreset(DEFAULT_CONFIG, 'long'));
+    const budget = numberInput('Total char budget per query');
+    const size = numberInput('Skip files larger than (KB)');
+    assert.equal(budget.min, '500');
+    assert.equal(budget.max, '50000');
+    assert.equal(size.min, '1');
+    assert.equal(size.max, '2048');
+  });
+
+  it('resets an out-of-schema search maxChars to the last valid value', async () => {
+    await mount(false, applyPreset(DEFAULT_CONFIG, 'long'));
+    await number('Total char budget per query', '100');
+    assert.equal(input('Total char budget per query').value, '6000', 'below the floor resets');
+    await number('Total char budget per query', '60000');
+    assert.equal(input('Total char budget per query').value, '6000', 'above the ceiling resets');
+  });
+
+  it('resets an out-of-schema search maxFileKB to the last valid value', async () => {
+    await mount(false, applyPreset(DEFAULT_CONFIG, 'long'));
+    await number('Skip files larger than (KB)', '0');
+    assert.equal(input('Skip files larger than (KB)').value, '512', 'below the floor resets');
+    await number('Skip files larger than (KB)', '5000');
+    assert.equal(input('Skip files larger than (KB)').value, '512', 'above the ceiling resets');
+  });
+
+  it('still commits an in-range search value', async () => {
+    await mount(false, applyPreset(DEFAULT_CONFIG, 'long'));
+    // Assert the published draft, not the uncontrolled input's DOM value -
+    // numberField re-keys on change, which the rest of this suite also
+    // avoids depending on.
+    await number('Total char budget per query', '12000');
+    assert.equal(draft.search.maxChars, 12000);
+    await number('Skip files larger than (KB)', '2048');
+    assert.equal(draft.search.maxFileKB, 2048, 'the ceiling itself is still accepted');
+  });
+});
+
+describe('H1 quick commands in the badge overlay', () => {
+  const quick = (label: string): HTMLButtonElement => {
+    const el = [...container.querySelectorAll('button')].find((b) => /\/broke/.test(b.textContent ?? '') && b.textContent?.trim().endsWith(label));
+    assert.ok(el, `missing quick command: ${label}`);
+    return el as HTMLButtonElement;
+  };
+
+  it('runs a read-only command on the first click and shows the result', async () => {
+    await mount(true);
+    await open();
+    await click(quick('stats'));
+    assert.ok(calls.includes('runCommand'), 'the click reaches the extension');
+    assert.match(container.textContent!, /ran broke stats/, 'the result is shown, not swallowed');
+    assert.doesNotMatch(quick('stats').textContent ?? '', /Confirm\?/, 'read-only commands need no confirmation');
+  });
+
+  it('requires a second click for state-changing or spending commands', async () => {
+    await mount(true);
+    await open();
+    for (const label of ['reset', 'summarize now', 'selftest']) {
+      calls.length = 0;
+      await click(quick(label));
+      assert.equal(calls.length, 0, `${label} must not run on the first click`);
+      assert.match(quick(label).textContent ?? '', /Confirm\?/, `${label} is armed`);
+      await click(quick(label));
+      assert.ok(calls.includes('runCommand'), `${label} runs on the confirm click`);
+      assert.doesNotMatch(quick(label).textContent ?? '', /Confirm\?/, `${label} is disarmed after running`);
+    }
+  });
+
+  it('surfaces a rejected command instead of failing silently', async () => {
+    await mount(true);
+    await open();
+    const base = action;
+    action = async (name, ...args) => name === 'runCommand' ? { ok: false, error: `unsupported quick command '${args[0]}'` } : base(name, ...args);
+    await click(quick('why'));
+    assert.match(container.textContent!, /unsupported quick command/i);
+
+    action = async () => { throw new Error('host exploded'); };
+    await click(quick('why'));
+    assert.match(container.textContent!, /could not be run/i);
+  });
+
+  it('disarms a pending confirmation when the overlay is closed and reopened', async () => {
+    await mount(true);
+    await open();
+    await click(quick('reset'));
+    assert.match(quick('reset').textContent ?? '', /Confirm\?/);
+    await click(button('Cancel'));
+    await open();
+    assert.doesNotMatch(quick('reset').textContent ?? '', /Confirm\?/, 'state does not survive a close');
+    assert.doesNotMatch(container.textContent!, /ran broke/, 'the stale result is gone too');
   });
 });

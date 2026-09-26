@@ -22,6 +22,7 @@
   },
   "homepage": "https://github.com/777marvin/ext-broke#readme",
   "scripts": {
+    "pretest": "node scripts/check-node-version.mjs",
     "test": "tsx --test \"tests/*.test.ts\"",
     "coverage": "c8 --check-coverage --per-file --branches 82 --lines 90 --statements 90 --functions 85 --include compress.ts --include indexer.ts --include cache.ts --include config.ts npm test && c8 --check-coverage --per-file --branches 72 --lines 75 --statements 75 --functions 80 --include update.ts --include paths.ts npm test && c8 --check-coverage --per-file --branches 60 --lines 75 --statements 75 --functions 80 --include index.ts npm test",
     "typecheck": "tsc --noEmit",

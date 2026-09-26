@@ -1,4 +1,4 @@
-﻿# Dependencies & builds
+# Dependencies & builds
 node_modules/
 dist/
 build/
@@ -40,6 +40,14 @@ snapshots/
 # Release signing private key (NEVER commit - goes into the BROKE_RELEASE_SIGNING_KEY repo secret)
 broke-release-signing-key.pem
 SHA256SUMS*
+
+# Release working files: GitHub API payloads and downloaded release archives.
+# Everything committed in a tag gets signed, published and installed by
+# /broke update, so a scratch file must never end up there (the v1.2.2 tag
+# shipped a stale release-payload.json for v1.2.1 this way). Release notes
+# are generated with `gh release create --generate-notes`.
+release-payload*.json
+*.tar.gz
 
 # Local tooling indexes (CodeGraph) - never part of the extension
 .codegraph/
