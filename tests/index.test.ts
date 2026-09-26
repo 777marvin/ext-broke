@@ -41,12 +41,14 @@ let messagesChars: (typeof import('../tokens'))['messagesChars'];
 let emptyStats: (typeof import('../tokens'))['emptyStats'];
 let persistStats: (typeof import('../tokens'))['persistStats'];
 let buildSyntheticMessages: (typeof import('../selftest'))['buildSyntheticMessages'];
+let markSent: (typeof import('../cache'))['markSent'];
 
 before(async () => {
   ({ default: Broke } = await import('../index'));
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
   ({ loadRunRecords, loadTaskStats, messagesChars, emptyStats, persistStats } = await import('../tokens'));
   ({ buildSyntheticMessages } = await import('../selftest'));
+  ({ markSent } = await import('../cache'));
 });
 
 after(() => {
@@ -519,6 +521,50 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.ok(reused, 'the cache-reuse run must be recorded');
     assert.equal(reused?.passes, 1);
     assert.equal(reused?.summarizeCalls, 0, 'zero fresh summarizer calls on the reuse path');
+  });
+
+  // M2 (external review): the manual warm-up used to run with NO cache gate,
+  // so in cache-friendly mode it generated a summary over already-sent bytes
+  // and the next real run injected it - a rewrite of the sent prefix with no
+  // escape sanction, for a config whose escapeHatch is false ("hard promise:
+  // sent bytes are never touched"). Decision: the freeze wins; the escape
+  // hatch stays the only thing that may rewrite sent bytes.
+  it('/broke summarize now refuses to rewrite sent bytes in cache-friendly mode (M2)', async () => {
+    writeConfig({
+      maxContextChars: 100,
+      level: 'summarize',
+      cache: { profile: 'anthropic', escapeHatch: false },
+    });
+    const ext = new Broke();
+    const bigToolOutput = ('line-of-output '.repeat(120)).trim();
+    const messages = [
+      { id: 'u-brief', role: 'user', content: 'Brief: fix the failing tests.' },
+      { id: 'a-1', role: 'assistant', content: 'Step 1: collecting failures.' },
+      { id: 't-1', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'power---bash', output: { type: 'text', value: bigToolOutput } }] },
+      { id: 'a-2', role: 'assistant', content: 'Step 2: patching module A.' },
+      { id: 't-2', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c2', toolName: 'power---bash', output: { type: 'text', value: bigToolOutput } }] },
+      { id: 'a-3', role: 'assistant', content: 'Step 3: re-running the suite.' },
+      { id: 'u-wrap', role: 'user', content: 'Wrap up this iteration.' },
+    ] as unknown as ContextMessage[];
+    const { context, state } = makeHost('task-warm-frozen', () => 'Stub summary of the compressed region.', messages);
+    attachContext(ext, context);
+
+    // These exact bytes already went to the model.
+    markSent('task-warm-frozen', messages);
+
+    await ext.getCommands(context)[0].execute(['summarize', 'now'], context);
+    const out = state.logLines.map((l) => l.line).join('\n');
+    assert.match(out, /summarize now skipped/, `the command must say why: ${out}`);
+    assert.match(out, /frozen/i, 'and name the reason honestly');
+    assert.equal(state.summarizeCalls, 0, 'no summarizer call may be paid for a refused warm-up');
+
+    // The next REAL run must not swap the frozen originals either.
+    const result = (await ext.onOptimizeMessages(
+      { originalMessages: messages, optimizedMessages: messages },
+      context,
+    )) as { optimizedMessages: ContextMessage[] } | undefined;
+    const json = JSON.stringify(result?.optimizedMessages ?? messages);
+    assert.equal(json.includes('broke-compacted'), false, 'sent bytes must not be summarized behind an active cache profile');
   });
 
   it('/broke summarize now refuses cleanly below summarize.minChars without an LLM call', async () => {

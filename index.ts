@@ -25,6 +25,7 @@ import {
   summarizePass,
   type CompressReport,
   type CompressState,
+  type SummarizeCacheGate,
   type SummarizeDeps,
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, resolveCacheProfile, saveConfig, type Config } from './config';
@@ -556,9 +557,22 @@ export default class Broke implements Extension {
     this.optimizingTasks.add(taskId);
     try {
       const deps = this.buildSummarizeDeps(config, task, context, { explainFailures: true });
-      const result = await summarizePass(messages, config.protectedTurns, config, deps, this.state, taskId);
+      // M2 (external review): this command used to call summarizePass with NO
+      // gate, so in cache-friendly mode it generated and cached a summary
+      // over bytes that were already sent; the next real run then swapped
+      // those frozen originals for the summary without an escape. It now
+      // builds the SAME gate as optimizeMessages. Consequence, by decision:
+      // in cache mode the warm-up is refused for a frozen region - the
+      // escape hatch, not a manual command, is what may rewrite sent bytes.
+      const profile = resolveCacheProfile(config, { provider: task.data.provider, model: task.data.model ?? task.data.mainModel });
+      const gate: SummarizeCacheGate | undefined =
+        profile === 'off' ? undefined : { frozen: (msg: ContextMessage) => isSent(taskId, msg), escaping: false };
+      const result = await summarizePass(messages, config.protectedTurns, config, deps, this.state, taskId, gate);
       if (result.failed) {
         return 'broke: summarize now FAILED - check /broke status (Ollama reachable? model installed?) and the extension log for details';
+      }
+      if (result.frozenSkip) {
+        return `broke: summarize now skipped - cache-friendly mode (${profile}) has this region frozen because its bytes were already sent. Rewriting them is the escape hatch's job: it fires on the next budget overrun, or turn "Escape hatch on budget overruns" off to allow the rewrite (broke: config set cache.escapeHatch false).`;
       }
       if (result.summarizedRanges > 0) {
         // A real summary was produced or served from cache: explicit success,
