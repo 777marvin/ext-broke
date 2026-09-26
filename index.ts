@@ -394,12 +394,21 @@ export default class Broke implements Extension {
       // compressMessages) - onEscape resets the ledger so the cache
       // re-stabilizes on the escape run's output.
       const profile = resolveCacheProfile(config, { provider: task.data.provider, model: task.data.model ?? task.data.mainModel });
-      let escapeState = this.escapeByTask.get(taskId);
-      if (!escapeState) {
-        escapeState = { locked: false, onEscape: () => clearTask(taskId) };
-        this.escapeByTask.set(taskId, escapeState);
+      // I2: with profile 'off' there is no escape state to track, so the entry
+      // is not created at all - previously EVERY task allocated one even when
+      // cache-friendly mode was not running. Inside the branch the map is
+      // bounded like the rest of the per-task state.
+      let cacheOpts: { frozen: (msg: import('@aiderdesk/extensions').ContextMessage) => boolean; escape: { locked: boolean; onEscape?: () => void }; profile: Exclude<ReturnType<typeof resolveCacheProfile>, 'off'> } | undefined;
+      if (profile === 'off') {
+        cacheOpts = undefined;
+      } else {
+        let escapeState = this.escapeByTask.get(taskId);
+        if (!escapeState) {
+          escapeState = { locked: false, onEscape: () => clearTask(taskId) };
+          boundedMapSet(this.escapeByTask, taskId, escapeState);
+        }
+        cacheOpts = { frozen: (msg: import('@aiderdesk/extensions').ContextMessage) => isSent(taskId, msg), escape: escapeState, profile };
       }
-      const cacheOpts = profile === 'off' ? undefined : { frozen: (msg: import('@aiderdesk/extensions').ContextMessage) => isSent(taskId, msg), escape: escapeState, profile };
       const { messages, report } = await compressMessages(event.optimizedMessages, config, deps, this.state, taskId, {
         summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
         cache: cacheOpts,
@@ -447,6 +456,13 @@ export default class Broke implements Extension {
    * per target - repeats would be noise, silence would hide the disclosure.
    * Regex redaction stays best-effort; the trust boundary is this log plus
    * the consent gates, never a "secret-free" claim.
+   *
+   * I2 (external review) suggested bounding this like the per-task maps. It
+   * is deliberately NOT bounded: an eviction would re-log the disclosure for
+   * an already-notified target, and a missing disclosure is worse than a
+   * few stale keys. The key space is `${backend}:${target}` where the target
+   * is a configured Ollama URL or a model-registry id - set by the user, not
+   * by model output - so it cannot grow without bound from untrusted input.
    */
   private readonly disclosureNotified = new Set<string>();
   private notifyDisclosure(context: ExtensionContext, backend: 'ollama' | 'cloud', target: string): void {

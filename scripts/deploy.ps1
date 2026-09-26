@@ -40,8 +40,9 @@
   Deploy this exact git tag (git archive) instead of the working tree.
 
 .PARAMETER InstallDeps
-  Run `npm install` in the target after copying (extensions with runtime
-  deps).
+  Run `npm ci --omit=dev` in the target after copying (extensions with runtime
+  deps). Lockfile-exact like the self-updater: an existing node_modules is
+  replaced, never merged (BRK-009 parity).
 
 .PARAMETER DryRun
   Only show what would be deployed.
@@ -313,11 +314,18 @@ try {
   if (-not (Test-Path (Join-Path $Target '.deployed-version'))) { throw 'commit marker missing after write' }
 
   if ($InstallDeps) {
-    Write-Host '[deps] Running npm install in target...' -ForegroundColor Yellow
+    # BRK-009 parity with the self-updater: `npm ci` installs the lockfile
+    # EXACTLY and wipes any existing node_modules first, so a tampered or
+    # stale dependency tree cannot survive a deploy. The previous
+    # `npm install` was not lockfile-exact AND ran on top of the preserved
+    # node_modules, so the deploy path lacked the guarantee the update path
+    # has. Requires package-lock.json to be tracked (it is).
+    Write-Host '[deps] Running npm ci --omit=dev in target (lockfile-exact)...' -ForegroundColor Yellow
     Push-Location $Target
     try {
-      npm install --no-audit --no-fund
-      if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
+      if (-not (Test-Path 'package-lock.json')) { throw 'package-lock.json missing - cannot install dependencies lockfile-exactly' }
+      npm ci --omit=dev --no-audit --no-fund
+      if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
     } finally {
       Pop-Location
     }

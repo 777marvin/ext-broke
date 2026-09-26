@@ -594,6 +594,16 @@ function manifestOf(root: string, prefix = '', into: Map<string, number> = new M
  * directory are tolerated (the running extension may append to ledgers
  * mid-swap); missing or truncated files are not - they mean the copy died
  * part-way, which historically left a silently broken installation behind.
+ *
+ * Scope of this check, stated honestly (external review I5): it compares byte
+ * SIZES, not contents. A same-length corruption (a partial filesystem error
+ * that preserves the length) would pass. That is a deliberate trade-off -
+ * hashing every payload file costs a full extra read of the release on every
+ * update - and the real trust boundary is upstream of it: the Ed25519
+ * signature and SHA256SUMS are verified against the embedded public key
+ * BEFORE extraction, and npm ci rebuilds node_modules from that verified
+ * lockfile (BRK-009). This step only guards against a copy that did not
+ * complete.
  */
 function copyPayloadVerified(payloadDir: string, installDir: string, rawCopy: (from: string, to: string) => void): void {
   rawCopy(payloadDir, installDir);
