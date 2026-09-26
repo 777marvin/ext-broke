@@ -5,10 +5,21 @@
  * shapes - never against `any` fallbacks that let typos pass silently.
  * This file pins the shapes the components actually consume, hand-vendored
  * from AiderDesk v0.80.0 / @aiderdesk/extensions 0.31.
- * Verified consumed props against @aiderdesk/extensions 0.32.1 and
- * @aiderdesk/extensions 0.33.0 at these hotovo/aider-desk source commits:
+ * Verified consumed props against @aiderdesk/extensions 0.32.1,
+ * @aiderdesk/extensions 0.33.0 and @aiderdesk/extensions 0.34.0. The first
+ * two were checked against these hotovo/aider-desk source commits:
  * - 0.32.1: d671c96a5b744d1215b4b9f2938f3bfa171802ea
  * - 0.33.0: ef09179b705eed5acb04b313c9acc5e39e7314f4
+ * 0.34.0 was verified against the PUBLISHED type declarations only
+ * (dist/index.d.ts diffed against 0.32.1), not against a host checkout: that
+ * diff is purely additive and touches nothing broke consumes
+ * (OpenAiProvider.store?, Group.ephemeral?, QueuedPromptData.customCommand?,
+ * TaskSettings.worktreePostCreateCommand?,
+ * SwitchToLocalOptions.discardWorktreeChanges?, TaskContext.getUpdatedFileDiff
+ * (new method)). UIComponents, UIComponentProps and the Checkbox/Input/Select
+ * props are byte-identical to 0.32.1, so the shapes vendored below still hold
+ * - the version reference was stale, not the contract. Re-verify against a
+ * host checkout when one is available.
  * Sources: src/renderer/src/components/{common/{Button,Checkbox,Input,Select},ui/Tooltip}.tsx
  * and src/renderer/src/contexts/ExtensionsContext.tsx (direct UI registry).
  * Tooltip takes content (not label); Button requires children, not label.
