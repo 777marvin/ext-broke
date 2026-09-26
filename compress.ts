@@ -522,6 +522,13 @@ function truncateText(text: string, maxLines: number, maxKB: number): { kept: st
   // pass, with the marker budgeted in, so the result never exceeds maxKB
   // (marker included). The cut only runs when the line-passed body is STILL
   // over the cap (the line pass may already have brought it under).
+  // SCOPE, stated precisely (external review I3): "never exceeds maxKB"
+  // holds for the char-cap branch below, where the marker is subtracted
+  // from the budget. When the line pass ALONE brought the body under the
+  // cap, the marker is appended on top, so the result is at most
+  // maxChars + marker.length + 2 (~50-70 chars at a 20 KB cap).
+  // removedChars stays correct either way - only the guarantee's wording
+  // was too absolute.
   const body = overLines ? `${headText}\n${tailText}` : headText;
   if (body.length > maxChars) {
     const cutParts = [
