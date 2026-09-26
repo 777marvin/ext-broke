@@ -1284,6 +1284,7 @@ export default class Broke implements Extension {
         maxFileKB: config.search.maxFileKB,
         includeGitIgnored: config.search.includeGitIgnored,
         ttlMs: Broke.INDEX_REFRESH_TTL_MS,
+        deadlineMs: config.search.scanBudgetMs,
       });
       boundedMapSet(this.indexByProject, projectHash(root), { state: fresh.state, at: Date.now() });
       const resolved = resolveSearchOptions(config.search);
@@ -1384,7 +1385,7 @@ export default class Broke implements Extension {
       const hash = projectHash(root);
       const cached = this.indexByProject.get(hash);
       if (cached && Date.now() - cached.at < Broke.INDEX_REFRESH_TTL_MS) return;
-      const fresh = ensureFresh(root, { maxFileKB: config.search.maxFileKB, includeGitIgnored: config.search.includeGitIgnored });
+      const fresh = ensureFresh(root, { maxFileKB: config.search.maxFileKB, includeGitIgnored: config.search.includeGitIgnored, deadlineMs: config.search.scanBudgetMs });
       boundedMapSet(this.indexByProject, hash, { state: fresh.state, at: Date.now() });
     } catch {
       // best effort - never propagate into the commit loop

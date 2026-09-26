@@ -293,7 +293,13 @@ export type ScanSource = 'git' | 'git-unavailable' | 'walk';
 export interface ScanOptions {
   /** BRK-003 opt-in: index gitignored files too (denylists stay ON). */
   includeGitIgnored?: boolean;
-  /** BRK-013: wall-clock deadline for the scan; hitting it sets truncated. */
+  /**
+   * BRK-013: wall-clock BUDGET for the scan, in milliseconds; hitting it
+   * sets truncated. A duration, not an absolute timestamp - comparing
+   * Date.now() against a raw budget was the second half of the M3 defect
+   * (an unwired option that could not have worked either: Date.now() >=
+   * 2000 is always true, so every deadline handed in truncated instantly).
+   */
   deadlineMs?: number;
 }
 
@@ -315,7 +321,8 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
   const maxBytes = maxFileKB * 1024;
   const entries: ScannedEntry[] = [];
   let truncated = false;
-  const deadline = opts.deadlineMs ?? Number.POSITIVE_INFINITY;
+  // A DURATION, turned into an absolute deadline once (M3).
+  const deadline = Date.now() + (opts.deadlineMs ?? Number.POSITIVE_INFINITY);
   const outOfTime = (): boolean => Date.now() >= deadline;
   let canonicalRoot: string;
   try {
@@ -533,7 +540,7 @@ function removeLegacyIndexDirs(indexBase: string, currentHash: string): void {
 
 export function ensureFresh(
   root: string,
-  opts: { maxFileKB: number; includeGitIgnored?: boolean; ttlMs?: number; mergeBudgetBytes?: number },
+  opts: { maxFileKB: number; includeGitIgnored?: boolean; ttlMs?: number; mergeBudgetBytes?: number; deadlineMs?: number },
   dirOverride?: string,
 ): { state: IndexState; delta: { added: number; updated: number; removed: number } } {
   const dir = dirOverride ?? indexDirFor(root);
@@ -564,7 +571,17 @@ export function ensureFresh(
       return { state, delta: { added: 0, updated: 0, removed: 0 } };
     }
   }
-  const scan = scanProject(root, opts.maxFileKB, { includeGitIgnored: opts.includeGitIgnored });
+  // M3 (external review): the budget was exported with a "hard wall-clock
+  // budget for one scan pass" comment but never wired - the deadlineMs
+  // default was Infinity, so every scan ran unbounded. This is a SYNCHRONOUS
+  // scan (execFileSync + lstatSync per candidate) on the tool-call and
+  // post-commit paths, i.e. straight on the host event loop. The default is
+  // the documented budget so the promise holds for every caller; tests and
+  // the selftest can still pass an explicit value.
+  const scan = scanProject(root, opts.maxFileKB, {
+    includeGitIgnored: opts.includeGitIgnored,
+    deadlineMs: opts.deadlineMs ?? INDEX_SCAN_BUDGET_MS,
+  });
   const budget = { remainingBytes: opts.mergeBudgetBytes ?? DEFAULT_MERGE_BUDGET_BYTES, exhausted: false };
   // BRK-017: compare the truncation flag BEFORE mergeIntoState mutates it -
   // the previous post-mutation compare could never observe a flip.

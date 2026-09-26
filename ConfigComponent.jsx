@@ -338,6 +338,9 @@
           {numberField('Skip files larger than (KB)', searchCfg.maxFileKB ?? 512, (n) =>
             updateConfig({ ...config, search: { ...searchCfg, maxFileKB: n } }),
           1, 2048)}
+          {numberField('Scan budget per refresh (ms)', searchCfg.scanBudgetMs ?? 2000, (n) =>
+            updateConfig({ ...config, search: { ...searchCfg, scanBudgetMs: n } }),
+          100, 60_000)}
         </div>
         <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
           The per-project index under <span style={{ fontFamily: 'monospace' }}>index/</span> stores term postings and metadata only -

@@ -10,6 +10,7 @@ import {
   estimateBulkReadAvoided,
   findBestLine,
   formatSearchFooter,
+  INDEX_SCAN_BUDGET_MS,
   isConfinedRelPath,
   loadIndex,
   mergeIntoState,
@@ -326,6 +327,42 @@ describe('ensureFresh with dir override (isolation pattern)', () => {
     assert.equal(fresh.state.truncated, false, 'in-memory state reflects the clean scan');
     assert.equal(loadIndex(store)!.truncated, false, 'the flag change must reach disk - not be eaten by the post-mutation compare');
     assert.notEqual(loadIndex(store)!.builtAt, '2026-01-01T00:00:00.000Z', 'a truncation flip is a real index event -> builtAt refreshes');
+  });
+
+  // M3 (external review): INDEX_SCAN_BUDGET_MS was exported with a "hard
+  // wall-clock budget for one scan pass" comment, but NO caller ever passed
+  // a deadline - the ScanOptions.deadlineMs default is Infinity. Scans ran
+  // unbounded and synchronously (execFileSync + lstatSync per candidate), in
+  // the broke-search tool path AND in the post-commit fire-and-forget
+  // refresh, so a large repo could block the host event loop for seconds.
+  it('honours the scan deadline and reports the truncation honestly (M3)', () => {
+    const root = makeProject();
+    const store = join(mkdtempSync(join(tmpdir(), 'broke-fresh-deadline-')), 'idx');
+    tmpRoots.push(store);
+
+    // A zero budget is already spent: nothing may be indexed, and the
+    // caller must be able to SEE that.
+    const starved = ensureFresh(root, { maxFileKB: 512, deadlineMs: 0 }, store);
+    assert.equal(starved.state.truncated, true, 'an exhausted scan budget is reported as truncated');
+    assert.equal(Object.keys(starved.state.files).length, 0, 'and indexes nothing');
+    assert.equal(loadIndex(store)!.truncated, true, 'the flag is persisted, not just returned');
+
+    // The default must be generous enough that ordinary repositories are
+    // never truncated by the guard itself.
+    const normal = ensureFresh(root, { maxFileKB: 512, deadlineMs: 30_000 }, store);
+    assert.equal(normal.state.truncated, false);
+    assert.ok(Object.keys(normal.state.files).length > 0, 'a budgeted scan still indexes');
+  });
+
+  it('defaults the scan deadline to INDEX_SCAN_BUDGET_MS, not Infinity (M3)', () => {
+    const root = makeProject();
+    const store = join(mkdtempSync(join(tmpdir(), 'broke-fresh-default-')), 'idx');
+    tmpRoots.push(store);
+    // No deadlineMs at all - the default must be the documented budget.
+    const fresh = ensureFresh(root, { maxFileKB: 512 }, store);
+    assert.equal(fresh.state.truncated, false, 'a small project fits inside the default budget');
+    assert.ok(Object.keys(fresh.state.files).length > 0);
+    assert.ok(INDEX_SCAN_BUDGET_MS > 0, 'the budget is a real number, not Infinity');
   });
 });
 
@@ -710,8 +747,12 @@ describe('BRK-013: bounded indexing', () => {
     const root = mkdtempSync(join(tmpdir(), 'broke-indexer-deadline-'));
     tmpRoots.push(root);
     writeFile(root, ['src', 'a.ts'], 'export const alphaFindVisible = 1;');
-    const { entries, truncated } = scanProject(root, 512, { deadlineMs: Date.now() - 1 });
-    assert.equal(truncated, true, 'an already-past deadline reports honest truncation');
-    assert.deepEqual(entries, [], 'a past deadline collects nothing');
+    // M3: deadlineMs is a DURATION, matching INDEX_SCAN_BUDGET_MS. It used
+    // to be compared against Date.now() as if it were an absolute
+    // timestamp, which made the option unusable (any small value is
+    // already in the past) and hid the fact that no caller passed one.
+    const { entries, truncated } = scanProject(root, 512, { deadlineMs: 0 });
+    assert.equal(truncated, true, 'an already-spent budget reports honest truncation');
+    assert.deepEqual(entries, [], 'a spent budget collects nothing');
   });
 });
