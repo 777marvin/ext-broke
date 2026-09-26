@@ -9,6 +9,13 @@
   const [overlayError, setOverlayError] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
   const [previewing, setPreviewing] = React.useState(false);
+  // Quick Commands (H1): a command that mutates state or spends an LLM
+  // call is two-step - `pendingCommand` holds the armed button, the
+  // second click runs it. `commandResult` shows what came back instead of
+  // the old fire-and-forget `.catch(() => {})`, which is what kept the
+  // dead action invisible in v1.2.1/v1.2.2.
+  const [pendingCommand, setPendingCommand] = React.useState(null);
+  const [commandResult, setCommandResult] = React.useState(null);
   const revision = React.useRef(0);
   const gearRef = React.useRef(null);
   const dialogRef = React.useRef(null);
@@ -48,6 +55,8 @@
   const closeOverlay = () => {
     if (savingRef.current) return;
     invalidatePreview();
+    setPendingCommand(null);
+    setCommandResult(null);
     setOverlayOpen(false);
   };
   React.useEffect(() => {
@@ -67,6 +76,8 @@
     setOverlayOpen(true);
     setDraft(null);
     setOverlayError(null);
+    setPendingCommand(null);
+    setCommandResult(null);
     try {
       const c = await executeExtensionAction?.('getConfig');
       if (!c || typeof c !== 'object') throw new Error('Missing config');
@@ -124,6 +135,29 @@
     else e.target.value = String(draftRef.current?.[key] ?? fallback);
   };
   const overlayCache = overlayCfg?.cache ?? {};
+  // Commands that change state or spend money from a single click.
+  // `reset` destroys this task's stats, `summarize now` triggers a real
+  // summarizer call, `selftest` runs the whole pipeline on a temp project.
+  // The read-only ones (status/stats/why/estimate/measure/help) run directly.
+  const MUTATING_QUICK_COMMANDS = ['summarize now', 'reset', 'selftest'];
+  const runQuickCommand = async (cmd) => {
+    if (saving || previewing) return;
+    if (MUTATING_QUICK_COMMANDS.includes(cmd) && pendingCommand !== cmd) {
+      setPendingCommand(cmd);
+      setCommandResult(null);
+      return;
+    }
+    setPendingCommand(null);
+    setCommandResult(null);
+    try {
+      const res = (await executeExtensionAction?.('runCommand', `broke ${cmd}`)) as { ok?: boolean; message?: string; error?: string } | undefined;
+      if (res?.ok === true) setCommandResult({ ok: true, text: res.message ?? '' });
+      else setCommandResult({ ok: false, text: res?.error ?? 'the command returned no result' });
+    } catch {
+      // A dead click must be visible, not swallowed.
+      setCommandResult({ ok: false, text: 'the command could not be run' });
+    }
+  };
   const dialogKeyDown = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeOverlay(); }
     if (e.key === 'Tab') {
@@ -426,37 +460,66 @@
                     { label: 'reset', cmd: 'reset', desc: 'Clear task stats' },
                     { label: 'selftest', cmd: 'selftest', desc: 'Run pipeline self-test' },
                     { label: 'help', cmd: 'help', desc: 'Show all commands' },
-                  ].map((item) => (
+                  ].map((item) => {
+                    const armed = pendingCommand === item.cmd;
+                    const mutating = MUTATING_QUICK_COMMANDS.includes(item.cmd);
+                    return (
                     <button
                       key={item.cmd}
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        executeExtensionAction?.('runCommand', `broke ${item.cmd}`).catch(() => {});
+                        void runQuickCommand(item.cmd);
                       }}
                       disabled={saving || previewing}
                       style={{
                         padding: '8px 10px',
                         fontSize: 12,
-                        background: '#ffffff',
-                        border: '1px solid rgba(0,0,0,0.12)',
+                        background: armed ? '#fff3cd' : '#ffffff',
+                        border: `1px solid ${armed ? '#d4a017' : 'rgba(0,0,0,0.12)'}`,
                         borderRadius: 6,
                         cursor: saving || previewing ? 'not-allowed' : 'pointer',
-                        color: '#333',
+                        color: armed ? '#7a5c00' : '#333',
                         textAlign: 'left',
                         fontWeight: 500,
                         opacity: saving || previewing ? 0.5 : 1,
                         transition: 'all 0.15s ease',
                         boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                       }}
-                      onMouseEnter={(e) => { if (!saving && !previewing) { e.currentTarget.style.background = '#f0f7ff'; e.currentTarget.style.borderColor = '#0066cc'; e.currentTarget.style.color = '#0066cc'; } }}
-                      onMouseLeave={(e) => { if (!saving && !previewing) { e.currentTarget.style.background = '#ffffff'; e.currentTarget.style.borderColor = 'rgba(0,0,0,0.12)'; e.currentTarget.style.color = '#333'; } }}
-                      title={item.desc}
+                      onMouseEnter={(e) => { if (!saving && !previewing && !armed) { e.currentTarget.style.background = '#f0f7ff'; e.currentTarget.style.borderColor = '#0066cc'; e.currentTarget.style.color = '#0066cc'; } }}
+                      onMouseLeave={(e) => { if (!saving && !previewing && !armed) { e.currentTarget.style.background = '#ffffff'; e.currentTarget.style.borderColor = 'rgba(0,0,0,0.12)'; e.currentTarget.style.color = '#333'; } }}
+                      title={armed ? 'Click again to run this command' : mutating ? `${item.desc} - needs a second click to confirm` : item.desc}
                     >
-                      /broke <span style={{ fontWeight: 700 }}>{item.label}</span>
+                      {armed ? (
+                        <>Confirm? <span style={{ fontWeight: 700 }}>/broke {item.label}</span></>
+                      ) : (
+                        <>/broke <span style={{ fontWeight: 700 }}>{item.label}</span></>
+                      )}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
+                {commandResult ? (
+                  <div
+                    role="status"
+                    style={{
+                      marginTop: 10,
+                      padding: '8px 10px',
+                      fontSize: 12,
+                      lineHeight: 1.4,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: 160,
+                      overflowY: 'auto',
+                      background: commandResult.ok ? '#f1f8f1' : '#fdf1f1',
+                      border: `1px solid ${commandResult.ok ? '#b7dfb7' : '#e6b7b7'}`,
+                      borderRadius: 6,
+                      color: commandResult.ok ? '#1e4620' : '#7a1f1f',
+                    }}
+                  >
+                    {commandResult.text}
+                  </div>
+                ) : null}
               </div>
               </>
             )}

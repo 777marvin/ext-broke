@@ -112,6 +112,28 @@ const statusBadgeJsx = loadTemplate('./StatusBadge.jsx');
 /** Stable component ids for the UI elements. */
 const STATUS_BADGE_ID = 'broke-status';
 
+/**
+ * The only subcommands the badge's Quick Commands grid may execute.
+ *
+ * H1 (external review): `runCommand` was an action NOTHING implemented, so
+ * the 9 buttons shipped dead in v1.2.1 and v1.2.2. The action now runs the
+ * real dispatcher - but behind this allowlist, so a crafted UI payload
+ * cannot turn a one-click badge into an arbitrary `/broke` command
+ * (`flush`, `config set`, `snapshot`, ...). The check is on the PARSED
+ * kind, not the raw string: that is what makes the boundary meaningful.
+ */
+const QUICK_COMMAND_KINDS: ReadonlySet<BrokeCommand['kind']> = new Set<BrokeCommand['kind']>([
+  'status',
+  'stats',
+  'why',
+  'estimate',
+  'measure',
+  'summarize-now',
+  'reset',
+  'selftest',
+  'help',
+]);
+
 /** Only log compression activity every this many ms per task (chat noise control). */
 const LOG_THROTTLE_MS = 5 * 60 * 1000;
 /** Only log when at least this many chars were saved by a run (4000 chars ≈ 1000 tokens). */
@@ -1010,160 +1032,177 @@ export default class Broke implements Extension {
         description: 'broke: token-budget compression - status, config and per-task stats - /broke help lists all subcommands',
         arguments: [{ description: 'subcommand - see /broke help', required: false }],
         async execute(args, context) {
-          const config = getConfig();
-          const cmd = parseBrokeCommand(args);
-          const task = context.getTaskContext();
-          const log = async (line: string): Promise<void> => {
-            if (task) await task.addLogMessage('info', line);
-            else context.log(line, 'info');
-          };
-
-          switch (cmd.kind) {
-            case 'status': {
-              const price = await resolveTaskModelPrice(context);
-              return log(await formatStatus(config, ext.statsFor(context), price));
-            }
-            case 'stats': {
-              const price = await resolveTaskModelPrice(context);
-              return log(formatStats(config, ext.statsFor(context), price));
-            }
-            case 'estimate':
-              return log(formatEstimate(ext.statsFor(context)));
-            case 'why': {
-              return log(await ext.explainWhy(context));
-            }
-            case 'reset': {
-              const taskId = context.getTaskContext()?.data.id;
-              if (taskId) {
-                const cleared = emptyStats(taskId);
-                ext.statsByTask.set(taskId, cleared);
-                // Real reset: remove the task's persisted lines from stats.jsonl
-                // and drop the summarize cache so nothing stale survives.
-                clearTaskStats(taskId);
-                ext.statsLoader.invalidate(taskId);
-                ext.lastPersistAt.delete(taskId);
-                ext.state.cachedSummaryByTask.delete(taskId);
-                ext.summarizeFailures.delete(taskId);
-                ext.summarizeDisabled.delete(taskId);
-                // Cache-friendly state: forget which bytes were sent and
-                // unlock the escape hatch - a reset task starts fresh.
-                clearTask(taskId);
-                ext.escapeByTask.delete(taskId);
-              }
-              return log('broke: stats cleared for this task (incl. persisted history; summarization re-enabled)');
-            }
-            case 'selftest': {
-              const result = await runSelfTest(config);
-              return log(result.lines.join('\n'));
-            }
-            case 'update': {
-              // Self-update from GitHub releases. The hooks free the config
-              // watcher's directory handle for the folder swap and reopen it
-              // afterwards; progress goes to the extension log, not the chat.
-              // BRK-006: onAfterSwap only fires on SUCCESS - a failed update
-              // used to leave the watcher closed forever. Track the close and
-              // always restore afterwards.
-              let watcherClosedByUpdate = false;
-              const result = await runUpdate({ mode: cmd.mode, tag: cmd.tag }, {
-                onBeforeSwap: () => {
-                  ext.closeConfigWatcher();
-                  watcherClosedByUpdate = true;
-                },
-                onAfterSwap: () => {
-                  ext.startConfigWatcher();
-                  watcherClosedByUpdate = false;
-                },
-                progress: (line) => context.log(line, 'info'),
-              });
-              if (watcherClosedByUpdate) {
-                ext.startConfigWatcher();
-                context.log('broke: config watcher restored after failed update', 'info');
-              }
-              return log(result.message);
-            }
-            case 'errors-clear': {
-              const result = clearArchive();
-              return log(
-                result.removedFiles > 0
-                  ? `broke: error archive cleared - ${result.removedFiles} file(s), ${result.removedBytes.toLocaleString('en-US')} bytes removed`
-                  : 'broke: error archive was already empty',
-              );
-            }
-            case 'slice-focus':
-            case 'slice-focus-clear':
-            case 'slice-status': {
-              const taskId = context.getTaskContext()?.data.id;
-              if (!taskId) return log('broke: slice focus is task-scoped - run this inside a task');
-              if (cmd.kind === 'slice-focus') {
-                boundedMapSet(ext.explicitFocus, taskId, cmd.path);
-                return log(`broke: slice focus → ${cmd.path} (this file always returns in full while slicing is on)`);
-              }
-              if (cmd.kind === 'slice-focus-clear') {
-                ext.explicitFocus.delete(taskId);
-                return log('broke: explicit slice focus cleared - focusAuto rules apply again');
-              }
-              const configNow = getConfig();
-              const focus =
-                ext.explicitFocus.get(taskId) ??
-                ext.lastEditPath.get(taskId)?.path ??
-                '(none yet - becomes the last edited file with focusAuto)';
-              return log(
-                `broke slice status: slicing ${configNow.enabled ? '' : '(pipeline OFF) '}${configNow.slice.enabled ? 'on' : 'off'} | parser: ${configNow.slice.parser} | min ${configNow.slice.minChars.toLocaleString('en-US')} chars | view cap ${configNow.slice.maxChars.toLocaleString('en-US')} chars | focusAuto: ${configNow.slice.focusAuto ? 'on' : 'off'} | current focus: ${focus}`,
-              );
-            }
-            case 'index-rebuild':
-              return log(ext.rebuildProjectIndex(context));
-            case 'index-status':
-              return log(ext.indexStatusText(context));
-            case 'search':
-              return log(ext.searchViaTool({ query: cmd.query }, context));
-            case 'summarize-now':
-              return log(await ext.summarizeNow(context));
-            case 'snapshot':
-            case 'snapshot-list':
-            case 'snapshot-show':
-              return log(await ext.handleSnapshotCommand(context, cmd));
-            case 'flush':
-              return log(await ext.handleFlushCommand(context, cmd));
-            case 'measure': {
-              // Cost estimates use the CURRENT task model + cache profile -
-              // never a stored one; without a price only token figures show.
-              const task = context.getTaskContext();
-              const measureProfile = resolveCacheProfile(config, { provider: task?.data.provider, model: task?.data.model ?? task?.data.mainModel });
-              const measurePrice = await resolveTaskModelPrice(context);
-              const summary = summarizeRunRecords(loadRunRecords(), {
-                inputPerMToken: measurePrice?.inputPerMToken ?? null,
-                cacheProfile: measureProfile,
-              });
-              return log(formatMeasure(summary));
-            }
-            case 'help':
-              return log(HELP_TEXT);
-            case 'unknown':
-              return log(`broke: unknown command - ${cmd.raw} - /broke help lists all subcommands`);
-            default: {
-              // Use the persistence coercer so JSON escapes and whitespace
-              // cannot select Long without the pre-write disclosure.
-              const setModeValue = cmd.kind === 'config-set' && cmd.path === 'mode' ? coerceConfigValue(cmd.path, cmd.value) : undefined;
-              if ((cmd.kind === 'mode' && cmd.mode === 'long') || setModeValue === 'long') {
-                await log('Before applying Long (extension-wide): local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are unchanged. Manual automation only reuses existing summaries.');
-              }
-              const updated = applyBrokeCommand(cmd, config);
-              // Reconfiguring the summarizer backend/model is an explicit
-              // retry intent: clear the auto-disable so the new setup runs.
-              const taskId = context.getTaskContext()?.data.id;
-              if (taskId && (cmd.kind === 'summarize-via' || cmd.kind === 'summarize-model' || cmd.kind === 'summarize-cloud')) {
-                ext.summarizeDisabled.delete(taskId);
-                ext.summarizeFailures.delete(taskId);
-              }
-              ext.context?.triggerUIComponentsReload();
-              ext.refreshUI();
-              return log(`broke: ${updated.message} - /broke help lists all subcommands`);
-            }
-          }
+          await ext.executeBrokeCommand(args, context);
         },
       },
     ];
+  }
+
+  /**
+   * The whole /broke command surface, extracted out of the getCommands
+   * closure so the badge's Quick Commands run the SAME dispatcher instead
+   * of a parallel implementation (external review H1: the `runCommand` UI
+   * action had no handler anywhere - the buttons shipped dead in v1.2.1
+   * and v1.2.2).
+   *
+   * Returns the line it logged so a UI caller can surface the result
+   * instead of firing and forgetting. The message still goes to the task
+   * log, exactly as the chat-typed command always did.
+   */
+  private async executeBrokeCommand(args: string[], context: ExtensionContext): Promise<string> {
+    const ext = this;
+    const config = getConfig();
+    const cmd = parseBrokeCommand(args);
+    const task = context.getTaskContext();
+    const log = async (line: string): Promise<string> => {
+      if (task) await task.addLogMessage('info', line);
+      else context.log(line, 'info');
+      return line;
+    };
+
+    switch (cmd.kind) {
+      case 'status': {
+        const price = await resolveTaskModelPrice(context);
+        return log(await formatStatus(config, ext.statsFor(context), price));
+      }
+      case 'stats': {
+        const price = await resolveTaskModelPrice(context);
+        return log(formatStats(config, ext.statsFor(context), price));
+      }
+      case 'estimate':
+        return log(formatEstimate(ext.statsFor(context)));
+      case 'why': {
+        return log(await ext.explainWhy(context));
+      }
+      case 'reset': {
+        const taskId = context.getTaskContext()?.data.id;
+        if (taskId) {
+          const cleared = emptyStats(taskId);
+          ext.statsByTask.set(taskId, cleared);
+          // Real reset: remove the task's persisted lines from stats.jsonl
+          // and drop the summarize cache so nothing stale survives.
+          clearTaskStats(taskId);
+          ext.statsLoader.invalidate(taskId);
+          ext.lastPersistAt.delete(taskId);
+          ext.state.cachedSummaryByTask.delete(taskId);
+          ext.summarizeFailures.delete(taskId);
+          ext.summarizeDisabled.delete(taskId);
+          // Cache-friendly state: forget which bytes were sent and
+          // unlock the escape hatch - a reset task starts fresh.
+          clearTask(taskId);
+          ext.escapeByTask.delete(taskId);
+        }
+        return log('broke: stats cleared for this task (incl. persisted history; summarization re-enabled)');
+      }
+      case 'selftest': {
+        const result = await runSelfTest(config);
+        return log(result.lines.join('\n'));
+      }
+      case 'update': {
+        // Self-update from GitHub releases. The hooks free the config
+        // watcher's directory handle for the folder swap and reopen it
+        // afterwards; progress goes to the extension log, not the chat.
+        // BRK-006: onAfterSwap only fires on SUCCESS - a failed update
+        // used to leave the watcher closed forever. Track the close and
+        // always restore afterwards.
+        let watcherClosedByUpdate = false;
+        const result = await runUpdate({ mode: cmd.mode, tag: cmd.tag }, {
+          onBeforeSwap: () => {
+            ext.closeConfigWatcher();
+            watcherClosedByUpdate = true;
+          },
+          onAfterSwap: () => {
+            ext.startConfigWatcher();
+            watcherClosedByUpdate = false;
+          },
+          progress: (line) => context.log(line, 'info'),
+        });
+        if (watcherClosedByUpdate) {
+          ext.startConfigWatcher();
+          context.log('broke: config watcher restored after failed update', 'info');
+        }
+        return log(result.message);
+      }
+      case 'errors-clear': {
+        const result = clearArchive();
+        return log(
+          result.removedFiles > 0
+            ? `broke: error archive cleared - ${result.removedFiles} file(s), ${result.removedBytes.toLocaleString('en-US')} bytes removed`
+            : 'broke: error archive was already empty',
+        );
+      }
+      case 'slice-focus':
+      case 'slice-focus-clear':
+      case 'slice-status': {
+        const taskId = context.getTaskContext()?.data.id;
+        if (!taskId) return log('broke: slice focus is task-scoped - run this inside a task');
+        if (cmd.kind === 'slice-focus') {
+          boundedMapSet(ext.explicitFocus, taskId, cmd.path);
+          return log(`broke: slice focus → ${cmd.path} (this file always returns in full while slicing is on)`);
+        }
+        if (cmd.kind === 'slice-focus-clear') {
+          ext.explicitFocus.delete(taskId);
+          return log('broke: explicit slice focus cleared - focusAuto rules apply again');
+        }
+        const configNow = getConfig();
+        const focus =
+          ext.explicitFocus.get(taskId) ??
+          ext.lastEditPath.get(taskId)?.path ??
+          '(none yet - becomes the last edited file with focusAuto)';
+        return log(
+          `broke slice status: slicing ${configNow.enabled ? '' : '(pipeline OFF) '}${configNow.slice.enabled ? 'on' : 'off'} | parser: ${configNow.slice.parser} | min ${configNow.slice.minChars.toLocaleString('en-US')} chars | view cap ${configNow.slice.maxChars.toLocaleString('en-US')} chars | focusAuto: ${configNow.slice.focusAuto ? 'on' : 'off'} | current focus: ${focus}`,
+        );
+      }
+      case 'index-rebuild':
+        return log(ext.rebuildProjectIndex(context));
+      case 'index-status':
+        return log(ext.indexStatusText(context));
+      case 'search':
+        return log(ext.searchViaTool({ query: cmd.query }, context));
+      case 'summarize-now':
+        return log(await ext.summarizeNow(context));
+      case 'snapshot':
+      case 'snapshot-list':
+      case 'snapshot-show':
+        return log(await ext.handleSnapshotCommand(context, cmd));
+      case 'flush':
+        return log(await ext.handleFlushCommand(context, cmd));
+      case 'measure': {
+        // Cost estimates use the CURRENT task model + cache profile -
+        // never a stored one; without a price only token figures show.
+        const task = context.getTaskContext();
+        const measureProfile = resolveCacheProfile(config, { provider: task?.data.provider, model: task?.data.model ?? task?.data.mainModel });
+        const measurePrice = await resolveTaskModelPrice(context);
+        const summary = summarizeRunRecords(loadRunRecords(), {
+          inputPerMToken: measurePrice?.inputPerMToken ?? null,
+          cacheProfile: measureProfile,
+        });
+        return log(formatMeasure(summary));
+      }
+      case 'help':
+        return log(HELP_TEXT);
+      case 'unknown':
+        return log(`broke: unknown command - ${cmd.raw} - /broke help lists all subcommands`);
+      default: {
+        // Use the persistence coercer so JSON escapes and whitespace
+        // cannot select Long without the pre-write disclosure.
+        const setModeValue = cmd.kind === 'config-set' && cmd.path === 'mode' ? coerceConfigValue(cmd.path, cmd.value) : undefined;
+        if ((cmd.kind === 'mode' && cmd.mode === 'long') || setModeValue === 'long') {
+          await log('Before applying Long (extension-wide): local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are unchanged. Manual automation only reuses existing summaries.');
+        }
+        const updated = applyBrokeCommand(cmd, config);
+        // Reconfiguring the summarizer backend/model is an explicit
+        // retry intent: clear the auto-disable so the new setup runs.
+        const taskId = context.getTaskContext()?.data.id;
+        if (taskId && (cmd.kind === 'summarize-via' || cmd.kind === 'summarize-model' || cmd.kind === 'summarize-cloud')) {
+          ext.summarizeDisabled.delete(taskId);
+          ext.summarizeFailures.delete(taskId);
+        }
+        ext.context?.triggerUIComponentsReload();
+        ext.refreshUI();
+        return log(`broke: ${updated.message} - /broke help lists all subcommands`);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1692,8 +1731,13 @@ export default class Broke implements Extension {
    * 'setConfig' back the badge settings overlay (task 7) - setConfig runs
    * the SAME validated path as the settings dialog: an out-of-schema value
    * is logged, rejected and the previous config is kept.
+   *
+   * 'runCommand' backs the badge's Quick Commands grid (H1). It returns
+   * `{ok, message}` or `{ok, error}` so the overlay can show the result -
+   * the old code fired `.catch(() => {})` around an action that no longer
+   * exists, so a click died silently and looked like a broken extension.
    */
-  async executeUIExtensionAction(_componentId: string, action: string, args: unknown[], _context: ExtensionContext): Promise<unknown> {
+  async executeUIExtensionAction(_componentId: string, action: string, args: unknown[], context: ExtensionContext): Promise<unknown> {
     if (action === 'refresh') this.refreshUI();
     if (action === 'getConfig') return getConfig();
     if (action === 'previewMode') {
@@ -1708,6 +1752,29 @@ export default class Broke implements Extension {
       const before = getConfig();
       const after = await this.saveConfigData(args[0]);
       return { ok: after !== before, config: after };
+    }
+    if (action === 'runCommand') {
+      // Accept both "broke stats" (what the grid sends) and "stats".
+      const raw = typeof args[0] === 'string' ? args[0] : '';
+      const stripped = raw.trim().replace(/^\/?broke\b\s*/i, '');
+      const argv = stripped.length > 0 ? stripped.split(/\s+/) : [];
+      // Empty input is refused explicitly: parseBrokeCommand([]) maps to
+      // `status`, which would turn a malformed click into a command.
+      if (argv.length === 0) return { ok: false, error: 'no subcommand given' };
+      const parsed = parseBrokeCommand(argv);
+      if (parsed.kind === 'unknown' || !QUICK_COMMAND_KINDS.has(parsed.kind)) {
+        return { ok: false, error: `unsupported quick command '${raw}'` };
+      }
+      // The host hands a context to this action, but prefer the onLoad
+      // context if it is not a usable task context - never break the host.
+      const ctx = typeof context?.getTaskContext === 'function' ? context : this.context;
+      if (!ctx) return { ok: false, error: 'broke is not loaded yet' };
+      try {
+        return { ok: true, message: await this.executeBrokeCommand(argv, ctx) };
+      } catch (err) {
+        // Swallowing this is what made H1 invisible: surface it instead.
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
     }
     return null;
   }

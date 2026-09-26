@@ -78,6 +78,109 @@ describe('badge overlay UI actions (task 7)', () => {
   });
 });
 
+describe('H1 quick-command wiring (review finding: runCommand was dead)', () => {
+  it('runCommand executes the real dispatcher and reports the logged message', async () => {
+    const host = makeHost();
+    const seen: string[] = [];
+    host.getTaskContext()!.addLogMessage = async (_level, text) => { seen.push(text ?? ''); };
+    const ext = new Broke();
+
+    const res = (await ext.executeUIExtensionAction('broke-status', 'runCommand', ['broke stats'], host)) as {
+      ok: boolean;
+      message: string;
+    };
+
+    assert.equal(res.ok, true, 'the wired action reports success');
+    assert.equal(typeof res.message, 'string');
+    assert.ok(res.message.length > 0, 'a message is returned to the overlay');
+    assert.deepEqual(seen, [res.message], 'the command really ran (same message reached the task log)');
+  });
+
+  it('the button output is byte-identical to the typed /broke command (same dispatcher)', async () => {
+    const viaCommandHost = makeHost();
+    const typed: string[] = [];
+    viaCommandHost.getTaskContext()!.addLogMessage = async (_level, text) => { typed.push(text ?? ''); };
+    await new Broke().getCommands(viaCommandHost)[0].execute(['stats'], viaCommandHost);
+
+    const viaActionHost = makeHost();
+    const clicked: string[] = [];
+    viaActionHost.getTaskContext()!.addLogMessage = async (_level, text) => { clicked.push(text ?? ''); };
+    const res = (await new Broke().executeUIExtensionAction('broke-status', 'runCommand', ['broke stats'], viaActionHost)) as {
+      ok: boolean;
+      message: string;
+    };
+
+    assert.equal(typed.length, 1, 'the typed command logs exactly one line');
+    assert.deepEqual(clicked, typed, 'a click must not diverge from the typed command');
+    assert.equal(res.message, typed[0], 'the overlay sees what the chat shows');
+  });
+
+  it('runCommand accepts every button command of the Quick Commands grid', async () => {
+    const host = makeHost();
+    host.getTaskContext()!.addLogMessage = async () => undefined;
+    const ext = new Broke();
+    const buttons = ['status', 'stats', 'why', 'estimate', 'measure', 'summarize now', 'reset', 'selftest', 'help'];
+
+    for (const cmd of buttons) {
+      const res = (await ext.executeUIExtensionAction('broke-status', 'runCommand', [`broke ${cmd}`], host)) as {
+        ok: boolean;
+        error?: string;
+      };
+      assert.equal(res.ok, true, `"broke ${cmd}" must be wired: ${res.error ?? ''}`);
+    }
+  });
+
+  it('runCommand refuses commands outside the allowlist BEFORE executing them', async () => {
+    const { getConfig, DEFAULT_CONFIG, saveConfig } = await import('../config');
+    saveConfig(DEFAULT_CONFIG);
+    const host = makeHost();
+    const seen: string[] = [];
+    host.getTaskContext()!.addLogMessage = async (_level, text) => { seen.push(text ?? ''); };
+    const ext = new Broke();
+
+    // A state-changing command that is NOT on the button grid: if the
+    // allowlist ever fails open, the config changes and this test catches it.
+    for (const raw of ['broke mode long', 'broke level long', 'broke flush', 'broke snapshot wipe-me', 'broke on']) {
+      const res = (await ext.executeUIExtensionAction('broke-status', 'runCommand', [raw], host)) as {
+        ok: boolean;
+        error?: string;
+      };
+      assert.equal(res.ok, false, `"${raw}" must be refused`);
+      assert.match(res.error ?? '', /unsupported/i);
+    }
+
+    assert.equal(getConfig().mode, DEFAULT_CONFIG.mode, 'no refused command changed the config');
+    assert.deepEqual(seen, [], 'a refused command never reaches the dispatcher');
+  });
+
+  it('runCommand refuses malformed input instead of throwing', async () => {
+    const host = makeHost();
+    const ext = new Broke();
+
+    for (const args of [[], [undefined], [123], [''], ['broke'], ['   '], ['broke zzz-not-a-command']]) {
+      const res = await ext.executeUIExtensionAction('broke-status', 'runCommand', args, host);
+      assert.equal((res as { ok: boolean }).ok, false, `args ${JSON.stringify(args)} must be refused`);
+    }
+  });
+
+  it('an unknown action still returns null (host contract unchanged)', async () => {
+    const ext = new Broke();
+    assert.equal(await ext.executeUIExtensionAction('broke-status', 'totallyUnknown', [], makeHost()), null);
+  });
+
+  it('the /broke command itself still works after the extraction', async () => {
+    const host = makeHost();
+    const seen: string[] = [];
+    host.getTaskContext()!.addLogMessage = async (_level, text) => { seen.push(text ?? ''); };
+    const ext = new Broke();
+
+    await ext.getCommands(host)[0].execute(['status'], host);
+
+    assert.equal(seen.length, 1, 'the command still logs exactly one line');
+    assert.match(seen[0], /broke/i);
+  });
+});
+
 describe('F5 preset actions', () => {
   it('previews canonical presets without saving; rejects invalid requests', async () => {
     const ext = new Broke();
