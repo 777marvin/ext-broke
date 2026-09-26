@@ -871,6 +871,43 @@ describe('post-commit failure honesty (BRK-005)', () => {
     assert.equal(res.updated, false);
     assert.match(res.message, /unchanged/);
   });
+
+  // M1 (external review): the unit above passes the tag explicitly, so it
+  // could never catch a WIRING defect. An inner `let targetTag` shadowed the
+  // outer one for the whole try block; the catch sits outside that scope and
+  // therefore always read the never-assigned '' - making the BRK-005 safety
+  // net dead code. This test goes through runUpdate, the public entry point.
+  it('runUpdate wires the resolved targetTag into the post-commit report', async () => {
+    const install = fakeInstall('0.5.1');
+    const calls: FakeCalls = { downloads: [], npmCiDirs: [] };
+    const deps = makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD, { calls });
+    // Simulate "the commit marker of THIS run landed, then a later step
+    // exploded" - the exact window the safety net exists for.
+    deps.runNpmCi = async () => {
+      writeFileSync(join(install, '.update-state.json'), '{"committed":true,"tag":"v0.6.0"}\n', 'utf-8');
+      throw new Error('post-commit step exploded');
+    };
+
+    const res = await runUpdate({ mode: 'install' }, {}, deps, install);
+
+    assert.equal(res.ok, true, 'a committed update must never be reported as a failed one');
+    assert.equal(res.updated, true);
+    assert.equal(res.targetVersion, '0.6.0', 'the resolved tag reached the report');
+    assert.match(res.message, /COMMITTED/);
+    assert.match(res.message, /post-commit step exploded/);
+  });
+
+  it('runUpdate reports unchanged for a pre-commit failure with no marker', async () => {
+    const install = fakeInstall('0.5.1');
+    const calls: FakeCalls = { downloads: [], npmCiDirs: [] };
+    const deps = makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD, { calls, failNpm: new Error('npm ci exploded') });
+
+    const res = await runUpdate({ mode: 'install' }, {}, deps, install);
+
+    assert.equal(res.ok, false, 'without a marker this really is a failed update');
+    assert.match(res.message, /unchanged/);
+    assert.doesNotMatch(res.message, /COMMITTED/);
+  });
 });
 
 // ---------------------------------------------------------------------------

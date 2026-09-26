@@ -1085,7 +1085,10 @@ export async function runUpdate(
       verifyRelease: deps.verifyRelease ?? defaultVerifyRelease,
     };
 
-    let targetTag: string;
+    // No inner declaration on purpose: the catch below is OUTSIDE this try
+    // block, so it reads this outer binding. A shadowing `let targetTag`
+    // here left the outer one forever '' and turned the BRK-005 safety net
+    // into dead code (external review M1).
     if (request.tag !== undefined) {
       const normalized = normalizeTag(request.tag);
       if (!normalized) return fail(`invalid version '${request.tag}' - expected vX.Y.Z`, currentVersion);
