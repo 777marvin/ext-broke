@@ -5,21 +5,31 @@
  * shapes - never against `any` fallbacks that let typos pass silently.
  * This file pins the shapes the components actually consume, hand-vendored
  * from AiderDesk v0.80.0 / @aiderdesk/extensions 0.31.
- * Verified consumed props against @aiderdesk/extensions 0.32.1,
- * @aiderdesk/extensions 0.33.0 and @aiderdesk/extensions 0.34.0. The first
- * two were checked against these hotovo/aider-desk source commits:
+ * Minimum supported host: AiderDesk 0.84. That is the floor because
+ * `/broke diff` consumes TaskContext.getUpdatedFileDiff, which the HOST added in
+ * 0.84 (verified in packages/common/src/extensions.ts at tag v0.84.0) - the
+ * first PUBLISHED SDK exposing it is 0.34.0, one minor after the 0.33.0 that
+ * ships with 0.84, so the npm tarball is NOT a reliable witness for what a
+ * host version implements. Prove every API's runtime availability from the host
+ * source at the floor tag; the tarball only bounds the compile surface.
+ *
+ * Verified consumed props against @aiderdesk/extensions 0.32.1 and
+ * @aiderdesk/extensions 0.33.0 (checked against these hotovo/aider-desk source
+ * commits), and re-verified against @aiderdesk/extensions 0.35.0:
  * - 0.32.1: d671c96a5b744d1215b4b9f2938f3bfa171802ea
  * - 0.33.0: ef09179b705eed5acb04b313c9acc5e39e7314f4
- * 0.34.0 was verified against the PUBLISHED type declarations only
- * (dist/index.d.ts diffed against 0.32.1), not against a host checkout: that
- * diff is purely additive and touches nothing broke consumes
- * (OpenAiProvider.store?, Group.ephemeral?, QueuedPromptData.customCommand?,
- * TaskSettings.worktreePostCreateCommand?,
- * SwitchToLocalOptions.discardWorktreeChanges?, TaskContext.getUpdatedFileDiff
- * (new method)). UIComponents, UIComponentProps and the Checkbox/Input/Select
- * props are byte-identical to 0.32.1, so the shapes vendored below still hold
- * - the version reference was stale, not the contract. Re-verify against a
- * host checkout when one is available.
+ * 0.35.0 was verified against a HOST SOURCE CHECKOUT, AiderDesk v0.85.0 at
+ * commit 12d38d8e52543146e83e0dc44ef6439ba8aee099:
+ * - Checkbox, Input and Button are unchanged since the 0.32.1 baseline;
+ * - Select gained an optional `notFoundLabel?` (additive, not consumed here);
+ * - Tooltip was reimplemented internally in 0.84 for rendering performance
+ *   (one global host instead of a Radix provider per instance). Its exported
+ *   prop signature - content, children, side, align, delayDuration, maxWidth
+ *   - is unchanged, so the shape vendored below still holds.
+ * So the shapes below are current: only the version reference was stale.
+ * One capability degrades on a 0.84 host: the 'task-message-bar-menu'
+ * placement does not exist there (it lands in 0.85), so the opt-in message
+ * menu simply does not render - it is off by default for that reason too.
  * Sources: src/renderer/src/components/{common/{Button,Checkbox,Input,Select},ui/Tooltip}.tsx
  * and src/renderer/src/contexts/ExtensionsContext.tsx (direct UI registry).
  * Tooltip takes content (not label); Button requires children, not label.
