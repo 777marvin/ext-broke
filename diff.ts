@@ -24,6 +24,14 @@ export interface DiffFileInput {
   deletions: number;
   /** Unified diff text. Empty for binary files AND on host-side error. */
   diff: string;
+  /**
+   * Set when the file was never even READ, because the caller hit its
+   * per-command read cap. This is a third state, distinct from both a
+   * readable diff and a binary/unreadable one, and the digest must say so:
+   * rendering it as "unreadable" would blame the file for a limit broke
+   * imposed, and rendering it as a size would invent a measurement.
+   */
+  notRead?: boolean;
 }
 
 export interface DiffDigest {
@@ -52,6 +60,17 @@ export const MIN_DIFF_BUDGET_CHARS = 200;
 export const MAX_DIFF_BUDGET_CHARS = 100_000;
 
 /**
+ * Hard cap on how many diffs ONE `/broke diff` run will read.
+ *
+ * The char budget bounds the OUTPUT; this bounds the WORK. Each diff is one
+ * host round-trip that runs git, so an unbounded read loop turns the command
+ * into a minute-long hang on a repository with thousands of changed files -
+ * to produce a digest whose budget would have cut most of them anyway. Files
+ * past the cap are reported as not read.
+ */
+export const MAX_DIFF_FILES_READ = 200;
+
+/**
  * The header and the elision line are accounting, not payload: they are
  * allowed to exceed the budget by this much so a tight budget still produces
  * an honest digest rather than a truncated sentence.
@@ -66,6 +85,12 @@ const fmt = (n: number): string => n.toLocaleString('en-US');
  */
 function renderBlock(input: DiffFileInput, available: number): { block: string; length: number } {
   const header = `${input.path} (+${input.additions}/-${input.deletions})`;
+  // "Never read" is broke's own doing, so it gets its own wording: blaming
+  // the file would be false, and a size would be invented.
+  if (input.notRead) {
+    const block = `${header}\n  (not read - broke stops after ${fmt(MAX_DIFF_FILES_READ)} diffs per run)`;
+    return { block, length: block.length + 1 };
+  }
   // An empty diff is the host's documented signal for "binary file" or "the
   // diff could not be read". It is NOT a size of zero and must never be
   // rendered as one - a file with no changes and a file whose content cannot
@@ -93,9 +118,12 @@ export function formatDiffDigest(files: readonly DiffFileInput[], budgetChars: n
   // Only diffs the host actually returned text for count as a measured size.
   // A binary or unreadable file contributes nothing here AND is named in the
   // header - summing its absence into "0 chars of diff" would claim a
-  // measurement that was never taken.
-  const readable = files.filter((f) => f.diff.trim().length > 0);
-  const unreadable = files.length - readable.length;
+  // measurement that was never taken. A never-read file is a third bucket
+  // again: broke did not ask, so it is not a size and not the file's fault.
+  const notRead = files.filter((f) => f.notRead === true);
+  const attempted = files.filter((f) => f.notRead !== true);
+  const readable = attempted.filter((f) => f.diff.trim().length > 0);
+  const unreadable = attempted.length - readable.length;
   const diffChars = readable.reduce((sum, f) => sum + f.diff.length, 0);
   const additions = files.reduce((sum, f) => sum + f.additions, 0);
   const deletions = files.reduce((sum, f) => sum + f.deletions, 0);
@@ -112,14 +140,17 @@ export function formatDiffDigest(files: readonly DiffFileInput[], budgetChars: n
 
   // When nothing was readable, the size is not a zero - it is unknown. Never
   // print a number that could be misread as "these files have no changes".
-  const sizePart =
-    readable.length === 0
-      ? `no readable diff text (${fmt(unreadable)} binary or unreadable, size unknown)`
-      : `${fmt(diffChars)} chars of diff across ${fmt(readable.length)} readable file${readable.length === 1 ? '' : 's'}` +
-        (unreadable > 0 ? `, ${fmt(unreadable)} binary or unreadable (size unknown)` : '');
+  const sizeParts: string[] = [];
+  if (readable.length > 0) {
+    sizeParts.push(`${fmt(diffChars)} chars of diff across ${fmt(readable.length)} readable file${readable.length === 1 ? '' : 's'}`);
+  } else if (notRead.length < files.length) {
+    sizeParts.push('no readable diff text');
+  }
+  if (unreadable > 0) sizeParts.push(`${fmt(unreadable)} binary or unreadable (size unknown)`);
+  if (notRead.length > 0) sizeParts.push(`${fmt(notRead.length)} not read (per-run read cap)`);
   const header =
     `broke diff - ${fmt(files.length)} changed file${files.length === 1 ? '' : 's'}, ` +
-    `+${fmt(additions)}/-${fmt(deletions)} lines, ${sizePart}.`;
+    `+${fmt(additions)}/-${fmt(deletions)} lines, ${sizeParts.join(', ')}.`;
 
   const blocks: string[] = [];
   let used = 0;

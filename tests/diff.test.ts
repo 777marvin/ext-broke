@@ -96,6 +96,22 @@ describe('formatDiffDigest', () => {
     }
   });
 
+  // The budget bounds the OUTPUT, not the work. Reading a diff is one host
+  // round-trip per file, so an unbounded read loop turns /broke diff into a
+  // minute-long hang on a repository with thousands of changed files. Files
+  // past the cap are named as NOT READ - which is a different fact from a
+  // file whose diff could not be read, and must not be rendered as either
+  // 'unreadable' or '0 chars'.
+  it('names the files that were never read, distinctly from unreadable ones', () => {
+    const rows: DiffFileInput[] = [file('read.ts', 1, 0, '@@ -1 +1 @@\n+seen')];
+    rows.push({ path: 'skipped.ts', additions: 2, deletions: 0, diff: '', notRead: true });
+    const digest = formatDiffDigest(rows, DEFAULT_DIFF_BUDGET_CHARS);
+    assert.match(digest.text, /not read/i, 'a not-read file is named as such');
+    assert.doesNotMatch(digest.text, /skipped\.ts \(\+\d+\/-\d+\)\s*\n\s*\(binary or unreadable/, 'a not-read file is never reported as unreadable');
+    assert.equal(digest.files, 2, 'both files are still counted');
+    assert.equal(digest.diffChars, rows[0].diff.length, 'only read diffs contribute a measured size');
+  });
+
   it('reports the total diff size it saw, shown or not', () => {
     const rows = [file('a.ts', 1, 0, 'a'.repeat(1000)), file('b.ts', 1, 0, 'b'.repeat(1000))];
     const digest = formatDiffDigest(rows, 200);

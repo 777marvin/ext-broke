@@ -30,7 +30,7 @@ import {
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, resolveCacheProfile, saveConfig, type Config } from './config';
 import { clearTask, isSent, markSent } from './cache';
-import { DEFAULT_DIFF_BUDGET_CHARS, formatDiffDigest, type DiffFileInput } from './diff';
+import { DEFAULT_DIFF_BUDGET_CHARS, MAX_DIFF_FILES_READ, formatDiffDigest, type DiffFileInput } from './diff';
 import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
 import {
@@ -1631,8 +1631,14 @@ export default class Broke implements Extension {
 
     try {
       const files = await task.getUpdatedFiles();
+      // The char budget bounds the OUTPUT; this bounds the WORK. Each diff is
+      // one host round-trip running git, so reading every file of a 5000-file
+      // change set would hang the command to produce a digest its own budget
+      // would have cut. Files past the cap are marked, not silently dropped
+      // and not misreported as unreadable.
+      const read = files.slice(0, MAX_DIFF_FILES_READ);
       const rows: DiffFileInput[] = [];
-      for (const file of files) {
+      for (const file of read) {
         // Best effort per file: an unreadable diff is reported as unreadable.
         let diff = '';
         try {
@@ -1641,6 +1647,9 @@ export default class Broke implements Extension {
           diff = '';
         }
         rows.push({ path: file.path, additions: file.additions ?? 0, deletions: file.deletions ?? 0, diff });
+      }
+      for (const file of files.slice(MAX_DIFF_FILES_READ)) {
+        rows.push({ path: file.path, additions: file.additions ?? 0, deletions: file.deletions ?? 0, diff: '', notRead: true });
       }
       const digest = formatDiffDigest(rows, cmd.budgetChars ?? DEFAULT_DIFF_BUDGET_CHARS);
       return digest.text;

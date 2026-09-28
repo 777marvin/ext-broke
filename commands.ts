@@ -4,7 +4,7 @@ import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaStatus } from './local'
 import { normalizeTag } from './update';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from './pricing';
 import { estimateTokens, type MeasureSummary, type TaskStats, totalSavedChars } from './tokens';
-import { MAX_DIFF_BUDGET_CHARS, MIN_DIFF_BUDGET_CHARS } from './diff';
+import { DEFAULT_DIFF_BUDGET_CHARS, MAX_DIFF_BUDGET_CHARS, MAX_DIFF_FILES_READ, MIN_DIFF_BUDGET_CHARS } from './diff';
 
 /**
  * Help text with the defaults interpolated from DEFAULT_CONFIG: hardcoded
@@ -39,9 +39,10 @@ Usage: /broke <subcommand>
   index status                  indexed files, terms, disk size, built age
   search <query>                broke-search snippet summary - top-k results under a char budget
                                 (defaults: ${d.search.maxResults} hits, ${d.search.maxChars.toLocaleString('en-US')} chars total)
-  diff [chars]                  token-budgeted digest of the uncommitted changes (default 4000 chars)
   search on | off               register / unregister the broke-search agent tool
                                 (default: ${d.search.enabled ? 'on' : 'off'} - a registered tool ships its schema with every model call)
+  diff [chars]                  token-budgeted digest of the uncommitted changes
+                                (default ${DEFAULT_DIFF_BUDGET_CHARS} chars, max ${MAX_DIFF_BUDGET_CHARS}; reads at most ${MAX_DIFF_FILES_READ} diffs per run)
   snapshot [label]              record a milestone snapshot of this task now
   snapshot list                 list this task's snapshots (newest first)
   snapshot show <n>             print snapshot #n from the list

@@ -34,11 +34,13 @@ let Broke: (typeof import('../index'))['default'];
 let DEFAULT_CONFIG: (typeof import('../config'))['DEFAULT_CONFIG'];
 let saveConfig: (typeof import('../config'))['saveConfig'];
 let parseBrokeCommand: (typeof import('../commands'))['parseBrokeCommand'];
+let MAX_DIFF_FILES_READ: (typeof import('../diff'))['MAX_DIFF_FILES_READ'];
 
 before(async () => {
   ({ default: Broke } = await import('../index'));
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
   ({ parseBrokeCommand } = await import('../commands'));
+  ({ MAX_DIFF_FILES_READ } = await import('../diff'));
 });
 
 after(() => {
@@ -464,6 +466,27 @@ describe('host contract: /broke diff (TaskContext.getUpdatedFileDiff, AiderDesk 
     assert.ok(out.includes('src/bad.ts'), 'the failing file is still listed');
     assert.match(out, /binary or unreadable/i, 'and is named as unreadable, not as 0 chars');
     assert.ok(!out.includes('host diff failure'), 'a host error message is not leaked into the task log');
+  });
+
+  // A budget that limits the output but not the reads is not a budget: a
+  // repository with thousands of changed files would issue one host
+  // round-trip per file inside the command handler.
+  it('caps how many diffs it reads, and names the files it never read', async () => {
+    writeConfig();
+    const { context, task } = makeHost('diff-cap-task');
+    const rows = Array.from({ length: 400 }, (_, i) => ({ path: `src/f${i}.ts`, additions: 1, deletions: 1 }));
+    task.getUpdatedFiles = async () => rows;
+    let reads = 0;
+    task.getUpdatedFileDiff = async () => {
+      reads += 1;
+      return '@@ -1 +1,2 @@\n+body';
+    };
+
+    const out = await runDiff(context, task, ['diff']);
+    assert.ok(reads > 0, 'it does read diffs');
+    assert.ok(reads <= MAX_DIFF_FILES_READ, `read cap respected: ${reads} <= ${MAX_DIFF_FILES_READ}`);
+    assert.ok(reads < rows.length, 'a 400-file change set is NOT fully read');
+    assert.match(out, /not read/i, 'the unread remainder is named, not silently dropped');
   });
 
   it('honors an explicit budget argument', async () => {
