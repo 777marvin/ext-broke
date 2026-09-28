@@ -1,5 +1,13 @@
 # Review Backlog
 
+**Reading this file: it is a historical ledger, not an open bug list.**
+Every finding recorded here is closed, fixed on `main` or explicitly
+accepted as a documented limitation (the "Accepted limitations" section
+below, and the "Currently open / tracked" section further down, name the
+ones that are still live). The severity headings are kept as they were
+written at review time, so `## High` describes a finding from that round,
+not an unresolved issue in the current code.
+
 Findings from the ruthless self-review of 2026-08-16 (typecheck clean,
 80/80 tests green at review time). Severity: 🔴 high, 🟡 medium, ⚪ nit.
 Each finding lists the location, the problem and a concrete fix approach.
@@ -394,17 +402,16 @@ its own suite.
 - **R2 canonical history:** until AiderDesk splits tool-event output into
   stored vs. projected, slicing and tool-level error compression remain
   opt-in rewrites of stored history with explicit consent messaging.
-- **R2 canonical history:** until AiderDesk splits tool-event output into
-  stored vs. projected, slicing and tool-level error compression remain
-  opt-in rewrites of stored history with explicit consent messaging.
 - **R9 atomicity:** the Windows in-place fallback keeps its merge path
   (rollback + retries + verified copy + snapshot restore). A crash mid-merge
   can still require manual recovery from `broke.old`; the next update's
   stale-backout recovery handles leftovers automatically.
-- **R15 (found 2026-08-27, P3) - Fixed (2026-08-27): fake-host suites may
-  bind default runtime paths.** During the F4 pass-hint work, repo-root
-  `config.json`, `stats.jsonl` and `measure.jsonl` residue (fake task ids)
-  surfaced. The env-contract (`BROKE_*_PATH` set before dynamic imports) is
+- **Residual follow-up (not a limitation):** lazy path constants (the
+  `snapshot.ts` pattern) remain a possible future modernization, not
+  needed for correctness. R15 itself was **fixed** on 2026-08-27, not
+  accepted: during the F4 pass-hint work, repo-root `config.json`,
+  `stats.jsonl` and `measure.jsonl` residue (fake task ids) surfaced. The
+  env-contract (`BROKE_*_PATH` set before dynamic imports) is
   provably sound for `tests/index.test.ts` (isolated run leaves no residue),
   but two suites let a static import chain bind constants before their own
   env setup: `tests/host-contract.test.ts` (statically imported
@@ -412,9 +419,7 @@ its own suite.
   assignments) and `tests/commands.test.ts` (no isolation at all).
   Reproduced per-suite, fixed by moving project imports behind the env
   setup (the `index.test.ts` pattern) in both files; a full-suite run now
-  leaves no repo-root residue. Lazy path constants (the `snapshot.ts`
-  pattern) remain a possible future modernization, not needed for
-  correctness.
+  leaves no repo-root residue.
 
 ---
 
@@ -491,6 +496,6 @@ All findings verified, remediated, and covered with automated tests.
 | **TEST-001** | 🟡 P2 (Medium) | Test / CI | **Closed** | Strict coverage floors in `package.json` replace dummy `--lines 0` gates; `cache.ts`, `config.ts`, `paths.ts` included. |
 | **TEST-002** | 🟡 P2 (Medium) | Tests / Scenarios | **Closed** | Multi-run scenario and regression tests added for symlinks, cache transitions, validation revert, LRU, and migration errors. |
 | **SUP-001** | 🟠 P1 (High) | CI/CD / Security | **Closed** | `.github/workflows/release.yml` replaces `secrets: inherit` with explicit `BROKE_RELEASE_SIGNING_KEY` secret mapping. |
-| **SUP-002** | 🟡 P2 (Medium) | Supply Chain | **Closed** | `.github/dependabot.yml` configured for weekly automated updates of `npm` and `github-actions`. |
+| **SUP-002** | 🟡 P2 (Medium) | Supply Chain | **Reverted** | `.github/dependabot.yml` was configured and then removed again (commit 5d10c44, "dependency maintenance stays manual"): Dependabot PRs would carry bot contributor attribution, so dependency bumps are handled by hand. Automated updates are therefore NOT active - `npm audit --audit-level=high` in CI plus the `deps-current` job (typecheck + tests against `@aiderdesk/extensions@latest`) are the current substitute. |
 | **SUP-003** | ⚪ P3 (Low) | CI/CD / Security | **Closed** | `.github/workflows/ci.yml` `deps-current` job adds `--ignore-scripts` to `npm install @aiderdesk/extensions@latest`. |
 
