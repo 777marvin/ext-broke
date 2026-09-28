@@ -165,6 +165,24 @@ test('findChangelogTagErrors: [Unreleased] and link references are not releases'
   assert.deepEqual(findChangelogTagErrors(text, TAGS), []);
 });
 
-test('the real repository passes its own gate', () => {
-  assert.deepEqual(runChecks(REPO_ROOT), []);
+test('the real repository passes its own gate', (t) => {
+  // A checkout without tags has no authority on release claims, and the gate
+  // skips them there. Skipping mirrors that instead of asserting something
+  // the checkout cannot know - this suite runs in CI jobs with fetch-tags off.
+  if (repoTags().length === 0) {
+    return t.skip('this checkout has no git tags');
+  }
+  assert.deepEqual(runChecks(REPO_ROOT).errors, []);
+});
+
+test('a checkout WITHOUT tags reports no tag errors and says it skipped them', () => {
+  // The exact condition of every CI job that does not set fetch-tags: true.
+  // Before the fix this produced one error per changelog heading and failed
+  // the coverage and deps-current jobs.
+  const withTags = runChecks(REPO_ROOT, new Set(repoTags()));
+  const withoutTags = runChecks(REPO_ROOT, new Set());
+  assert.deepEqual(withTags.errors, [], 'with tags the real repo is clean');
+  assert.deepEqual(withoutTags.errors, [], 'without tags there is nothing to be wrong about');
+  assert.deepEqual(withoutTags.skipped, withTags.skipped.concat('release claims and changelog tags (this checkout has no git tags; run it with fetch-tags)'));
+  assert.equal(withoutTags.skipped.length, 1);
 });

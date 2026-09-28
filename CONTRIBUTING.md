@@ -59,6 +59,30 @@ once the test suite grows beyond its current shape.
   on synthetic conversations.
 - Test fixtures that look like secrets (`sk-…`, `ghp_…`, `AKIA…`) are fake
   by design, they verify `maskSecrets`. Keep them obviously fake.
+- A test that reads the repository itself must not assume facts the
+  checkout cannot know. Only the `test` job and the release workflow set
+  `fetch-tags: true`; every other CI job gets a tagless shallow clone, and
+  the test suite runs in those jobs too. A repository-level assertion that
+  needs tags has to skip when there are none - see the two tests in
+  `tests/docs-gate.test.ts` that touch the real changelog.
+
+## Releasing
+
+Push order is forced, and it has one visible consequence:
+
+```bash
+git push origin main    # 1. the branch first
+git push origin vX.Y.Z  # 2. then the tag
+```
+
+The tag has to come second, because `release-sign-and-publish.yml` refuses
+to release a tag that is not an ancestor of protected `main`. The
+consequence is that `main`'s own CI run starts before the tag exists, so
+the two `check:version` failures ("no tag vX.Y.Z points at HEAD") on the
+branch run are **expected on release day** and clear on a re-run. The
+authoritative check is the release workflow's own run, which has the tag.
+Do not weaken `check-version` to hide this; it is what makes the
+tag-and-metadata invariant real.
 
 ## Deploying
 

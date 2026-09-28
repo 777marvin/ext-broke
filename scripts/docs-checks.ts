@@ -210,6 +210,12 @@ export function findChangelogTagErrors(changelog: string, tags: Set<string>): st
 
 /* the real thing ----------------------------------------------------------- */
 
+export interface CheckResult {
+  errors: string[];
+  /** Checks that could not run because this checkout has no tag list. */
+  skipped: string[];
+}
+
 export function repoTags(): string[] {
   return execFileSync('git', ['tag', '--list'], { cwd: REPO_ROOT, encoding: 'utf8' })
     .split('\n')
@@ -217,9 +223,10 @@ export function repoTags(): string[] {
     .filter(Boolean);
 }
 
-export function runChecks(root = REPO_ROOT): string[] {
+export function runChecks(root = REPO_ROOT, tags?: Set<string>): CheckResult {
   const read = (f: string) => readFileSync(join(root, f), 'utf8');
   const errors: string[] = [];
+  const skipped: string[] = [];
 
   for (const file of LINK_CHECKED) {
     if (!existsSync(join(root, file))) {
@@ -229,22 +236,31 @@ export function runChecks(root = REPO_ROOT): string[] {
     errors.push(...findBrokenLinks(read(file), file, root));
   }
 
-  const tags = new Set(repoTags());
   const current = (JSON.parse(read('package.json')) as { version: string }).version;
-
   if (!/Snapshot: release v\d+\.\d+\.\d+/.test(read('docs/overview.md'))) {
     errors.push('docs/overview.md: no "Snapshot: release vX.Y.Z" header - keep it, the gate reads that line');
   }
-  for (const file of [...new Set(['docs/overview.md', ...VERSION_CHECKED])]) {
-    errors.push(...findReleaseClaimErrors(read(file), file, tags, current));
-  }
 
-  errors.push(...findChangelogTagErrors(read('CHANGELOG.md'), tags));
+  // A checkout without tags is not evidence of a problem - it is the normal
+  // state in every CI job that does not set `fetch-tags: true`. Asserting
+  // release claims against an empty tag list would make this gate fail in
+  // exactly the jobs where it has no authority, so it skips instead and
+  // says so. The `test` job and the release workflow both fetch tags, and
+  // those are the runs that gate a release.
+  const tagList = tags ?? new Set(repoTags());
+  if (tagList.size === 0) {
+    skipped.push('release claims and changelog tags (this checkout has no git tags; run it with fetch-tags)');
+  } else {
+    errors.push(...findChangelogTagErrors(read('CHANGELOG.md'), tagList));
+    for (const file of [...new Set(['docs/overview.md', ...VERSION_CHECKED])]) {
+      errors.push(...findReleaseClaimErrors(read(file), file, tagList, current));
+    }
+  }
 
   const schema = DEFAULT_CONFIG as unknown as Record<string, unknown>;
   errors.push(...findConfigTableErrors(read('README.md'), leafPaths(schema), new Set(Object.keys(schema))));
 
-  return errors;
+  return { errors, skipped };
 }
 
 export function schemaSettings(): string[] {

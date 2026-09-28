@@ -9,14 +9,20 @@
 import { LINK_CHECKED, repoTags, runChecks, schemaSettings } from './docs-checks';
 
 function main(): void {
-  const errors = runChecks();
+  const { errors, skipped } = runChecks();
+  const tags = repoTags().length;
   if (errors.length) {
     console.error('documentation check FAILED:\n');
     for (const e of errors) console.error('  - ' + e);
+    if (skipped.length) {
+      console.error('');
+      for (const s of skipped) console.error('  ! skipped: ' + s);
+    }
     console.error('');
     process.exit(1);
   }
-  console.log(`documentation check OK (${LINK_CHECKED.length} files, ${repoTags().length} tags, ${schemaSettings().length} settings)`);
+  for (const s of skipped) console.log(`documentation check: skipped ${s}`);
+  console.log(`documentation check OK (${LINK_CHECKED.length} files, ${tags} tags, ${schemaSettings().length} settings)`);
 }
 
 main();
