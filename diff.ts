@@ -43,6 +43,15 @@ export interface DiffDigest {
 export const DEFAULT_DIFF_BUDGET_CHARS = 4000;
 
 /**
+ * Bounds for a user-supplied `/broke diff <chars>` budget. The floor keeps a
+ * request from producing a header with nothing under it; the ceiling keeps a
+ * paste from dumping a 5 MB diff into the context, which is the exact failure
+ * this command exists to prevent.
+ */
+export const MIN_DIFF_BUDGET_CHARS = 200;
+export const MAX_DIFF_BUDGET_CHARS = 100_000;
+
+/**
  * The header and the elision line are accounting, not payload: they are
  * allowed to exceed the budget by this much so a tight budget still produces
  * an honest digest rather than a truncated sentence.
