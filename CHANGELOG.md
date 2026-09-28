@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-28
+
+Compatibility with AiderDesk 0.83 - 0.85, plus the capabilities those
+releases made cheap. Verified against the AiderDesk **v0.85.0** source
+checkout (commit `12d38d8e52543146e83e0dc44ef6439ba8aee099`) and the
+published `@aiderdesk/extensions` tarballs. The SDK surface diff from
+0.32.1 to 0.35.0 is purely additive - not one removed symbol - and
+`agent/optimizer.ts`, the point broke's whole pipeline hooks into, is
+byte-identical between v0.82.0 and v0.85.0.
+
+### Added
+
+- **`/broke diff [chars]`**: a token-budgeted digest of the uncommitted
+  changes, read through `TaskContext.getUpdatedFileDiff` - which AiderDesk
+  0.84 added when it moved updated-file diffs to lazy per-file loading.
+  Before that an extension had to shell out to git for diff content. The
+  header names the file count, the summed lines and the diff size the host
+  actually returned; files are shown until the budget runs out and the
+  digest then names exactly how many it left out. A binary or unreadable
+  file (the SDK returns an empty string for those *and* on error) is
+  reported as such and never as `0 chars`. One failing read costs that one
+  file, not the whole digest. On a host older than 0.84 the command says
+  which version it needs instead of throwing or faking an empty result.
+- **`cache.openaiStateless`**: for OpenAI organizations that run stateless
+  requests (`store: false`, AiderDesk 0.84's Zero Data Retention support).
+  Nothing is stored server-side there, so the 0.5x cached-input rate cannot
+  apply and pricing against it would overstate the saving. broke has no API
+  to read the host's provider settings, so this is an explicit assertion;
+  it applies only to the `auto` path, and an explicit `cache.profile` still
+  wins.
+- **Opt-in per-message menu row** (`ui.showMessageMenu`, default **off**):
+  a `broke: why` entry in each user message's dropdown menu, using
+  AiderDesk 0.85's new `task-message-bar-menu` placement. The host mounts
+  a component at that placement once per finished message, so the row is
+  registered with `loadData: false`, filtered to user messages, and off by
+  default. A menu item has no room for a report, so it says the verdict
+  was logged to the task rather than pretending to show it.
+
+### Changed
+
+- **Minimum host version is AiderDesk 0.84** (was 0.77). `/broke diff` uses
+  `TaskContext.getUpdatedFileDiff`, which the host added in 0.84. On an
+  older host every other command keeps working and that one reports what it
+  needs. The per-message menu needs 0.85 and simply never renders on 0.84.
+- `llmapi` (a new provider in 0.85) resolves to no cache economics, like
+  every provider broke does not know. A local or unlisted runtime must not
+  be priced as if it had a cache.
+- The vendored host UI contract now records AiderDesk v0.85.0 instead of a
+  stale 0.34 reference, and says which host commit it was checked against.
+  `Checkbox`, `Input` and `Button` are unchanged, `Select` gained an
+  optional `notFoundLabel?`, and `Tooltip` was reimplemented internally
+  with an unchanged export signature - so the prop shapes were already
+  right and only the version reference was stale.
+
+### Fixed
+
+- Nothing claimed. The two added regression tests (a reasoning-only
+  assistant message survives the structural pass; images attached to a
+  `/broke` command are ignored) pin invariants that already held - the
+  first because AiderDesk 0.84 now retries reasoning-only steps in the host,
+  which makes such a message load-bearing rather than empty.
+
+### Notes for a host-version bump
+
+The published SDK and the host source can disagree: npm's 0.33.0 does not
+contain `getUpdatedFileDiff`, while the v0.84.0 source already has it.
+Prove an API's runtime availability from the host source at the floor tag;
+the tarball only bounds the compile surface.
+
 ## [1.2.3] - 2026-09-26
 
 Remediation release for the external senior-level code review of v1.2.2.
