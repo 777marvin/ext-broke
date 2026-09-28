@@ -1,13 +1,13 @@
 # Context Features: Design & Specs
 
-Design document and implementation specs for the next four `feat:` increments
+Design document and implementation specs for the `feat:` increments
 of the Broke extension. Every fact about the AiderDesk extension API in this
 document was verified against the authoritative builtin `extension-creator`
 skill (`%APPDATA%\aider-desk\Cache\extensions\hotovo-aider-desk\resources\skills\`,
 files `event-types.md` and `extension-interface.md`) and
 `docs/aiderdesk-reference.md` (meta repo).
 
-Status: **As built**. F1-F4 are shipped; the per-feature "Implementation
+Status: **As built**. F1-F5 are shipped; the per-feature "Implementation
 notes" blocks record the as-built decisions, and spike outcomes S1-S4 are
 recorded in the shared spike list below.
 
@@ -20,24 +20,18 @@ recorded in the shared spike list below.
 | F3 | State Snapshotting & Memory Flushing | 0.9.0 | M | shipped |
 | F4 | Local Keyword/Vector Index with snippet summaries | 0.10.0 | L | shipped |
 
-**Version reality check (2026-08-26):** v0.3.0 to v0.8.0 are released
-and shipped F1 improvements, the reference
-benchmark, the measurement ledger, the error-archive privacy controls,
-the CI security automation, the self-update command (`/broke update`,
-which installs tagged GitHub releases without deploy.ps1) plus its
-hardening round (rename retries, byte-size payload verification,
-complete rollback), the always-live status badge, the AiderDesk 0.80
-extension-API updates (disposable config-watcher cleanup), the honest-zero
-transparency work (idle badge hint, `/broke why`, stats flush) and F2
-ST-slicing (v0.7.0). F3 shipped in v0.9.0
-(snapshots/, snapshot.ts module, config blocks,
+**Version reality check (2026-09-28):** F1 shipped in v0.2.0, F2 in
+v0.7.0, F3 in v0.9.0 (snapshots/, snapshot.ts module, config blocks,
 commands, onAfterCommit/test-green triggers, confirmed+undo-gated flush via
-loadContextMessages; spike S2's manual run passed before the release);
-F4 shipped in v0.10.0 (2026-08-27).
+loadContextMessages; spike S2's manual run passed before the release),
+F4 in v0.10.0 and F5 in v1.2.1. Whether F5 got a live AiderDesk smoke
+verification before that release is not recorded anywhere in this repo,
+so it is not claimed here; the "implemented, unreleased" wording further
+down is kept as the state at the time it was written.
 The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
-F4 -> 0.5.0; those targets are obsolete (0.3.0/0.4.0 shipped without
-F2/F3, and 0.5.0 shipped the XF-hardening round instead) and stay TBD
-until the features are actually scheduled.
+F4 -> 0.5.0; those targets were never met (0.3.0/0.4.0 shipped without
+F2/F3, and 0.5.0 shipped the XF-hardening round instead). The roadmap
+table above carries the versions the features actually shipped in.
 
 Rationale for the order: F1 is a small pure-function pass that slots into the
 existing pipeline (quick win, validates the config/command/stats extension
@@ -49,19 +43,18 @@ by F1–F3.
 
 ## Feature 5 and candidate backlog
 
-F5 is implemented in the unreleased development branch; live AiderDesk
-smoke verification and release remain separate gates. F6-F9 remain
+F5 shipped in v1.2.1 (2026-09-18). F6-F9 remain
 idea-level, unscheduled candidates recorded 2026-08-28.
 
 | # | Candidate | Type | Effort | Status |
 |---|-----------|------|--------|--------|
-| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | implemented (unreleased) |
+| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (v1.2.1) |
 | F6 | Live-UI expansion: provable + estimated savings, colored activity dot | feat | M | proposed |
 | F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | proposed |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
 | F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
 
-- **F5 - Mode presets & autonomy selector (implemented, unreleased).**
+- **F5 - Mode presets & autonomy selector (released in v1.2.1).**
   Selectable presets `short / normal / long` with tuned defaults per task
   length, plus `custom` for user-defined values. Presets apply ONCE (they
   set the preset-owned fields `level`, `maxContextChars`,
