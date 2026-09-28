@@ -478,6 +478,21 @@ Findings from the hostile external review of 2026-08-29 (baseline commit
 
 Manual follow-ups from R1 (D6): protected `v*` tags, `release` environment approval, branch-protection required checks - environment approval is LIVE since the v1.0.0 release.
 
+**The protected `v*` tags have a cost, and 2026-09-18 paid it once.** Tag
+`v1.2.1` was pushed pointing at `9db8770`, a commit whose package.json still
+reads `1.2.1-dev`, instead of the release commit `cf6c2e2`. `check-version`
+caught it - a release tag may not point at a development commit - so the
+release run failed and no release was ever published. The tag was then
+recreated correctly LOCALLY, but the protection added in D6 makes the remote
+correction impossible: a force-push is refused with `GH013`. The remote
+`v1.2.1` therefore marks a development state permanently.
+
+Bounded, but permanent, and worth the ordering lesson: verify a tag points
+at its release commit BEFORE pushing it. Nothing can install v1.2.1 (the
+updater resolves `/releases/tags/<tag>` and that release does not exist) and
+nothing can roll back to it, so the exposure is a confusing `git checkout`,
+not a bad artifact.
+
 ---
 
 # External Review Round 4 - 2026-09-09 (v1.2.0 Hardening)

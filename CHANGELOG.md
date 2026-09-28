@@ -232,10 +232,28 @@ Remediation release for the external senior-level code review of v1.2.2.
 
 > **This version was never published.** The release workflow run for tag
 > `v1.2.1` failed on 2026-09-18, no GitHub release was created, and 1.2.2
-> shipped about an hour later. The `v1.2.1` tag also points two commits
-> behind the actual release commit, where `package.json` still reads
-> `1.2.1-dev` - so the tag marks a development state, not this release.
-> Treat 1.2.2 as the first published release containing the work below.
+> shipped about an hour later. Treat 1.2.2 as the first published release
+> containing the work below.
+>
+> The `v1.2.1` tag also points two commits behind the actual release
+> commit, at a state where `package.json` still reads `1.2.1-dev`. The
+> mismatch is permanent: the `v*` tags are protected, so the remote refuses
+> a force-push (`GH013: Cannot force-push to this tag`). That protection is
+> deliberate - it is one of the D6 hardening controls, listed as
+> "protected `v*` tags" in docs/review-backlog.md - and weakening it to
+> repair one superseded tag would be a bad trade.
+>
+> Consequences, all bounded: `git checkout v1.2.1` gives a tree that
+> identifies itself as a development state, and `/broke update v1.2.1`
+> cannot install it, because the updater resolves releases through
+> `/releases/tags/<tag>` and that release does not exist. Nothing can
+> install v1.2.1 by accident and nothing can roll back to it.
+>
+> The failure was not a gap in the gates: `check-version` rejects a
+> release tag pointing at a `-dev` commit, which is exactly what stopped
+> this run. The lesson for the next release is ordering, not tooling -
+> verify the tag points at the release commit BEFORE pushing it, because
+> after the push a correction is no longer possible.
 
 ### Fixed
 

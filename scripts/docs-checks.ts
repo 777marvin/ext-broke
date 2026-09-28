@@ -191,6 +191,11 @@ export function findConfigTableErrors(readme: string, schemaPaths: string[], top
  * `gh release list` / the Actions API, which does not belong in a test
  * suite. Until that is automated, the changelog preamble and the release
  * sections carry the human-checked facts.
+ *
+ * A tag check cannot tell whether a tag is PROTECTED either. Protected v*
+ * tags (a D6 hardening control) mean a wrongly targeted tag can never be
+ * corrected afterwards, which makes the ordering matter more than this
+ * check: verify a tag points at its release commit BEFORE pushing it.
  */
 export function findChangelogTagErrors(changelog: string, tags: Set<string>): string[] {
   const errors: string[] = [];
