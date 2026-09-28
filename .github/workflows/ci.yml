@@ -39,6 +39,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check:version
+      # Needs the tag list (fetched above) and the config schema: the docs gate
+      # rejects release claims that are not real tags, links that do not
+      # resolve, and a configuration table that stops covering the schema.
+      - run: npm run check:docs
       - run: npm run typecheck
       - run: npm test
 

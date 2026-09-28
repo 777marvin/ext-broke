@@ -27,6 +27,7 @@
     "coverage": "c8 --check-coverage --per-file --branches 82 --lines 90 --statements 90 --functions 85 --include compress.ts --include indexer.ts --include cache.ts --include config.ts npm test && c8 --check-coverage --per-file --branches 72 --lines 75 --statements 75 --functions 80 --include update.ts --include paths.ts npm test && c8 --check-coverage --per-file --branches 60 --lines 75 --statements 75 --functions 80 --include index.ts npm test",
     "typecheck": "tsc --noEmit",
     "check:version": "node scripts/check-version.mjs",
+    "check:docs": "tsx scripts/check-docs.ts",
     "bench": "tsx scripts/bench.ts",
     "measure": "tsx scripts/measure.ts",
     "validate:ui": "node scripts/validate-extension-ui.mjs ConfigComponent.jsx StatusBadge.jsx MessageMenuItem.jsx"

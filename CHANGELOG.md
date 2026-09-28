@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`npm run check:docs`**, wired into CI next to `check:version`. Four
+  read-only checks over the public docs: relative markdown links resolve;
+  every version named as a release is a real git tag and never newer than
+  `package.json`; the README configuration table covers the config schema
+  exactly, in both directions. The gate exists because the drift it
+  catches happened for real - a host floor that stayed at 0.77 for two
+  releases, an SDK line that stayed at ^0.31.0, a snapshot header two
+  releases behind, a feature described as unreleased a month after it
+  shipped, and a settings table that quietly stopped covering the schema.
+  Release claims are matched by context ("shipped in vX.Y.Z",
+  "/broke update vX.Y.Z") rather than by sweeping every version-shaped
+  token, because the docs legitimately quote three unrelated namespaces
+  (broke's tags, the AiderDesk host releases, the @aiderdesk/extensions SDK
+  line) plus bare IP addresses.
+
+### Changed
+
+- The README is now the entry point rather than the manual: the tuning
+  matrices moved to `docs/tuning.md` and the per-feature deep dives
+  (cache-friendly mode, ST-slicing, snapshots & flush, broke-search,
+  security notes) to `docs/features.md`. The pipeline prose in the README
+  is condensed to the four passes and points at `docs/overview.md`, which
+  already carried the precise per-pass rules. `search.scanBudgetMs` is
+  now in the configuration table, the duplicated screenshot is gone, and
+  Support / Contributing / Development are one section instead of three.
+
+### Fixed
+
+- Two em-dashes in the README replaced, per this project's own prose rule.
+- The F5 wording no longer implies that release 1.2.1 is downloadable:
+  the feature is part of the current release, introduced in 1.2.1.
+- `docs/feats.md` states plainly that the releases 0.1.0 to 0.2.1 carry no
+  tag and were never published as GitHub releases, so they are not
+  installable via `/broke update`.
+
 ## [1.3.0] - 2026-09-28
 
 Compatibility with AiderDesk 0.83 - 0.85, plus the capabilities those

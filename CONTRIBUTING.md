@@ -9,6 +9,8 @@ deliberate: the following conventions keep it that way.
 npm ci
 npm run typecheck    # tsc --noEmit
 npm test             # tsx --test, pure-function tests
+npm run check:docs   # links, release claims, README config table vs. the schema
+npm run check:version # lockfile sync + exact-version-with-tag invariant
 ```
 
 Both checks must pass before a change is ready. There are no lint rules
