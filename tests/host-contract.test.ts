@@ -390,3 +390,95 @@ describe('host contract: F3 snapshots & flush', () => {
     return { id: 'sys0', role: 'system', content: 'You are helpful.' };
   }
 });
+
+describe('host contract: /broke diff (TaskContext.getUpdatedFileDiff, AiderDesk 0.84)', () => {
+  /**
+   * A command logs its report to the task and returns void, so the tests read
+   * the log. addLogMessage is replaced per run to capture the exact line.
+   */
+  async function runDiff(
+    context: ExtensionContext,
+    task: Record<string, unknown>,
+    args: string[],
+  ): Promise<string> {
+    const lines: string[] = [];
+    task.addLogMessage = async (_level: string, line: string) => {
+      lines.push(line);
+    };
+    const ext = new Broke();
+    await ext.getCommands(context)[0].execute(args, context);
+    return lines.join('\n');
+  }
+
+  it('renders the diff of every changed file through the LIVE task surface', async () => {
+    writeConfig();
+    const { context, task } = makeHost('diff-task');
+    task.getUpdatedFiles = async () => [
+      { path: 'src/a.ts', additions: 3, deletions: 1 },
+      { path: 'logo.png', additions: 0, deletions: 0 },
+    ];
+    task.getUpdatedFileDiff = async (p: string) =>
+      p === 'src/a.ts' ? '@@ -1,2 +1,4 @@\n+new line\n unchanged' : '';
+
+    const out = await runDiff(context, task, ['diff']);
+    assert.ok(out.includes('src/a.ts'), 'the readable file is named');
+    assert.ok(out.includes('+new line'), 'its diff head is rendered');
+    assert.ok(out.includes('logo.png'), 'the binary file is still listed');
+    assert.match(out, /binary or unreadable/i, 'the binary file is named as such, not as 0 chars');
+    assert.doesNotMatch(out, /0 chars of diff/, 'a size that was never measured is never printed');
+  });
+
+  // A host older than 0.84 has no getUpdatedFileDiff. The command must say
+  // so by name - never throw, never print an empty report that reads as
+  // 'this task has no changes'.
+  it('degrades with a named reason when the host has no getUpdatedFileDiff', async () => {
+    writeConfig();
+    const { context, task } = makeHost('diff-legacy-task');
+    task.getUpdatedFiles = async () => [{ path: 'src/a.ts', additions: 3, deletions: 1 }];
+    delete task.getUpdatedFileDiff;
+
+    const out = await runDiff(context, task, ['diff']);
+    assert.match(out, /0\.84|newer/i, 'the message names the host version it needs');
+    assert.match(out, /getUpdatedFileDiff/, 'and the capability it is missing');
+    assert.ok(!out.includes('no updated files'), 'it must not fake an empty result');
+  });
+
+  // The SDK documents an EMPTY STRING on host-side error, and a rejecting
+  // promise is a hostile surface a real host can produce. One bad file must
+  // not cost the user the other 199.
+  it('keeps the other files when one diff read fails', async () => {
+    writeConfig();
+    const { context, task } = makeHost('diff-partial-task');
+    task.getUpdatedFiles = async () => [
+      { path: 'src/ok.ts', additions: 1, deletions: 0 },
+      { path: 'src/bad.ts', additions: 1, deletions: 0 },
+    ];
+    task.getUpdatedFileDiff = async (p: string) => {
+      if (p === 'src/bad.ts') throw new Error('host diff failure');
+      return '@@ -1 +1,2 @@\n+survives';
+    };
+
+    const out = await runDiff(context, task, ['diff']);
+    assert.ok(out.includes('src/ok.ts'), 'the readable file survives');
+    assert.ok(out.includes('+survives'), 'with its diff content');
+    assert.ok(out.includes('src/bad.ts'), 'the failing file is still listed');
+    assert.match(out, /binary or unreadable/i, 'and is named as unreadable, not as 0 chars');
+    assert.ok(!out.includes('host diff failure'), 'a host error message is not leaked into the task log');
+  });
+
+  it('honors an explicit budget argument', async () => {
+    writeConfig();
+    const { context, task } = makeHost('diff-budget-task');
+    const rows = Array.from({ length: 40 }, (_, i) => ({
+      path: `src/f${i}.ts`,
+      additions: 1,
+      deletions: 1,
+    }));
+    task.getUpdatedFiles = async () => rows;
+    task.getUpdatedFileDiff = async () => 'y'.repeat(400);
+
+    const out = await runDiff(context, task, ['diff', '600']);
+    assert.match(out, /not shown/i, 'a tight budget names what it left out');
+  });
+});
+

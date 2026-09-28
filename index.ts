@@ -30,6 +30,7 @@ import {
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, resolveCacheProfile, saveConfig, type Config } from './config';
 import { clearTask, isSent, markSent } from './cache';
+import { DEFAULT_DIFF_BUDGET_CHARS, formatDiffDigest, type DiffFileInput } from './diff';
 import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
 import {
@@ -1110,6 +1111,8 @@ export default class Broke implements Extension {
       case 'why': {
         return log(await ext.explainWhy(context));
       }
+      case 'diff':
+        return log(await ext.handleDiffCommand(context, cmd));
       case 'reset': {
         const taskId = context.getTaskContext()?.data.id;
         if (taskId) {
@@ -1584,6 +1587,53 @@ export default class Broke implements Extension {
       return `broke: flushed ${plan.removedCount} message(s) - context is now the task brief plus one [broke-state] summary (snapshot ${persistedName}). Undo with /broke flush --undo <n>.`;
     } catch (err) {
       return `broke: flush failed - ${err instanceof Error ? err.message : String(err)}. If a replacement already happened, restore via /broke flush --undo.`;
+    }
+  }
+
+  /**
+   * /broke diff - a token-budgeted digest of the uncommitted changes.
+   *
+   * AiderDesk 0.84 moved updated-file diffs to lazy per-file loading and
+   * exposed TaskContext.getUpdatedFileDiff, so the uncommitted diff is
+   * readable without shelling out to git. The diff is usually the single
+   * largest block of text in a coding session, which is exactly why it gets
+   * a budget instead of a raw dump.
+   *
+   * Three host realities shape this:
+   * - getUpdatedFileDiff does not exist below 0.84 -> say so by name, never
+   *   fake an empty result that would read as "this task has no changes";
+   * - it returns an empty string for binary files AND on error, so a failing
+   *   read is folded into the same "unreadable" bucket rather than aborting
+   *   the whole digest (one bad file must not cost the user the other 199);
+   * - a rejecting promise is a hostile surface, so every read is guarded and
+   *   the host's error text is never echoed into the task log.
+   */
+  private async handleDiffCommand(context: ExtensionContext, cmd: Extract<BrokeCommand, { kind: 'diff' }>): Promise<string> {
+    const task = context.getTaskContext();
+    if (!task) return 'broke: /broke diff needs a task - open one and run it there';
+
+    const getFileDiff = (task as { getUpdatedFileDiff?: (filePath: string) => Promise<string> }).getUpdatedFileDiff;
+    if (typeof getFileDiff !== 'function') {
+      return 'broke: /broke diff needs AiderDesk 0.84 or newer - this host does not provide TaskContext.getUpdatedFileDiff. Everything else in broke works as before.';
+    }
+
+    try {
+      const files = await task.getUpdatedFiles();
+      const rows: DiffFileInput[] = [];
+      for (const file of files) {
+        // Best effort per file: an unreadable diff is reported as unreadable.
+        let diff = '';
+        try {
+          diff = (await getFileDiff.call(task, file.path)) ?? '';
+        } catch {
+          diff = '';
+        }
+        rows.push({ path: file.path, additions: file.additions ?? 0, deletions: file.deletions ?? 0, diff });
+      }
+      const digest = formatDiffDigest(rows, cmd.budgetChars ?? DEFAULT_DIFF_BUDGET_CHARS);
+      return digest.text;
+    } catch (err) {
+      return `broke: /broke diff failed - ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 

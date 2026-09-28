@@ -119,6 +119,16 @@ describe('parseBrokeCommand', () => {
     assert.deepEqual(parseBrokeCommand(['errors', 'clear']), { kind: 'errors-clear' });
   });
 
+  it('parses /broke diff with and without a numeric budget', () => {
+    assert.deepEqual(parseBrokeCommand(['diff']), { kind: 'diff' });
+    assert.deepEqual(parseBrokeCommand(['diff', '2000']), { kind: 'diff', budgetChars: 2000 });
+    assert.deepEqual(parseBrokeCommand(['diff', '400']), { kind: 'diff', budgetChars: 400 });
+    expectUnknown(['diff', 'abc']);
+    expectUnknown(['diff', '0']);
+    expectUnknown(['diff', '-5']);
+    expectUnknown(['diff', '1', '2']);
+  });
+
   it('parses summarize subcommands', () => {
     assert.deepEqual(parseBrokeCommand(['summarize', 'via', 'cloud']), { kind: 'summarize-via', via: 'cloud' });
     assert.deepEqual(parseBrokeCommand(['summarize', 'model', 'qwen2.5-coder:3b']), {

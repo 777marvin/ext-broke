@@ -4,6 +4,7 @@ import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaStatus } from './local'
 import { normalizeTag } from './update';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from './pricing';
 import { estimateTokens, type MeasureSummary, type TaskStats, totalSavedChars } from './tokens';
+import { MAX_DIFF_BUDGET_CHARS, MIN_DIFF_BUDGET_CHARS } from './diff';
 
 /**
  * Help text with the defaults interpolated from DEFAULT_CONFIG: hardcoded
@@ -38,6 +39,7 @@ Usage: /broke <subcommand>
   index status                  indexed files, terms, disk size, built age
   search <query>                broke-search snippet summary - top-k results under a char budget
                                 (defaults: ${d.search.maxResults} hits, ${d.search.maxChars.toLocaleString('en-US')} chars total)
+  diff [chars]                  token-budgeted digest of the uncommitted changes (default 4000 chars)
   search on | off               register / unregister the broke-search agent tool
                                 (default: ${d.search.enabled ? 'on' : 'off'} - a registered tool ships its schema with every model call)
   snapshot [label]              record a milestone snapshot of this task now
@@ -114,6 +116,7 @@ export type BrokeCommand =
   | { kind: 'stats' }
   | { kind: 'estimate' }
   | { kind: 'why' }
+  | { kind: 'diff'; budgetChars?: number }
   | { kind: 'measure' }
   | { kind: 'measure-toggle'; enabled: boolean }
   | { kind: 'config-list' }
@@ -262,6 +265,18 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
       return { kind: 'estimate' };
     case 'why':
       return { kind: 'why' };
+    case 'diff': {
+      // A diff digest is context the user opted into, so the budget is an
+      // explicit argument with a floor and a ceiling. Non-numeric, zero,
+      // negative or surplus arguments fall through to the usage error rather
+      // than being silently coerced to a default.
+      const budget = roundArg(rest[0]);
+      if (rest.length === 0) return { kind: 'diff' };
+      if (rest.length === 1 && Number.isFinite(budget) && budget >= MIN_DIFF_BUDGET_CHARS && budget <= MAX_DIFF_BUDGET_CHARS) {
+        return { kind: 'diff', budgetChars: budget };
+      }
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
     case 'measure': {
       const opt = rest[0];
       if (opt === 'on') return { kind: 'measure-toggle', enabled: true };
