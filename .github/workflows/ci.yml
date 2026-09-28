@@ -43,6 +43,10 @@ jobs:
       # rejects release claims that are not real tags, links that do not
       # resolve, and a configuration table that stops covering the schema.
       - run: npm run check:docs
+      # The release artifact is a `git archive` of the whole tree, so every
+      # tracked file ships inside the signed asset. Only an allowlist catches
+      # a file that should never have been tracked.
+      - run: npm run check:files
       - run: npm run typecheck
       - run: npm test
 

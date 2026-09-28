@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit",
     "check:version": "node scripts/check-version.mjs",
     "check:docs": "tsx scripts/check-docs.ts",
+    "check:files": "tsx scripts/check-files.ts",
     "bench": "tsx scripts/bench.ts",
     "measure": "tsx scripts/measure.ts",
     "validate:ui": "node scripts/validate-extension-ui.mjs ConfigComponent.jsx StatusBadge.jsx MessageMenuItem.jsx"
