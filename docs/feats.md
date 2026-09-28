@@ -5,7 +5,12 @@ of the Broke extension. Every fact about the AiderDesk extension API in this
 document was verified against the authoritative builtin `extension-creator`
 skill (`%APPDATA%\aider-desk\Cache\extensions\hotovo-aider-desk\resources\skills\`,
 files `event-types.md` and `extension-interface.md`) and
-`docs/aiderdesk-reference.md` (meta repo).
+`docs/aiderdesk-reference.md`. Both sources are the maintainer's local
+install and private meta repo, neither is part of this repository, so the
+paths here are a record of where the verification came from rather than
+links you can follow. The host API surface this document depends on is
+re-stamped and version-pinned in
+[docs/aiderdesk-builtin.md](aiderdesk-builtin.md), which IS public.
 
 Status: **As built**. F1-F5 are shipped; the per-feature "Implementation
 notes" blocks record the as-built decisions, and spike outcomes S1-S4 are

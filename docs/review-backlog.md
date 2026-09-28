@@ -426,7 +426,9 @@ its own suite.
 # External Review Remediation (2026-08-27)
 
 Findings from the external static review (`ext-broke-professional-review.md`,
-16 findings F-01..F-16). All findings were verified against the source first;
+16 findings F-01..F-16; the review report itself lives in the maintainer's
+private meta repo and is not part of this repository). All findings were
+verified against the source first;
 two severities were corrected after path analysis (F-06 in-memory only,
 F-09 reconciled-before-read). Remediation landed on
 `fix/ext-review-remediation` in 11 reviewable commits; decisions D1-D5 were

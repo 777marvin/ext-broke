@@ -10,6 +10,7 @@ npm ci
 npm run typecheck    # tsc --noEmit
 npm test             # tsx --test, pure-function tests
 npm run check:docs   # links, release claims, README config table vs. the schema
+npm run check:files  # allowlist over git ls-files (the release tarball is a git archive)
 npm run check:version # lockfile sync + exact-version-with-tag invariant
 ```
 

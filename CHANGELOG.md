@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+**On versions 0.1.0 to 0.2.1:** they are development history, not releases.
+They predate the tag-and-sign release process, carry no git tag, and were
+never published as GitHub releases, so `/broke update` cannot deliver
+them. From 0.3.0 on, every version below has both a tag and a published
+release.
+
 ## [Unreleased]
 
 ### Added
@@ -23,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token, because the docs legitimately quote three unrelated namespaces
   (broke's tags, the AiderDesk host releases, the @aiderdesk/extensions SDK
   line) plus bare IP addresses.
+- **`npm run check:files`**, also in CI. An allowlist over `git ls-files`:
+  extension sources at the root, the three JSX components, the repo's own
+  docs and license, and `docs/`, `tests/`, `scripts/`, `.github/`.
+  Everything else is rejected. The gate exists because the release
+  artifact is built as `git archive --format=tar.gz <tag>` with no
+  pathspec, so every tracked file ships to every user inside the signed
+  asset the updater refuses to modify - and `.gitignore` does not help
+  there, because the archive is decided by the index, not the ignore
+  rules. Two maintainer working notes under `tasks/` were tracked and
+  therefore shipped inside `broke-v1.3.0.tar.gz`.
+- The changelog is now checked in the reverse direction too: every
+  `## [X.Y.Z]` heading must have a real tag, so a release line cannot be
+  written for a release that does not exist.
 
 ### Changed
 
@@ -42,7 +61,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the feature is part of the current release, introduced in 1.2.1.
 - `docs/feats.md` states plainly that the releases 0.1.0 to 0.2.1 carry no
   tag and were never published as GitHub releases, so they are not
-  installable via `/broke update`.
+  installable via `/broke update`; the same now stands in this file's
+  preamble, where the version list is actually read.
+- References to the maintainer's private meta repo (`ext-broke-professional-review.md`,
+  `docs/aiderdesk-reference.md`, the local `%APPDATA%` skill path) say so,
+  so a public reader does not follow a link into nothing. The public,
+  version-pinned host API surface is linked instead.
+- Removed the `files` array from `package.json`. It was dead config: the
+  release artifact comes from `git archive`, `deploy.ps1` copies tracked
+  files, and `private: true` makes `npm publish` impossible. It was also
+  incomplete (`MessageMenuItem.jsx` was missing), so it invited trust in
+  an answer nothing read.
 
 ## [1.3.0] - 2026-09-28
 
