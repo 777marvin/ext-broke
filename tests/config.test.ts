@@ -370,6 +370,37 @@ describe('resolveCacheProfile', () => {
     assert.doesNotThrow(() => resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: undefined as unknown as string, model: 42 as unknown as string }));
     assert.equal(resolveCacheProfile({ cache: { profile: 'auto' } }, { provider: undefined as unknown as string, model: 42 as unknown as string }), 'off');
   });
+
+  // ---------------------------------------------------------------------
+  // AiderDesk 0.85 added the 'llmapi' provider; 0.84 added OpenAI's
+  // `store: false` (Zero Data Retention) mode. Both change the cache maths.
+  // ---------------------------------------------------------------------
+
+  it('auto: the llmapi provider (new in 0.85) resolves to no cache economics', () => {
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto', openaiStateless: false } }, { provider: 'llmapi', model: 'anything' }), 'off');
+  });
+
+  it('auto: stateless OpenAI (0.84 store:false / ZDR) resolves to off, not openai', () => {
+    // A stateless request stores nothing, so the ~0.5x cached-input read
+    // rate can never apply. Claiming it would inflate the money estimate.
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto', openaiStateless: true } }, { provider: 'openai', model: 'gpt-5' }), 'off');
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto', openaiStateless: true } }, { provider: 'azure', model: 'gpt-4o' }), 'off');
+  });
+
+  it('an explicit profile beats the stateless flag (the user knows their org)', () => {
+    assert.equal(resolveCacheProfile({ cache: { profile: 'openai', openaiStateless: true } }, { provider: 'openai', model: 'gpt-5' }), 'openai');
+  });
+
+  it('the stateless flag never leaks into an anthropic resolution', () => {
+    // A claude model behind the openai provider still has Anthropic-style
+    // prefix caching - the flag is OpenAI-specific and must not touch it.
+    assert.equal(resolveCacheProfile({ cache: { profile: 'auto', openaiStateless: true } }, { provider: 'openai', model: 'claude-sonnet-4' }), 'anthropic');
+  });
+
+  it('defaults openaiStateless to false', () => {
+    assert.equal(mergeConfig({}).cache.openaiStateless, false);
+    assert.equal(DEFAULT_CONFIG.cache.openaiStateless, false);
+  });
 });
 
 describe('CONF-002: getConfig cached read and ENOENT handling', () => {

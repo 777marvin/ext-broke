@@ -14,7 +14,7 @@ describe('F5 mode presets', () => {
 
   it('applies every canonical bundle without mutating the input or unrelated settings', () => {
     const original = mergeConfig(DEFAULT_CONFIG, {
-      enabled: false, cache: { profile: 'anthropic', escapeHatch: false },
+      enabled: false, cache: { profile: 'anthropic', escapeHatch: false, openaiStateless: false },
       summarize: { via: 'cloud', cloudModelId: 'provider/model', allowRemoteHost: false },
       slice: { enabled: true }, search: { enabled: false }, autonomy: 'manual',
     });

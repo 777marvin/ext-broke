@@ -219,6 +219,19 @@ const CacheSchema = z.object({
    */
   profile: z.enum(['auto', 'anthropic', 'openai', 'off']).default('off'),
   /**
+   * The OpenAI provider runs STATELESS (`store: false` - AiderDesk 0.84's
+   * Zero Data Retention support): the request is sent without store:true, so
+   * nothing is persisted server-side and no cached-input discount can ever
+   * apply. broke cannot read the host's provider settings (there is no
+   * read API for them), so this is an explicit assertion by the user.
+   *
+   * When true, the OpenAI cache economics are switched OFF rather than
+   * priced at the optimistic 0.5x cached-input read rate. Only meaningful
+   * in the 'auto' path - an explicit profile always wins, because a user
+   * who set it knows their own organization.
+   */
+  openaiStateless: z.boolean().default(false),
+  /**
    * When totalChars exceeds maxContextChars, allow ONE deliberate rewrite
    * pass (known, accepted cache loss) instead of leaving the overrun in
    * place. Re-arms only after the budget is under-run again (hysteresis).
@@ -295,18 +308,28 @@ export const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
  * no reason to restrain the passes.
  */
 export function resolveCacheProfile(
-  config: { cache?: { profile?: Config['cache']['profile'] } },
+  config: { cache?: { profile?: Config['cache']['profile']; openaiStateless?: boolean } },
   hints: { provider?: string; model?: string },
 ): 'anthropic' | 'openai' | 'off' {
   const explicit = config.cache?.profile ?? 'off';
   if (explicit !== 'auto') return explicit;
   const provider = typeof hints.provider === 'string' ? hints.provider.toLowerCase() : '';
   const model = typeof hints.model === 'string' ? hints.model.toLowerCase() : '';
-  if (model.includes('claude')) return 'anthropic';
-  if (/^gpt|^o[134](-|\b)|chatgpt/.test(model)) return 'openai';
-  if (provider === 'anthropic' || provider === 'anthropic-compatible' || provider === 'bedrock' || provider === 'vertex-ai') return 'anthropic';
-  if (provider === 'openai' || provider === 'openai-compatible' || provider === 'azure') return 'openai';
-  return 'off';
+  const detected = ((): 'anthropic' | 'openai' | 'off' => {
+    if (model.includes('claude')) return 'anthropic';
+    if (/^gpt|^o[134](-|\b)|chatgpt/.test(model)) return 'openai';
+    if (provider === 'anthropic' || provider === 'anthropic-compatible' || provider === 'bedrock' || provider === 'vertex-ai') return 'anthropic';
+    if (provider === 'openai' || provider === 'openai-compatible' || provider === 'azure') return 'openai';
+    // 'llmapi' (0.85) and every other unknown/local provider land here: no
+    // documented cache economics, so no paid-cache assumption is made.
+    return 'off';
+  })();
+  // Zero Data Retention organizations run stateless OpenAI requests
+  // (store: false): nothing is stored, so the ~0.5x cached-input read rate
+  // can never apply. Trust that assertion over the model/provider sniff -
+  // and only for the OpenAI family, so an anthropic resolution stands.
+  if (detected === 'openai' && config.cache?.openaiStateless === true) return 'off';
+  return detected;
 }
 
 /** Deep-merge plain objects (config fragments), then validate against the schema. */

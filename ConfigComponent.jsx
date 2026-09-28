@@ -192,6 +192,13 @@
             onChange={(checked) => updateConfig({ ...config, cache: { ...cacheCfg, escapeHatch: checked } })}
           />
         </Tooltip>
+        <Tooltip content="For OpenAI organizations with Zero Data Retention, where requests run stateless (store: false) and nothing is stored server-side. OpenAI's cached-input price then cannot apply, so the OpenAI cache rules are switched off instead of being priced optimistically. Only used when the profile is Auto - an explicit profile always wins. broke cannot read this setting from AiderDesk, so it has to be set here.">
+          <Checkbox
+            label="OpenAI runs stateless (Zero Data Retention)"
+            checked={cacheCfg.openaiStateless ?? false}
+            onChange={(checked) => updateConfig({ ...config, cache: { ...cacheCfg, openaiStateless: checked } })}
+          />
+        </Tooltip>
         <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
           Cache-friendly mode keeps every byte already sent to the model byte-stable, so the provider's prompt cache
           keeps hitting instead of being rewritten on every call. Real overruns of the max context chars budget use the

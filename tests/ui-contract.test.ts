@@ -66,6 +66,7 @@ describe('vendored host UI contract (BRK-024)', () => {
     assert.match(configComponent, /Cache profile/, 'the cache profile select exists');
     assert.match(configComponent, /value:\s*'auto'/, 'the auto profile option exists');
     assert.match(configComponent, /Escape hatch/, 'the escape hatch checkbox exists');
+    assert.match(configComponent, /cache\.openaiStateless|openaiStateless/, 'the stateless-OpenAI toggle exists');
     assert.match(configComponent, /Task length/, 'F5 mode selector exists');
     assert.match(configComponent, /Broke automation/, 'F5 autonomy selector exists');
     assert.match(configComponent, /previewMode/, 'presets use the canonical backend');

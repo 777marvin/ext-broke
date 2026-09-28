@@ -553,7 +553,7 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     writeConfig({
       maxContextChars: 100,
       level: 'summarize',
-      cache: { profile: 'anthropic', escapeHatch: false },
+      cache: { profile: 'anthropic', escapeHatch: false, openaiStateless: false },
     });
     const ext = new Broke();
     const bigToolOutput = ('line-of-output '.repeat(120)).trim();

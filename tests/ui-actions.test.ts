@@ -46,14 +46,14 @@ describe('badge overlay UI actions (task 7)', () => {
     const cfg = (await ext.executeUIExtensionAction('broke-status', 'getConfig', [], makeHost())) as Record<string, unknown>;
     assert.ok(cfg && typeof cfg === 'object');
     assert.equal(cfg.enabled, DEFAULT_CONFIG.enabled);
-    assert.deepEqual(cfg.cache, { profile: 'off', escapeHatch: true });
+    assert.deepEqual(cfg.cache, { profile: 'off', escapeHatch: true, openaiStateless: false });
   });
 
   it('setConfig persists a valid config and returns ok + the parsed result', async () => {
     const context = makeHost();
     const ext = new Broke();
     const current = (await ext.executeUIExtensionAction('broke-status', 'getConfig', [], context)) as Record<string, any>;
-    const updated = { ...current, cache: { profile: 'anthropic', escapeHatch: false } };
+    const updated = { ...current, cache: { profile: 'anthropic', escapeHatch: false, openaiStateless: false } };
     const res = (await ext.executeUIExtensionAction('broke-status', 'setConfig', [updated], context)) as { ok: boolean; config: Record<string, any> };
     assert.equal(res.ok, true, 'a valid config saves');
     assert.equal(res.config.cache.profile, 'anthropic');
@@ -70,7 +70,7 @@ describe('badge overlay UI actions (task 7)', () => {
     const context = makeHost();
     const ext = new Broke();
     const current = (await ext.executeUIExtensionAction('broke-status', 'getConfig', [], context)) as Record<string, any>;
-    const bad = { ...current, cache: { profile: 'nope', escapeHatch: true }, level: 'not-a-level' };
+    const bad = { ...current, cache: { profile: 'nope', escapeHatch: true, openaiStateless: false }, level: 'not-a-level' };
     const res = (await ext.executeUIExtensionAction('broke-status', 'setConfig', [bad], context)) as { ok: boolean; config: Record<string, any> };
     assert.equal(res.ok, false, 'the rejection is visible to the overlay');
     assert.equal(res.config.cache.profile, 'anthropic', 'previous config kept');

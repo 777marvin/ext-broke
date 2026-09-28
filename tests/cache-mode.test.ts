@@ -111,7 +111,7 @@ async function run(ext: InstanceType<typeof Broke>, context: ExtensionContext, m
 
 describe('cache-friendly byte stability (E2E)', () => {
   it('anthropic profile (escapeHatch off): budget overrun in run 2 must NOT rewrite history sent as-is in run 1', async () => {
-    writeConfig({ cache: { profile: 'anthropic', escapeHatch: false } });
+    writeConfig({ cache: { profile: 'anthropic', escapeHatch: false, openaiStateless: false } });
     const taskId = 'byte-stable-anthropic';
     clearTask(taskId);
     const ext = new Broke();
@@ -136,7 +136,7 @@ describe('cache-friendly byte stability (E2E)', () => {
   });
 
   it("off profile (control): the same budget overrun DOES rewrite run 1's history", async () => {
-    writeConfig({ cache: { profile: 'off', escapeHatch: true } });
+    writeConfig({ cache: { profile: 'off', escapeHatch: true, openaiStateless: false } });
     const taskId = 'byte-stable-off';
     clearTask(taskId);
     const ext = new Broke();
@@ -155,7 +155,7 @@ describe('cache-friendly byte stability (E2E)', () => {
   });
 
   it('structural merge re-derivation: run 2 reproduces run 1 merged bytes deterministically', async () => {
-    writeConfig({ cache: { profile: 'anthropic', escapeHatch: true } });
+    writeConfig({ cache: { profile: 'anthropic', escapeHatch: true, openaiStateless: false } });
     const taskId = 'byte-stable-merge';
     clearTask(taskId);
     const ext = new Broke();
@@ -259,7 +259,7 @@ describe('pass-level freeze gating (unit)', () => {
 
 describe('escape hatch (E2E)', () => {
   it('anthropic profile + escapeHatch: a real budget overrun sacrifices the cache exactly once (option B)', async () => {
-    writeConfig({ cache: { profile: 'anthropic', escapeHatch: true } });
+    writeConfig({ cache: { profile: 'anthropic', escapeHatch: true, openaiStateless: false } });
     const taskId = 'escape-once';
     clearTask(taskId);
     const ext = new Broke();
@@ -320,7 +320,7 @@ describe('escape hatch state machine (pipeline)', () => {
     // The fixture's oversized output is a single 4000-char line - cap by KB,
     // not by line count, so the truncate pass actually rewrites it.
     truncate: { ...DEFAULT_CONFIG.truncate, maxKB: 1 },
-    cache: { profile: 'anthropic', escapeHatch: true },
+    cache: { profile: 'anthropic', escapeHatch: true, openaiStateless: false },
   });
   const big = 'x'.repeat(4000);
   const msgs = (): ContextMessage[] =>
@@ -370,7 +370,7 @@ describe('escape hatch state machine (pipeline)', () => {
   it('escapeHatch: false never rewrites sent bytes', async () => {
     const state = createCompressState();
     const escape = { locked: false };
-    const cfgOff: Config = { ...cfg(), cache: { profile: 'anthropic', escapeHatch: false } };
+    const cfgOff: Config = { ...cfg(), cache: { profile: 'anthropic', escapeHatch: false, openaiStateless: false } };
     const opts = { cache: { frozen, escape } };
     for (let i = 0; i < 2; i++) {
       const r = await compressMessages(msgs(), cfgOff, deps, state, 'esc-off', opts);
