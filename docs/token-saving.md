@@ -97,8 +97,11 @@ Two different things, both real:
    destructive, hard to undo.
 
 Recommended: **Broke transient for daily work + built-in `Compact`/Smart
-as the emergency brake.** Persistent compression on demand is a planned
-Broke feature (F3 state snapshotting & memory flushing, see
+as the emergency brake.** For the on-demand persistent variant, use
+`/broke flush`: it replaces everything after the task brief with one
+`[broke-state]` message, is manual and confirmed by default, and is
+reversible through the history file that `/broke flush --undo <n>` reads
+back (F3 state snapshotting & memory flushing, shipped in v0.9.0, see
 docs/feats.md).
 
 ## Honest numbers

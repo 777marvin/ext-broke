@@ -1,10 +1,14 @@
 # Project Overview
 
-*Snapshot: release v1.2.3 (2026-09-26) - remediation of the external
-senior-level review of v1.2.2: the badge Quick Commands are actually wired,
-the updater post-commit safety net is reachable, the cache-friendly frozen
-gate is enforced on every path that can rewrite sent bytes, and the indexer
-has real scan and merge budgets. Prior snapshot: release v1.2.2
+*Snapshot: release v1.3.0 (2026-09-28) - AiderDesk 0.83-0.85
+compatibility: the host floor moved to 0.84 (`/broke diff` via
+`TaskContext.getUpdatedFileDiff`), plus the opt-in per-message `broke: why`
+menu row (0.85) and the `cache.openaiStateless` assertion. Prior snapshot:
+release v1.2.3 (2026-09-26) - remediation of the external senior-level
+review of v1.2.2: the badge Quick Commands are actually wired, the updater
+post-commit safety net is reachable, the cache-friendly frozen gate is
+enforced on every path that can rewrite sent bytes, and the indexer has
+real scan and merge budgets. Prior snapshot: release v1.2.2
 (2026-09-18) - cache-friendly mode (sent-ledger freeze, escape hatch with
 hysteresis, provider-cache pricing, badge settings overlay) plus the
 v1.2.1/1.2.2 UI rework. Before that: v1.1.0 (2026-08-29), review rounds
@@ -25,6 +29,8 @@ pipeline, compression applies to the input of each model call only. Since
 1.2.0 the optional cache-friendly mode keeps already-sent bytes byte-stable
 so the provider's prompt cache keeps hitting (sent-ledger, escape hatch
 with hysteresis, provider-reported cache tokens in the measure ledger).
+Since 1.3.0 it targets AiderDesk 0.84 and newer and adds `/broke diff`
+(a budgeted digest of the uncommitted changes) to the command surface.
 
 | Level | What happens | Loss |
 |---|---|
@@ -161,9 +167,12 @@ real-session numbers.
   `npm run validate:ui` (JSX UI components, syntax + prop types; vendored
   AiderDesk validator script)
 - Conventions: Conventional Commits, Keep a Changelog, SemVer + annotated tags
-- Compatibility: the declared API line is `@aiderdesk/extensions` ^0.31.0
-  (see package.json); CI runs typecheck + tests against both the lockfile
-  and `@latest` so API drift is caught on every push
+- Compatibility: the declared API line is `@aiderdesk/extensions` ^0.35.0
+  (see package.json; the AiderDesk 0.85 SDK); CI runs typecheck + tests
+  against both the lockfile and `@latest` so API drift is caught on every
+  push. Host floor: AiderDesk >= 0.84, since `/broke diff` reads
+  `TaskContext.getUpdatedFileDiff`, which the host added in 0.84
+  (`docs/aiderdesk-builtin.md` carries the per-version SDK table)
 - Deploy / update: installed instances update themselves via `/broke
   update` (installs the latest tagged release from GitHub; `update check`
   peeks, `update <vX.Y.Z>` pins or rolls back). `.\scripts\deploy.ps1
@@ -171,7 +180,7 @@ real-session numbers.
   `~/.aider-desk/extensions/broke/` stays the bootstrap for fresh machines
   and the dev loop for uncommitted changes (`/broke update` refuses git
   checkouts by design)
-- Runtime deps: AiderDesk >= 0.77, Node >= 22 (see `engines` in
+- Runtime deps: AiderDesk >= 0.84, Node >= 22 (see `engines` in
   package.json), `zod`; Ollama for `summarize via local`
 
 ## Docs
@@ -179,5 +188,5 @@ real-session numbers.
 - `docs/token-saving.md`: full lever list
 - `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
 - `docs/local-models.md`: local-model capabilities on this hardware (RTX 3050, 4 GB VRAM)
-- `docs/feats.md`: specs for F2 ST-slicing, F3 state snapshotting/memory flushing, F4 local keyword/vector index (F1 shipped in v0.2.0)
-- `docs/review-backlog.md`: the complete review ledger - self-review F1-F24, external XF1-XF16, external R1-R14 (incl. accepted limitations and the open R15), remediation F-01..F-16 - all dispositioned with severity, location, fix approach, commit mapping
+- `docs/feats.md`: the feature specs and as-built record, F1 (v0.2.0) through F5 (v1.2.1), plus the unscheduled F6-F9 candidates
+- `docs/review-backlog.md`: the complete review ledger - self-review F1-F24, external XF1-XF16, external R1-R15, remediation F-01..F-16 - all dispositioned with severity, location, fix approach, commit mapping
