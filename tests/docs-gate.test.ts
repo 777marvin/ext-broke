@@ -144,8 +144,20 @@ test('leafPaths: flattens nested blocks to dotted paths', () => {
   assert.deepEqual(leafPaths({ a: 1, b: { c: 2, d: { e: 3 } } }), ['a', 'b.c', 'b.d.e']);
 });
 
-test('findChangelogTagErrors: the shipped changelog announces only real tags', () => {
-  assert.deepEqual(findChangelogTagErrors(readFileSync(join(REPO_ROOT, 'CHANGELOG.md'), 'utf8'), new Set(repoTags())), []);
+test('every changelog release heading is a real tag or a declared pre-tag exception', (t) => {
+  // This assertion needs the real tag list, so it needs a checkout that has
+  // one. It skips otherwise - the same rule the gate follows. The function's
+  // own behaviour is covered below with fixture tags, so nothing is lost
+  // where the checkout is tagless.
+  const tags = new Set(repoTags());
+  if (tags.size === 0) return t.skip('this checkout has no git tags');
+  const changelog = readFileSync(join(REPO_ROOT, 'CHANGELOG.md'), 'utf8');
+  const headings = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1]);
+  assert.ok(headings.length > 10, `expected many releases, found ${headings.length}`);
+  assert.deepEqual(findChangelogTagErrors(changelog, tags), []);
+  const untagged = headings.filter((v) => !tags.has(`v${v}`));
+  // The changelog runs newest first, UNTAGGED_HISTORICAL ascending.
+  assert.deepEqual([...untagged].sort(), [...UNTAGGED_HISTORICAL].sort(), 'the only untagged releases are the six declared ones');
 });
 
 test('findChangelogTagErrors: a fabricated release heading is caught', () => {
