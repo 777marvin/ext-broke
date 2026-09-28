@@ -172,6 +172,27 @@ export function findConfigTableErrors(readme: string, schemaPaths: string[], top
   return errors;
 }
 
+/**
+ * Check 2b, the reverse direction: a version heading in the CHANGELOG is a
+ * claim that a release happened. Every one of them must have a real tag,
+ * otherwise the changelog advertises something nobody can install. The
+ * six pre-tag releases are the declared exception (see above).
+ *
+ * The changelog is excluded from the prose checks above because history
+ * legitimately quotes old floors and old SDK lines - but its own version
+ * headings are exactly where a fabricated release would hide.
+ */
+export function findChangelogTagErrors(changelog: string, tags: Set<string>): string[] {
+  const errors: string[] = [];
+  for (const m of changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)) {
+    const v = m[1];
+    if (!tags.has(`v${v}`) && !UNTAGGED_HISTORICAL.has(v)) {
+      errors.push(`CHANGELOG.md:${lineOf(changelog, m.index)}: announces release ${v}, which has no git tag - either tag the release or move the entry under [Unreleased]`);
+    }
+  }
+  return errors;
+}
+
 /* the real thing ----------------------------------------------------------- */
 
 export function repoTags(): string[] {
@@ -202,6 +223,8 @@ export function runChecks(root = REPO_ROOT): string[] {
   for (const file of [...new Set(['docs/overview.md', ...VERSION_CHECKED])]) {
     errors.push(...findReleaseClaimErrors(read(file), file, tags, current));
   }
+
+  errors.push(...findChangelogTagErrors(read('CHANGELOG.md'), tags));
 
   const schema = DEFAULT_CONFIG as unknown as Record<string, unknown>;
   errors.push(...findConfigTableErrors(read('README.md'), leafPaths(schema), new Set(Object.keys(schema))));

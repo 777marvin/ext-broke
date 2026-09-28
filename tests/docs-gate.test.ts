@@ -18,9 +18,11 @@ import {
   UNTAGGED_HISTORICAL,
   compareVersions,
   findBrokenLinks,
+  findChangelogTagErrors,
   findConfigTableErrors,
   findReleaseClaimErrors,
   leafPaths,
+  repoTags,
   runChecks,
 } from '../scripts/docs-checks';
 import { DEFAULT_CONFIG } from '../config';
@@ -140,6 +142,27 @@ test('findConfigTableErrors: a missing Configuration section is reported, not cr
 
 test('leafPaths: flattens nested blocks to dotted paths', () => {
   assert.deepEqual(leafPaths({ a: 1, b: { c: 2, d: { e: 3 } } }), ['a', 'b.c', 'b.d.e']);
+});
+
+test('findChangelogTagErrors: the shipped changelog announces only real tags', () => {
+  assert.deepEqual(findChangelogTagErrors(readFileSync(join(REPO_ROOT, 'CHANGELOG.md'), 'utf8'), new Set(repoTags())), []);
+});
+
+test('findChangelogTagErrors: a fabricated release heading is caught', () => {
+  const errors = findChangelogTagErrors('# Changelog\n\n## [1.4.0] - 2026-10-01\n\n- shipped things\n', TAGS);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /announces release 1\.4\.0/);
+});
+
+test('findChangelogTagErrors: the declared untagged history is allowed, an undeclared one is not', () => {
+  const text = [...UNTAGGED_HISTORICAL].map((v) => `## [${v}] - 2026-08-13`).join('\n');
+  assert.deepEqual(findChangelogTagErrors(text, TAGS), [], 'the six pre-tag releases are a declared exception');
+  assert.equal(findChangelogTagErrors('## [0.2.2] - 2026-08-14', TAGS).length, 1, '0.2.2 is NOT on the list');
+});
+
+test('findChangelogTagErrors: [Unreleased] and link references are not releases', () => {
+  const text = ['## [Unreleased]', '', '## [1.3.0] - 2026-09-28', '', '[1.3.0]: https://example.com/compare/v1.2.3...v1.3.0'].join('\n');
+  assert.deepEqual(findChangelogTagErrors(text, TAGS), []);
 });
 
 test('the real repository passes its own gate', () => {
