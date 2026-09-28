@@ -13,6 +13,52 @@ release.
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-09-28
+
+The first published release that carries the documentation work of 1.3.1
+and 1.3.2, neither of which was ever published: both tags are protected and
+point at commits that fail their own release gate. No behavior change - the
+fixes are in the gates this series introduced, and in the tests around them.
+
+The `test` job and the release workflow run the documentation gate with
+`fetch-depth: 0` and `fetch-tags: true`, so the release-claim checks assert
+for real there: this release's CI reports `documentation check OK (11 files,
+23 tags, 47 settings)` with nothing skipped. The jobs that check out with
+depth 1 - coverage, deps-current, UI - cannot know which releases exist and
+now say so instead of inventing findings.
+
+### Fixed
+
+- **The skip introduced in 1.3.2 fired on the wrong signal, so the gate
+  failed again on that very release.** "No tags" is not the same as "no
+  authority over tags", and CI proved the difference twice. A
+  `git fetch --depth 1` of a tagged commit brings in exactly one tag - the
+  one pointing at the fetched object - because git follows tags of objects
+  it fetches. `actions/checkout` does precisely that in every job that does
+  not pass `fetch-tags: true`, so those checkouts had a tag list that was
+  neither empty nor complete: the tag of the commit being built and nothing
+  else. Comparing the changelog against that list reported 19 fabricated
+  releases that all exist, and two jobs went red on the tagged commit again.
+  The authority signal is shallowness, not tag count: a shallow repository
+  cannot answer which releases exist, because it lacks the history the tags
+  hang from. `tagsAreAuthoritative()` encodes that, `isShallowRepo()` asks
+  git directly, and the skip message now names which of the two reasons
+  applied. Two tests pin the property in both directions, including the
+  exact case CI hit.
+  Verified against a real `git clone --depth 1` carrying one auto-followed
+  tag: the gate exits 0 with the shallow reason, and the suite reports
+  0 failures. The `test` job and the release workflow use `fetch-depth: 0`
+  plus `fetch-tags: true` and are unaffected - no assertion was weakened
+  where it decides a release.
+- The test that pins the "nothing is skipped when tags are there" case
+  asserted it unconditionally, so it went red in the shallow checkouts the
+  fix above is about. It now follows the same authority rule as the gate.
+- Three earlier instances of the same testing mistake, all found only by
+  running the suite in a checkout that reproduces the CI condition: two
+  tests built their tag fixtures from the tag list they were trying to make
+  an assertion about, and one read the repository while assuming a tag list
+  it could not have. They now take their input from the changelog itself.
+
 ## [1.3.2] - 2026-09-28
 
 > **This version was never published.** The release workflow's full CI gate
