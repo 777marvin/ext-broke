@@ -13,6 +13,23 @@ release.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-28
+
+No behavior change. A documentation truth pass over everything the repo
+claimed, plus the three gates that stop the same drift from coming back,
+and one packaging fix: this is the first release whose tarball contains
+only the extension and its documentation.
+
+The pass found that several claims had drifted from the code over two
+releases - an install command that installed into the wrong directory, a
+host floor and SDK line two versions behind, a feature described as
+unreleased a month after it shipped, a settings table that had stopped
+covering the schema, a changelog announcing six releases that were never
+published, and a control that a review finding still listed as active after
+it had been removed. The numbers in the README were re-verified against the
+code and reproduce exactly: `npm run bench` still reports 351,403 chars in,
+113,070 removed at the shipped default and 315,263 at `summarize`.
+
 ### Added
 
 - **`npm run check:docs`**, wired into CI next to `check:version`. Four
@@ -37,8 +54,7 @@ release.
   pathspec, so every tracked file ships to every user inside the signed
   asset the updater refuses to modify - and `.gitignore` does not help
   there, because the archive is decided by the index, not the ignore
-  rules. Two maintainer working notes under `tasks/` were tracked and
-  therefore shipped inside `broke-v1.3.0.tar.gz`.
+  rules.
 - The changelog is now checked in the reverse direction too: every
   `## [X.Y.Z]` heading must have a real tag, so a release line cannot be
   written for a release that does not exist.
@@ -56,23 +72,48 @@ release.
 
 ### Fixed
 
-- Two em-dashes in the README replaced, per this project's own prose rule.
-- The F5 wording no longer points at release 1.2.1, which was never
-  published: the feature is part of the current release, introduced in
-  1.2.1 and first published in 1.2.2.
-- The 1.2.1 section says outright that the release was never published and
-  that the tag points two commits behind the release commit, where
-  `package.json` still reads `1.2.1-dev`. Checking the workflow runs
-  settled it: run 13 for `v1.2.1` failed on 2026-09-18, and 1.2.2 shipped
-  about an hour later.
-- `docs/feats.md` states plainly that the releases 0.1.0 to 0.2.1 carry no
-  tag and were never published as GitHub releases, so they are not
-  installable via `/broke update`; the same now stands in this file's
-  preamble, where the version list is actually read.
+- **The release tarball no longer carries the maintainer's working notes.**
+  `tasks/plan.md` and `tasks/todo.md` were tracked, and `git archive` has no
+  pathspec, so they shipped inside `broke-v1.3.0.tar.gz` - a signed,
+  checksum-verified asset the updater refuses to modify. They are unstaged
+  and gitignored; `check:files` keeps anything like them out. The v1.3.0
+  tag keeps them, because tags are immutable: 1.3.1 is the first release
+  without them. No secret was involved - both files were design notes for
+  the cache-friendly mode.
+- The install command in the README was wrong in a way that mattered:
+  `npx @aiderdesk/extensions install <url>` without `--global` installs
+  into `.aider-desk/extensions` of the **current working directory**, not
+  into the shared extension directory the manual instructions and
+  `deploy.ps1` use. It now passes `-g` and names the target.
+- An unsourced threshold is gone. The README claimed twice that a cloud
+  summarizer "only pays off above roughly 37k characters" - a number that
+  appears in no source file, no test and no other document. The crossover
+  depends on region size, on how many later calls re-send it, on the
+  summary length and on the price ratio between summarizer and task model,
+  so both mentions now state that and point at the real numbers in
+  `/broke stats`.
+- Documentation that contradicted the code: the host floor said 0.77
+  instead of 0.84, the SDK line said ^0.31.0 instead of ^0.35.0, the
+  overview snapshot trailed two releases, the token-saving guide still
+  called the flush a planned feature although it shipped in v0.9.0, and
+  two review findings were still listed as open or closed incorrectly.
+- The 1.2.1 record is now honest in both directions. The release run for
+  `v1.2.1` failed on 2026-09-18 and no release was ever created, so 1.2.2
+  is the first published release containing that work and the F5 wording
+  says so. The tag itself points two commits behind the release commit,
+  at a state whose `package.json` still reads `1.2.1-dev`; that is
+  permanent, because the `v*` tags are protected and refuse a force-push.
+  The tag is inert - the updater resolves releases, not tags, and no
+  release exists - so nothing can install or roll back to it.
+- The releases 0.1.0 to 0.2.1 are marked as what they are: development
+  history with no tag and no published release, not installable through
+  `/broke update`. Stated here, where the version list is read, and in
+  `docs/feats.md`.
 - References to the maintainer's private meta repo (`ext-broke-professional-review.md`,
   `docs/aiderdesk-reference.md`, the local `%APPDATA%` skill path) say so,
   so a public reader does not follow a link into nothing. The public,
   version-pinned host API surface is linked instead.
+- Two em-dashes in the README replaced, per this project's own prose rule.
 - Removed the `files` array from `package.json`. It was dead config: the
   release artifact comes from `git archive`, `deploy.ps1` copies tracked
   files, and `private: true` makes `npm publish` impossible. It was also
