@@ -206,8 +206,16 @@ test('tag-dependent checks run with tags and are skipped, cleanly, without them'
   const full = new Set(headings.map((v) => `v${v}`));
 
   const withTags = runChecks(REPO_ROOT, full);
-  assert.deepEqual(withTags.errors, [], 'a full tag list leaves the real repo clean');
-  assert.deepEqual(withTags.skipped, [], 'nothing is skipped when tags are there');
+  if (tagsAreAuthoritative(full, REPO_ROOT)) {
+    assert.deepEqual(withTags.errors, [], 'a full tag list leaves the real repo clean');
+    assert.deepEqual(withTags.skipped, [], 'nothing is skipped when the tag list is trustworthy');
+  } else {
+    // Shallow checkout: even a hand-built complete list is not authority,
+    // because it is this repository's shallowness that decides, not the list.
+    assert.deepEqual(withTags.errors, [], 'a shallow checkout reports no release errors');
+    assert.equal(withTags.skipped.length, 1, 'still exactly one skip');
+    assert.match(withTags.skipped[0], /shallow/);
+  }
 
   const withoutTags = runChecks(REPO_ROOT, new Set());
   assert.deepEqual(withoutTags.errors, [], 'without tags there is nothing to be wrong about');
