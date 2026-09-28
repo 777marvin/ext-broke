@@ -467,6 +467,7 @@ Findings from the hostile external review of 2026-08-29 (baseline commit
 
 - **BRK-026 residual**: adversarial sequence/fuzz tests beyond the new branch-coverage gate; Windows updater/host lifecycle integration test (deploy.ps1 smokes are not a substitute); ESLint/format gate deliberately DEFERRED (documented in CONTRIBUTING).
 - **BRK-027 residual**: guarantee claims are audited per commit that changes them (BRK-027 principle); the 1.1.0 docs truth pass (P3-H) is done, a full docs pass remains tracked.
+- **BRK-027 residual, re-checked 2026-09-28 against AiderDesk 0.85.0** (`feat/aiderdesk-0.85-compat`): the guarantee claims that changed were audited in the same commit that changed them - the host-version claim (`scripts/host-ui-contract.d.ts` records the v0.85.0 commit it was checked against, and `docs/aiderdesk-builtin.md` was re-stamped from 0.77/0.78-dev to 0.85.0), the new `/broke diff` budget and elision claims (`tests/diff.test.ts` + `tests/host-contract.test.ts`), the `openaiStateless` semantics (5 cases in `tests/config.test.ts`) and the per-message menu cost claim (`loadData: false`, default-off, message filter, all asserted in `tests/index.test.ts`). A full docs pass beyond these remains tracked.
 
 Manual follow-ups from R1 (D6): protected `v*` tags, `release` environment approval, branch-protection required checks - environment approval is LIVE since the v1.0.0 release.
 

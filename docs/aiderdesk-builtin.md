@@ -1,8 +1,10 @@
 # How AiderDesk already saves tokens (verified from source)
 
-Facts verified 2026-08 against the installed AiderDesk source
-(`%APPDATA%\aider-desk\Cache\extensions\hotovo-aider-desk\src`, release
-0.77.x/0.78.0-dev). File references are relative to `src/main/`.
+Facts verified 2026-09-28 against an AiderDesk **v0.85.0** source checkout
+(`hotovo/aider-desk`, tag `v0.85.0`, commit
+`12d38d8e52543146e83e0dc44ef6439ba8aee099`). Earlier revisions of this file
+were verified against 0.77.x/0.78.0-dev. File references are relative to
+`src/main/`.
 
 ## 1. Message optimizer: runs before EVERY model call
 
@@ -111,3 +113,51 @@ Recommended profile setup for token-heavy agentic work:
   installed app package (`%APPDATA%\aider-desk\Cache\extensions\
   hotovo-aider-desk\src\main\`).
 - `docs/aiderdesk-reference.md` (project notes, gathered 2026-08-07).
+
+## 6. What 0.83 - 0.85 changed for extensions (verified 2026-09-28)
+
+### Unchanged, and it matters
+
+- **`agent/optimizer.ts` is byte-identical between v0.82.0 and v0.85.0.**
+  Broke's entire pipeline hangs off `onOptimizeMessages` at this exact point,
+  so the hook did not move across three releases.
+- `UpdatedFile` is still `{ path, additions, deletions }`. 0.84 moved diffs to
+  lazy per-file loading, but the file LIST stayed cheap and shape-compatible.
+- `getUpdatedFiles()` still shells out per call (`git ls-files --others
+  --exclude-standard`), so a TTL cache in front of it remains correct - the
+  0.85 file watcher does not make the extension-facing call cheaper.
+
+### New capabilities broke uses
+
+| Release | Capability | Use in broke |
+|---|---|---|
+| 0.84 | `TaskContext.getUpdatedFileDiff(path, commitHash?)` | `/broke diff` - the first cheap way to READ diff content without shelling out to git |
+| 0.84 | `OpenAiProvider.store?` | Motivates `cache.openaiStateless`: a stateless request stores nothing, so the 0.5x cached-input rate cannot apply. Not detectable from an extension - no read API for host provider settings - so it is an explicit assertion |
+| 0.84 | `Group.ephemeral?` | No action: extensions see a flat `ContextMessage[]`, never groups |
+| 0.85 | `LlmApiProvider` (`llmapi`) | Resolves to no cache economics, like every unknown provider |
+| 0.85 | placement `task-message-bar-menu` | The opt-in per-message `broke: why` row. The host mounts such a component once per FINISHED message, hence `loadData: false`, a user-message filter, and a default-off toggle |
+| 0.85 | `CommandDefinition.execute(args, ctx, images?)` | Attached images are accepted and ignored: they are not text, not a measurable saving, and a data URL has no business in the task log |
+
+### Version-floor evidence, and a trap
+
+| Host tag | SDK version in the repo | `getUpdatedFileDiff` in the HOST SOURCE | in the PUBLISHED tarball |
+|---|---|---|---|
+| v0.83.0 | 0.32.1 | no | no |
+| v0.84.0 | 0.33.0 | **yes** | **no** (0.33.0 lacks it) |
+| v0.85.0 | 0.35.0 | yes | yes (first in 0.34.0) |
+
+The published SDK and the host source disagree: npm's 0.33.0 does not
+contain a method the v0.84.0 source already has. **Prove an API's runtime
+availability from the host source at the floor tag, not from the npm
+tarball** - the tarball only bounds the compile surface. This is why broke's
+floor is 0.84 (the source has the method) while it compiles against 0.35.0.
+
+### Host behaviour worth knowing
+
+- 0.84 added `stepShouldContinue`: a step that produced only reasoning (or
+  nothing) is retried instead of ending. Broke's structural pass already
+  refuses to drop reasoning-only assistant messages (`hasRichParts`), so it
+  never starves that retry. Pinned by a regression test.
+- 0.85 fixed provider options leaking into task context messages. Anything
+  broke measured before that included text that no longer appears there, so
+  savings figures from older sessions are slightly pessimistic, not wrong.

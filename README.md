@@ -177,9 +177,13 @@ active by default, every lever is documented under [Usage](#usage) and
 
 ## Requirements
 
-- AiderDesk ≥ 0.77 (≥ 0.80 recommended: broke then registers its config
-  watcher via `context.addDisposable()`, so disabling or uninstalling the
-  extension releases its directory handle automatically), Node.js ≥ 22
+- AiderDesk ≥ 0.84, Node.js ≥ 22. 0.84 is the floor because `/broke diff`
+  reads the uncommitted changes through `TaskContext.getUpdatedFileDiff`,
+  which the host added in 0.84; on an older host that one command reports
+  what it needs and everything else in broke keeps working. From 0.80 on,
+  broke also registers its config watcher via `context.addDisposable()`, so
+  disabling or uninstalling the extension releases its directory handle
+  automatically.
 - Optional: [Ollama](https://ollama.com) running (`ollama pull
   qwen2.5-coder:3b`) for the free local summarizer. broke degrades
   gracefully when Ollama is offline: requests fail fast (at most 60 s per
@@ -263,6 +267,7 @@ commands) or from the gear icon on the extension card:
 /broke summarize now               build + cache a summary of the old context NOW
                                    (manual pre-warm, applied on the next model call)
 /broke stats                       per-pass saved chars/tokens
+/broke diff [chars]                token-budgeted digest of the uncommitted changes
 /broke estimate                    counterfactual view: slice / flush / broke-search
                                    (NOT part of the stats totals)
 /broke why                         live gate-by-gate verdict: why 0 (or not)?
@@ -452,6 +457,22 @@ byte-stable, so the provider's prompt cache keeps hitting between calls:
   cleanly without locking the hatch or dropping cache state.
   With the hatch off, sent bytes are never rewritten - even over budget.
 
+Two honesty notes on the detection, both about not pricing something that
+cannot happen:
+
+- Providers with no documented cache economics resolve to no cache
+  awareness at all. That includes `llmapi` (new in AiderDesk 0.85) and any
+  provider broke does not know - a local or unlisted runtime must not be
+  billed as if it had a cache.
+- **OpenAI Zero Data Retention organizations** send stateless requests
+  (`store: false`, AiderDesk 0.84+). Nothing is stored server-side, so the
+  0.5x cached-input rate can never apply. broke has no API to read the
+  host's provider settings, so this one fact has to be asserted:
+  set `cache.openaiStateless on` (or `cache.profile off`) if your
+  organization runs stateless. Only the `auto` path consults it - an
+  explicit `cache.profile` always wins, because you know your own
+  organization better than a model-name sniff does.
+
 
 The badge gear (⚙) opens a quick settings dialog with the core knobs.
 Both it and the full settings panel offer **Task length**
@@ -611,6 +632,7 @@ the workspace root or target sensitive paths (`.env`, dot-directories, skipped f
 | protectedTurns | 2 | last N user turns never compressed |
 | cache.profile | `off` | off / auto / anthropic / openai - keep the provider prompt cache hitting (see Cache-friendly mode) |
 | cache.escapeHatch | on | one deliberate cache-invalidating rewrite on real budget overruns |
+| cache.openaiStateless | off | the OpenAI provider runs stateless (Zero Data Retention, `store: false`) - switches OFF the OpenAI cached-input economics, which cannot apply to a request that stores nothing |
 | truncate.maxLines / maxKB | 200 / 20 | old tool output limits |
 | truncate.maxInputChars | 2000 | tool-call input trim threshold |
 | errors.enabled | on | stack-trace/log compression |
@@ -637,6 +659,7 @@ the workspace root or target sensitive paths (`.env`, dot-directories, skipped f
 | summarize.afterTurns | 8 | only summarize turns older than N (regions with zero user turns - autonomous single-prompt loops - are exempt) |
 | summarize.minChars | 8000 | min region size for summarization |
 | ui.showStatusBadge | on | 💸 badge in the task status bar |
+| ui.showMessageMenu | off | a `broke: why` row in each user message's dropdown menu (AiderDesk 0.85+; the host mounts one instance per finished message, so this is opt-in) |
 | stats.measure | on | one record per compression run in `measure.jsonl` |
 | snapshot.onCommit | on | milestone snapshot after every successful commit |
 | snapshot.onTestPass | off | test-green detection as milestones (heuristic misfires) |

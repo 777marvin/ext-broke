@@ -115,3 +115,49 @@ docs/feats.md).
   replaces, but not free).
 - The built-in `Compact` uses the **task's model**; on a frontier model
   that is the single most expensive token operation in the app.
+
+## Inspecting the diff without paying for it
+
+`/broke diff` renders the uncommitted changes as a digest under a char
+budget (`/broke diff [chars]`, default 4000). It reads each file's diff
+through `TaskContext.getUpdatedFileDiff`, which AiderDesk 0.84 added when it
+moved updated-file diffs to lazy per-file loading. Before that, getting
+diff content into an extension meant shelling out to git.
+
+The digest is deliberately a *budgeted view*, not a dump:
+
+- the header names the file count, the summed `+`/`-` lines and the total
+  diff size the host actually returned;
+- files are shown in the host's own order until the budget runs out, and the
+  digest then names exactly how many files it left out rather than cutting
+  silently;
+- a binary or unreadable file is reported as `binary or unreadable`, never as
+  `0 chars` - the SDK returns an empty string for binary files *and* on
+  error, so a size that was never measured is never printed as a number;
+- one failing diff read costs that one file, not the whole digest.
+
+On a host older than 0.84 the command says which version it needs instead of
+throwing or pretending the task has no changes.
+
+## Why the index ignores git-ignored files (and the index boundary is intentional)
+
+`search.includeGitIgnored` (BRK-003) already exists and is **off by
+default**. That default is not an oversight, and AiderDesk 0.84/0.85 does not
+change it:
+
+- **Committing and indexing are different subsystems.** 0.84 and 0.85 made
+  the HOST's commit action force-stage git-ignored files (`git add -A -f`
+  retry). That decides what enters version control. broke's indexer decides
+  what becomes *searchable*, and a search hit flows straight into the model
+  prompt.
+- **The files people ignore are the ones they consider private.** A match on
+  an ignored `.env` line would put a secret into the prompt. The dot-path and
+  sensitive-basename denylists stay on regardless of the flag.
+- **Generated output is not worth indexing.** Ignored trees are usually
+  build artifacts and dependencies; indexing them costs disk, time and search
+  precision for nothing.
+
+The host sets the same precedent: AiderDesk 0.82 gave its own grep tool an
+opt-in `ignoreGitignore` parameter - ignore by default, widen per call. If you
+want broke to search ignored files, turn `search.includeGitIgnored` on
+deliberately; it is your call, not a default.
