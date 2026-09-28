@@ -103,9 +103,14 @@ model behind `/broke estimate`; they make no claim about real sessions.
 session, and the token conversion is the `chars / 4` estimate. The badge
 shows *gross* input savings; the summarizer's own calls are listed
 separately in `/broke stats`. Every cloud summarization costs one extra
-request; it only pays off when the old region is large (roughly > 37k
-characters), which is why the default is the free local one. Details:
-[docs/overview.md](docs/overview.md).
+request, and whether that request is worth it depends on four things at
+once: how large the old region is, how many later calls re-send it, how
+long the summary that replaces it turns out to be, and the price ratio
+between the summarizer model and the task model. There is no fixed
+character threshold to quote: with a cheap summarizer in a long session
+the crossover sits low, with a frontier summarizer in a two-call task it
+can be arbitrarily high. That is why the default is the free local one.
+Details: [docs/overview.md](docs/overview.md).
 
 ## Install
 
@@ -113,10 +118,15 @@ characters), which is why the default is the free local one. Details:
 supports installing from any public GitHub repository:
 
 ```bash
-npx @aiderdesk/extensions install https://github.com/777marvin/ext-broke
+npx @aiderdesk/extensions install -g https://github.com/777marvin/ext-broke
 ```
 
-It downloads the extension and installs its dependency automatically.
+`-g` (global) installs into the shared extension directory,
+`~/.aider-desk/extensions` (`%USERPROFILE%\.aider-desk\extensions` on
+Windows). Without it the CLI installs into `.aider-desk/extensions` of the
+**current working directory**, so the extension would end up in whatever
+folder you happened to be standing in. It downloads the extension and
+installs its dependency automatically.
 
 **Manual install:**
 
@@ -311,9 +321,14 @@ The three levels are strictly additive; `truncate` includes `structural`,
 | Read-heavy agents exploring a big codebase | `/broke slice on`, clear the focus afterwards | Interface views instead of full bodies; the focus file (last edited) always comes back complete |
 | Finding where something lives without filling the context | Leave `search.enabled` on (default); combine with `/broke slice on` | The agent gets a `broke-search` tool and can pull path:line snippets under a char budget instead of bulk-reading files; sliced views keep the reads it still makes cheap |
 
-Rule of thumb for the summarizer backend: a **cloud** summarizer only pays
-off when the old region is large (roughly > 37k chars); below that its own
-call costs more than it saves. The default `local` has no such cutoff - it
+Rule of thumb for the summarizer backend: a **cloud** summarizer trades one
+extra request for the old region on every later call that re-sends it. It
+pays off when that region is large and re-sent often, and loses when the
+task is short or the region small. The crossover moves with the
+summarizer's price, the summary length and the number of following calls,
+so there is no fixed number worth quoting here - the honest way to decide
+is to read the summarizer's own cost in `/broke stats` next to the
+measured gross saving. The default `local` has no such trade-off at all: it
 is free, just slower (~20-60 s per regeneration).
 
 ### Settings and their effect on task length
@@ -682,8 +697,8 @@ broke is in active development. The roadmap
 ([docs/feats.md](docs/feats.md)) documents the shipped features F1-F4 with
 implementation specs; Feature 5 (mode presets short/normal/long/custom with
 a Broke automation selector, reachable from the badge settings and the
-settings panel) is implemented on the development branch and pending its
-first release - see the exact preset table in docs/feats.md. Still on the
+settings panel) shipped in 1.2.1 - see the exact preset table in
+docs/feats.md. Still on the
 candidate backlog: an expanded live UI (estimated savings next to proven
 ones, colored activity dot), minimalist operation and honest benchmarking -
 all unscheduled. Suggestions and bug reports are very welcome: just open an
