@@ -51,3 +51,7 @@ release-payload*.json
 
 # Local tooling indexes (CodeGraph) - never part of the extension
 .codegraph/
+
+# Agent scratch plans (plan.md / todo.md) are working notes for the
+# maintainer, not part of the published extension or its docs.
+tasks/
