@@ -181,6 +181,16 @@ export function findConfigTableErrors(readme: string, schemaPaths: string[], top
  * The changelog is excluded from the prose checks above because history
  * legitimately quotes old floors and old SDK lines - but its own version
  * headings are exactly where a fabricated release would hide.
+ *
+ * KNOWN LIMIT: a tag existing is not the same as a release existing. This
+ * check is local and offline, so it cannot see that a release workflow
+ * run failed, that a tag points at the wrong commit, or that no GitHub
+ * release was ever created for a tag that is present. v1.2.1 is exactly
+ * that case: a local and remote tag, no published release, and a tag
+ * target whose package.json still read 1.2.1-dev. Catching it needs
+ * `gh release list` / the Actions API, which does not belong in a test
+ * suite. Until that is automated, the changelog preamble and the release
+ * sections carry the human-checked facts.
  */
 export function findChangelogTagErrors(changelog: string, tags: Set<string>): string[] {
   const errors: string[] = [];

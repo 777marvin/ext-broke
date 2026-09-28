@@ -57,8 +57,14 @@ release.
 ### Fixed
 
 - Two em-dashes in the README replaced, per this project's own prose rule.
-- The F5 wording no longer implies that release 1.2.1 is downloadable:
-  the feature is part of the current release, introduced in 1.2.1.
+- The F5 wording no longer points at release 1.2.1, which was never
+  published: the feature is part of the current release, introduced in
+  1.2.1 and first published in 1.2.2.
+- The 1.2.1 section says outright that the release was never published and
+  that the tag points two commits behind the release commit, where
+  `package.json` still reads `1.2.1-dev`. Checking the workflow runs
+  settled it: run 13 for `v1.2.1` failed on 2026-09-18, and 1.2.2 shipped
+  about an hour later.
 - `docs/feats.md` states plainly that the releases 0.1.0 to 0.2.1 carry no
   tag and were never published as GitHub releases, so they are not
   installable via `/broke update`; the same now stands in this file's
@@ -223,6 +229,13 @@ Remediation release for the external senior-level code review of v1.2.2.
 - Same UI improvements as v1.2.1 (text readability, quick commands, modernized design)
 
 ## [1.2.1] - 2026-09-18
+
+> **This version was never published.** The release workflow run for tag
+> `v1.2.1` failed on 2026-09-18, no GitHub release was created, and 1.2.2
+> shipped about an hour later. The `v1.2.1` tag also points two commits
+> behind the actual release commit, where `package.json` still reads
+> `1.2.1-dev` - so the tag marks a development state, not this release.
+> Treat 1.2.2 as the first published release containing the work below.
 
 ### Fixed
 

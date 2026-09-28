@@ -429,7 +429,8 @@ broke is in active development. The roadmap
 implementation specs; Feature 5 (mode presets short/normal/long/custom with
 a Broke automation selector, reachable from the badge settings and the
 settings panel) is part of the current release; it was introduced in
-1.2.1 - see the exact preset table in docs/feats.md. Still on the
+1.2.1, first published in 1.2.2 - see the exact preset table in
+docs/feats.md. Still on the
 candidate backlog: an expanded live UI (estimated savings next to proven
 ones, colored activity dot), minimalist operation and honest benchmarking -
 all unscheduled.

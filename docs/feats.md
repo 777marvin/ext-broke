@@ -29,7 +29,8 @@ recorded in the shared spike list below.
 v0.7.0, F3 in v0.9.0 (snapshots/, snapshot.ts module, config blocks,
 commands, onAfterCommit/test-green triggers, confirmed+undo-gated flush via
 loadContextMessages; spike S2's manual run passed before the release),
-F4 in v0.10.0 and F5 in v1.2.1. Note that 0.2.0 carries no `v0.2.0` tag:
+F4 in v0.10.0 and F5 in v1.2.1 - a version whose release run failed, so F5
+first shipped in v1.2.2. Note that 0.2.0 carries no `v0.2.0` tag:
 the releases from 0.1.0 to 0.2.1 predate the tag-and-sign release process,
 were never published as GitHub releases, and are therefore not installable
 via `/broke update`. From v0.3.0 on, every version in the CHANGELOG has a
@@ -51,19 +52,20 @@ by F1–F3.
 
 ## Feature 5 and candidate backlog
 
-F5 was introduced in v1.2.1 (2026-09-18) and is part of every release
-since. F6-F9 remain idea-level, unscheduled candidates recorded
+F5 was introduced in v1.2.1 (2026-09-18) and first published in v1.2.2;
+v1.2.1 itself was never released. F6-F9 remain
+idea-level, unscheduled candidates recorded
 2026-08-28.
 
 | # | Candidate | Type | Effort | Status |
 |---|-----------|------|--------|--------|
-| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (since v1.2.1) |
+| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (since v1.2.2) |
 | F6 | Live-UI expansion: provable + estimated savings, colored activity dot | feat | M | proposed |
 | F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | proposed |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
 | F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
 
-- **F5 - Mode presets & autonomy selector (released in v1.2.1).**
+- **F5 - Mode presets & autonomy selector (released in v1.2.2).**
   Selectable presets `short / normal / long` with tuned defaults per task
   length, plus `custom` for user-defined values. Presets apply ONCE (they
   set the preset-owned fields `level`, `maxContextChars`,
