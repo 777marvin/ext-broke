@@ -263,6 +263,35 @@ describe('structuralPass', () => {
     assert.equal(out.filter((m) => m.role === 'tool').length, 2);
   });
 
+  /**
+   * AiderDesk 0.84 (stepShouldContinue) retries a step whose only output is
+   * reasoning. So a reasoning-only assistant message is load-bearing state,
+   * not an empty message: dropping it would leave the host with nothing to
+   * work with. The rich-part guard is what keeps it - this test fails the
+   * moment `!hasRichParts(msg)` is removed from the drop condition.
+   */
+  it('keeps a reasoning-only assistant message (0.84+ retries such steps in the host)', () => {
+    const reasoningOnly: ContextMessage = {
+      id: id(),
+      role: 'assistant',
+      content: [{ type: 'reasoning', text: 'thinking about the plan' }],
+    };
+    const msgs: ContextMessage[] = [
+      user('brief'),
+      reasoningOnly,
+      tool('power---bash', 'some output'),
+      user('q2'),
+    ];
+    const { messages: out, removedChars } = structuralPass(msgs, 1);
+    assert.ok(
+      out.some((m) => m.id === reasoningOnly.id),
+      'the reasoning-only assistant message must survive the structural pass',
+    );
+    // Its bytes are still in the context, so they must not be counted as removed.
+    assert.ok(!removedChars || removedChars < messagesChars([reasoningOnly]), 'reasoning content is not reported as removed chars');
+    assertPairingInvariant(out);
+  });
+
   it('dedupes a repeated call sequence together with its matching call', () => {
     const msgs: ContextMessage[] = [
       user('brief'),

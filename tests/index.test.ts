@@ -321,6 +321,26 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.equal(countLogFiles(tmp), 1, 'exactly one archived output');
   });
 
+  /**
+   * AiderDesk 0.85 hands prompt-attached images to a custom command as a
+   * third `execute` argument. broke must accept the parameter without
+   * letting image bytes reach the log or the context-char accounting - an
+   * image is not a measurable text saving, and a data URL in the task log
+   * would be both noise and a disclosure.
+   */
+  it('ignores images attached to a /broke command (0.85 passes them to execute)', async () => {
+    writeConfig();
+    const ext = new Broke();
+    const { context, state } = makeHost('task-images', () => 'stub');
+
+    await ext.getCommands(context)[0].execute(['stats'], context, ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==']);
+
+    const out = state.logLines.map((l) => l.line).join('\n');
+    assert.ok(out.length > 0, 'the command still produces and logs its report');
+    assert.ok(!out.includes('data:image'), 'an attached image must never be echoed into the task log');
+    assert.ok(!out.includes('iVBORw0KGgo'), 'nor its base64 payload');
+  });
+
   it('tool-level rewrite writes nothing when the archive is off (XF10 integration)', async () => {
     writeConfig({ errors: { ...DEFAULT_CONFIG.errors, enabled: true, toolLevel: true, archive: false, minChars: 500 } });
     const ext = new Broke();
