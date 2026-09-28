@@ -20,14 +20,17 @@ recorded in the shared spike list below.
 | F3 | State Snapshotting & Memory Flushing | 0.9.0 | M | shipped |
 | F4 | Local Keyword/Vector Index with snippet summaries | 0.10.0 | L | shipped |
 
-**Version reality check (2026-09-28):** F1 shipped in v0.2.0, F2 in
+**Version reality check (2026-09-28):** F1 shipped in 0.2.0, F2 in
 v0.7.0, F3 in v0.9.0 (snapshots/, snapshot.ts module, config blocks,
 commands, onAfterCommit/test-green triggers, confirmed+undo-gated flush via
 loadContextMessages; spike S2's manual run passed before the release),
-F4 in v0.10.0 and F5 in v1.2.1. Whether F5 got a live AiderDesk smoke
-verification before that release is not recorded anywhere in this repo,
-so it is not claimed here; the "implemented, unreleased" wording further
-down is kept as the state at the time it was written.
+F4 in v0.10.0 and F5 in v1.2.1. Note that 0.2.0 carries no `v0.2.0` tag:
+the releases from 0.1.0 to 0.2.1 predate the tag-and-sign release process,
+were never published as GitHub releases, and are therefore not installable
+via `/broke update`. From v0.3.0 on, every version in the CHANGELOG has a
+tag and a published release. Whether F5 got a live AiderDesk smoke
+verification before its release is not recorded anywhere in this repo, so
+it is not claimed here.
 The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
 F4 -> 0.5.0; those targets were never met (0.3.0/0.4.0 shipped without
 F2/F3, and 0.5.0 shipped the XF-hardening round instead). The roadmap
@@ -43,12 +46,13 @@ by F1–F3.
 
 ## Feature 5 and candidate backlog
 
-F5 shipped in v1.2.1 (2026-09-18). F6-F9 remain
-idea-level, unscheduled candidates recorded 2026-08-28.
+F5 was introduced in v1.2.1 (2026-09-18) and is part of every release
+since. F6-F9 remain idea-level, unscheduled candidates recorded
+2026-08-28.
 
 | # | Candidate | Type | Effort | Status |
 |---|-----------|------|--------|--------|
-| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (v1.2.1) |
+| F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (since v1.2.1) |
 | F6 | Live-UI expansion: provable + estimated savings, colored activity dot | feat | M | proposed |
 | F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | proposed |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
