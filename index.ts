@@ -110,9 +110,21 @@ function loadTemplate(path: string): string {
 }
 const configComponentJsx = loadTemplate('./ConfigComponent.jsx');
 const statusBadgeJsx = loadTemplate('./StatusBadge.jsx');
+const messageMenuItemJsx = loadTemplate('./MessageMenuItem.jsx');
 
 /** Stable component ids for the UI elements. */
 const STATUS_BADGE_ID = 'broke-status';
+
+/**
+ * The per-message menu row (AiderDesk 0.85 `task-message-bar-menu`).
+ *
+ * Only user messages: the host mounts a component at this placement once per
+ * FINISHED message, so the filter is what keeps the instance count at one per
+ * user turn. Registered with loadData:false - never a per-message data fetch -
+ * and only when ui.showMessageMenu is on, which defaults to false. On a host
+ * older than 0.85 the placement does not exist and the row never renders.
+ */
+const MESSAGE_MENU_ID = 'broke-message-menu';
 
 /**
  * The only subcommands the badge's Quick Commands grid may execute.
@@ -1737,6 +1749,16 @@ export default class Broke implements Extension {
         loadData: true,
         noDataCache: true,
         jsx: statusBadgeJsx,
+      });
+    }
+    if (messageMenuItemJsx && getConfig().ui.showMessageMenu) {
+      components.push({
+        id: MESSAGE_MENU_ID,
+        placement: 'task-message-bar-menu',
+        name: 'Broke: why',
+        loadData: false,
+        messageFilter: { types: ['user'] },
+        jsx: messageMenuItemJsx,
       });
     }
     return components;

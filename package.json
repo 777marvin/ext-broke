@@ -29,7 +29,7 @@
     "check:version": "node scripts/check-version.mjs",
     "bench": "tsx scripts/bench.ts",
     "measure": "tsx scripts/measure.ts",
-    "validate:ui": "node scripts/validate-extension-ui.mjs ConfigComponent.jsx StatusBadge.jsx"
+    "validate:ui": "node scripts/validate-extension-ui.mjs ConfigComponent.jsx StatusBadge.jsx MessageMenuItem.jsx"
   },
   "keywords": [
     "aiderdesk",

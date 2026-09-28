@@ -193,6 +193,18 @@ const searchDefault = SearchSchema.parse({});
 const UiSchema = z.object({
   /** Show the 💸 saved-tokens badge in the task status bar. */
   showStatusBadge: z.boolean().default(true),
+  /**
+   * Add a "broke: why" row to each user message's dropdown menu
+   * (AiderDesk 0.85's `task-message-bar-menu` placement).
+   *
+   * Default OFF, and not for taste: the host mounts a component at this
+   * placement once per FINISHED message, so a long task would carry one
+   * instance per message. The component itself is written to cost nothing
+   * per instance (no data fetch, no history access), but the user decides
+   * whether the rows are worth the render at all. On a host older than 0.85
+   * the placement does not exist and the menu simply never renders.
+   */
+  showMessageMenu: z.boolean().default(false),
 });
 const uiDefault = UiSchema.parse({});
 

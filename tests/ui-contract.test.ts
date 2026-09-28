@@ -35,13 +35,25 @@ describe('vendored host UI contract (BRK-024)', () => {
     assert.doesNotMatch(contract, /type (AgentProfile|Message|Model|ProviderProfile|TaskData) = any/);
   });
 
-  it('the UI validator passes both components and never falls back to any-typed props', () => {
-    const run = spawnSync(process.execPath, ['scripts/validate-extension-ui.mjs', 'ConfigComponent.jsx', 'StatusBadge.jsx'], {
+  it('the UI validator passes every component and never falls back to any-typed props', () => {
+    const run = spawnSync(process.execPath, ['scripts/validate-extension-ui.mjs', 'ConfigComponent.jsx', 'StatusBadge.jsx', 'MessageMenuItem.jsx'], {
       encoding: 'utf-8',
     });
     assert.equal(run.status, 0, `validator failed:\n${run.stdout}\n${run.stderr}`);
-    assert.match(run.stdout, /2 passed, 0 failed/);
+    assert.match(run.stdout, /3 passed, 0 failed/);
     assert.ok(!run.stdout.includes('permissive (any)'), 'the any-fallback warning must be gone');
+  });
+
+  /**
+   * The host mounts a `task-message-bar-menu` component once per FINISHED
+   * message, so the menu row must not request data. A `data` prop in its
+   * signature would mean a per-message extension call on a long task.
+   */
+  it('the per-message menu row never asks the extension for data', () => {
+    const menu = readFileSync('MessageMenuItem.jsx', 'utf8');
+    assert.doesNotMatch(menu, /\(\s*\{[^}]*\bdata\b/, 'no data prop in the component signature');
+    assert.match(menu, /executeExtensionAction/, 'it uses the action dispatcher instead');
+    assert.doesNotMatch(menu, /loadData:\s*true/, 'and is never registered with loadData');
   });
 
   it('rejects the unsupported Tooltip label prop but accepts host content', () => {

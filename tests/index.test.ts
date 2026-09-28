@@ -341,6 +341,34 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.ok(!out.includes('iVBORw0KGgo'), 'nor its base64 payload');
   });
 
+  // -------------------------------------------------------------------------
+  // AiderDesk 0.85 added the 'task-message-bar-menu' placement. The host mounts
+  // such a component once per FINISHED message, so registration must be opt-in
+  // and must never ask the extension for data per instance.
+  // -------------------------------------------------------------------------
+
+  it('registers no message-menu component by default', () => {
+    writeConfig();
+    const ext = new Broke();
+    const menus = ext.getUIComponents().filter((c) => c.placement === 'task-message-bar-menu');
+    assert.equal(menus.length, 0, 'the per-message menu is opt-in');
+  });
+
+  it('registers the message-menu component when enabled, without data loading', () => {
+    writeConfig({ ui: { ...DEFAULT_CONFIG.ui, showMessageMenu: true } });
+    const ext = new Broke();
+    const menus = ext.getUIComponents().filter((c) => c.placement === 'task-message-bar-menu');
+    assert.equal(menus.length, 1, 'exactly one menu component');
+    assert.equal(menus[0].id, 'broke-message-menu');
+    // A per-message data fetch would be an IPC storm on a long task.
+    assert.equal(menus[0].loadData, false, 'the menu must never fetch data per message');
+    // The host mounts one instance per finished message; restricting to user
+    // messages keeps the count at one per user turn.
+    assert.deepEqual(menus[0].messageFilter, { types: ['user'] });
+    assert.ok(menus[0].jsx.length > 0, 'the JSX template is loaded');
+    writeConfig(); // restore the default for the tests that follow
+  });
+
   it('tool-level rewrite writes nothing when the archive is off (XF10 integration)', async () => {
     writeConfig({ errors: { ...DEFAULT_CONFIG.errors, enabled: true, toolLevel: true, archive: false, minChars: 500 } });
     const ext = new Broke();

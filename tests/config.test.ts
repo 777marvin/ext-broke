@@ -401,6 +401,11 @@ describe('resolveCacheProfile', () => {
     assert.equal(mergeConfig({}).cache.openaiStateless, false);
     assert.equal(DEFAULT_CONFIG.cache.openaiStateless, false);
   });
+
+  it('defaults showMessageMenu to false (the host mounts it per finished message)', () => {
+    assert.equal(mergeConfig({}).ui.showMessageMenu, false);
+    assert.equal(DEFAULT_CONFIG.ui.showMessageMenu, false);
+  });
 });
 
 describe('CONF-002: getConfig cached read and ENOENT handling', () => {
