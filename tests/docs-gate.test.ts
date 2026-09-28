@@ -172,17 +172,28 @@ test('the real repository passes its own gate', (t) => {
   if (repoTags().length === 0) {
     return t.skip('this checkout has no git tags');
   }
-  assert.deepEqual(runChecks(REPO_ROOT).errors, []);
+  const { errors, skipped } = runChecks(REPO_ROOT);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(skipped, [], 'with tags, nothing is skipped');
 });
 
-test('a checkout WITHOUT tags reports no tag errors and says it skipped them', () => {
-  // The exact condition of every CI job that does not set fetch-tags: true.
-  // Before the fix this produced one error per changelog heading and failed
-  // the coverage and deps-current jobs.
-  const withTags = runChecks(REPO_ROOT, new Set(repoTags()));
+test('tag-dependent checks run with tags and are skipped, cleanly, without them', () => {
+  // Built from the real changelog, NOT from repoTags(): this test must not
+  // depend on whether the checkout has tags, or it would only ever verify
+  // the case it happens to run in.
+  const changelog = readFileSync(join(REPO_ROOT, 'CHANGELOG.md'), 'utf8');
+  const headings = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)]
+    .map((m) => m[1])
+    .filter((v) => !UNTAGGED_HISTORICAL.has(v));
+  assert.ok(headings.length > 10, `expected many releases, found ${headings.length}`);
+  const full = new Set(headings.map((v) => `v${v}`));
+
+  const withTags = runChecks(REPO_ROOT, full);
+  assert.deepEqual(withTags.errors, [], 'a full tag list leaves the real repo clean');
+  assert.deepEqual(withTags.skipped, [], 'nothing is skipped when tags are there');
+
   const withoutTags = runChecks(REPO_ROOT, new Set());
-  assert.deepEqual(withTags.errors, [], 'with tags the real repo is clean');
   assert.deepEqual(withoutTags.errors, [], 'without tags there is nothing to be wrong about');
-  assert.deepEqual(withoutTags.skipped, withTags.skipped.concat('release claims and changelog tags (this checkout has no git tags; run it with fetch-tags)'));
-  assert.equal(withoutTags.skipped.length, 1);
+  assert.equal(withoutTags.skipped.length, 1, 'exactly one skip, reported once');
+  assert.match(withoutTags.skipped[0], /no git tags/);
 });
