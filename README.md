@@ -183,7 +183,7 @@ for testing uncommitted changes during development; inside a git checkout
 active level and whether Ollama is reachable, and `/broke selftest` runs
 the whole pipeline on synthetic input. That is the whole setup: broke is
 active by default, every lever is documented under [Usage](#usage) and
-[Onboarding](#onboarding-what-to-use-when).
+[Tuning](#tuning-what-to-use-when).
 
 ## Requirements
 
@@ -221,7 +221,7 @@ Once installed, broke runs automatically. You will see:
   current task (tooltip shows the breakdown per pass, and money saved at
   the current model's price). While a task has saved nothing yet, the badge
   shows why: `💸 0 · 31k/60k` means the conversation input is still below
-  the threshold — an honest zero, not a malfunction (`/broke why` gives the
+  the threshold: an honest zero, not a malfunction, not a malfunction (`/broke why` gives the
   full gate-by-gate verdict);
 - an **activation note** in every new task, showing the active config and
   whether Ollama is reachable;
@@ -229,7 +229,7 @@ Once installed, broke runs automatically. You will see:
 
 Scope note: broke measures and compresses only the **conversation messages**
 it is handed before each model call. The system prompt, tool schemas and
-provider-side prompt caching are outside its reach — a task can show 100k+
+provider-side prompt caching are outside its reach: a task can show 100k+
 prompt tokens while broke correctly reports small or zero savings for it.
 
 Everything can be controlled from the chat (`/broke help` lists all
@@ -291,138 +291,37 @@ commands) or from the gear icon on the extension card:
 /broke help                        all commands
 ```
 
-![broke in a real AiderDesk session: /broke stats output, 💸 badge in the status bar](docs/assets/stats.png)
+## Tuning: what to use when
 
-## Onboarding: what to use when
+broke ships sane defaults, so most users never touch anything. When you do
+want to tune, [docs/tuning.md](docs/tuning.md) maps every lever to the
+situation it helps, states what each setting change actually buys you at
+three task lengths, and has a playbook for autonomous agent runs.
 
-broke ships sane defaults - most users never touch anything. This section is
-the map for everyone who *does* want to tune: which lever helps in which
-situation, what each setting change actually buys you, and how autonomous
-agent runs differ from interactive sessions. For the raw command list see
-[Usage](#usage), for internals [docs/overview.md](docs/overview.md).
-
-One principle first: **saved characters are billed again on every later
-model call.** Removing 10k chars at minute five of a long session removes
-them from dozens of subsequent requests - which is why almost every tune
-pays nearly nothing on short tasks and compounds massively on long ones.
-
-### Which level for which job
-
-The three levels are strictly additive; `truncate` includes `structural`,
-`summarize` includes both. Pick the deepest one whose losses you accept.
-
-| You are doing | Recommended setup | Why |
-|---|---|---|
-| Short chats and quick fixes (input stays < ~60k chars) | Leave defaults | The lossy passes only engage above `maxContextChars` anyway; structural cleanup and the error pass stay active regardless |
-| Debug-heavy work: compiler/test loops | `errors on` (default); raise `errors lines` to 12-15 if summaries feel starved | Error dumps get replaced by their diagnostic essence *even below the global threshold* (`errors.minChars` is its own gate) |
-| Medium sessions that cross the threshold regularly | `level truncate` + `measure on`; lower `maxContextChars` to ~45000 | Truncation of old tool outputs is the highest-value lossy pass - detail loss matters least there |
-| Long or milestone-heavy tasks | `level summarize` with the **local** Ollama summarizer; snapshots come free via `snapshot.onCommit` | The reference benchmark removes ~90% of the input at this level, with near-zero recurring cost since the summarizer runs locally |
-| Very long scrollback you want slimmed for good | Snapshot first, then `/broke flush` between milestones | Flush is the one destructive operation - manual, confirmed, and reversible through the history file |
-| Read-heavy agents exploring a big codebase | `/broke slice on`, clear the focus afterwards | Interface views instead of full bodies; the focus file (last edited) always comes back complete |
-| Finding where something lives without filling the context | Leave `search.enabled` on (default); combine with `/broke slice on` | The agent gets a `broke-search` tool and can pull path:line snippets under a char budget instead of bulk-reading files; sliced views keep the reads it still makes cheap |
-
-Rule of thumb for the summarizer backend: a **cloud** summarizer trades one
-extra request for the old region on every later call that re-sends it. It
-pays off when that region is large and re-sent often, and loses when the
-task is short or the region small. The crossover moves with the
-summarizer's price, the summary length and the number of following calls,
-so there is no fixed number worth quoting here - the honest way to decide
-is to read the summarizer's own cost in `/broke stats` next to the
-measured gross saving. The default `local` has no such trade-off at all: it
-is free, just slower (~20-60 s per regeneration).
-
-### Settings and their effect on task length
-
-Shorthand used below: **SHORT** = the conversation never crosses
-`maxContextChars`; **MEDIUM** = it crosses occasionally; **LONG** =
-100k+ chars of accumulated history, multi-milestone work.
-
-| Setting (default) | Effect on SHORT tasks | Effect on MEDIUM sessions | Effect on LONG tasks |
-|---|---|---|---|
-| `maxContextChars` (60000) | Raising/lowering changes nothing until the session crosses the line | Lowering engages the lossy passes sooner - usually the best single tune | Most sensitive lever here: set too high, broke stays passive while the bill grows; set too low, summaries churn constantly |
-| `protectedTurns` (2) | Nearly no effect (few user turns exist) | Moderate: each extra turn shields recent context but shrinks the compressible region | The classic over-tune mistake: protecting 8-10 turns on a long session can eat most of the savings - keep it low |
-| `truncate.maxLines` / `maxKB` (200 / 20) | Only relevant if old, huge outputs already exist | Primary dial for how much old output detail survives truncation | Every char kept here is re-billed on every later call - tighten before loosening |
-| `truncate.maxInputChars` (2000) | Rarely relevant | Trims oversized tool-call inputs (long writes/greps) | Same compounding logic as above |
-| `errors.minChars` (8000) | **Works below the global gate**: a giant test log in a small chat gets compressed regardless | Good balance at 8000; go to ~5000 if your logs are routinely noisy | Low values start rewriting borderline outputs - watch for over-compression, not cost |
-| `errors.contextLines` (8) | Detail-per-failure tradeoff, tiny cost either way | Raise toward 12-15 if error summaries lose needed context | Pure quality knob; cost impact is negligible next to truncation |
-| `errors.toolLevel` (off) | Off: nothing touches stored history | On: tool results are rewritten *at the source* - savings become permanent instead of per-call | On also means irreversible rewrites plus archived copies (`errors.archive`) eating disk - default off is deliberate |
-| `slice.enabled` (off) | Files under `minChars` (4000) pass through untouched; likely dormant | Pays off as soon as an agent reads multiple large files | Interface views shrink every subsequent call that still carries those reads - and the rewrite of stored results is irreversible; disable slicing later does not restore them |
-| `slice.focusAuto` (on) | - | Keeps the file just edited intact automatically | If reads return sliced views *you* did not want, check `/broke slice status` - explicit focus beats surprises |
-| `summarize.via` (local) | Nothing to summarize yet | Local adds seconds of latency per regeneration; cloud adds provider tokens | Local wins outright at scale: constant quality/cost ratio; cloud with `cloudModelId` = a cheap model only, never the task's frontier model |
-| `summarize.afterTurns` (8) | Irrelevant until summarizing starts | Shields recent steps from summarization | Over-raising starves the summarizer on turn-poor sessions - note regions with zero user turns (autonomous loops) exempt themselves anyway |
-| `summarize.minChars` (8000) | Gate never met | Fine where it is | Do not lower much: a summary call costs one extra request, small regions never amortize it |
-| `snapshot.onCommit` (on) | Cheap, harmless | Free milestone trail after each commit | Summary-only by default (privacy review F-01): raw undo files are opt-in via `snapshot.keepHistory`. The destructive flush keeps its undo file via `flush.undo` (on) |
-| `snapshot.onTestPass` (off) | - | False positives on flaky suites made this opt-in | Enable only if your test runner prints a clean `passed`/exit-0 pattern reliably |
-| `stats.measure` (on) | Negligible overhead, records every compression run | These ledger records are your provable numbers (`/broke measure`) | Keep it on; 5 MB rotation bounds the file |
-| `search.enabled` (on) | Dormant cost only: the registered tool ships its JSON schema with every model call even if never used - `/broke search off` drops that for agents that never search | First real payoff: snippets replace whole-file reads when locating code | Compounds: smaller read results flow into every later call; commits trigger a throttled refresh, queries serve the snapshot within a 60s freshness window and re-scan after it (BRK-013 TTL) |
-| `search.maxChars` (6000) / `contextLines` (6) | Irrelevant while dormant | Tighten toward 4000 chars if result sets feel bloated | Lower budgets buy extra headroom below `maxContextChars`; snippets land there once, then get compressed like any other tool output |
-
-### Running autonomous agents
-
-An autonomous run (one task brief, then the agent loops with power tools)
-behaves differently from a human-driven session - in three ways, all
-deliberate:
-
-1. **Protection falls back automatically.** There are no repeated user
-   turns to protect, so broke drops from turn-based protection to keeping
-   only the current step (task brief + last few messages) untouched and
-   treats the rest of the loop as compressible - exactly what you want.
-2. **The summarizer stays alive.** Regions with zero user turns exempt
-   themselves from the `afterTurns` gate; otherwise summarization would
-   be permanently dead precisely in these sessions.
-3. **Milestones write themselves.** Every successful commit produces a
-   snapshot record (`snapshot.onCommit`).
-
-A practical playbook:
-
-- **Before:** check Ollama reaches the extension (`/broke status` shows it),
-  keep `measure on`. Leave `search.enabled` on unless the run will not touch
-  code at all - locating definitions via budgeted snippets is exactly what
-  keeps an autonomous loop's context from ballooning early. Decide
-  consciously whether to enable `snapshot.onTestPass` - commit-based
-  snapshots alone are usually enough. Never wire `flush` into the loop itself.
-- **During:** let it run. Compression happens inside every model call;
-  expect the badge to stay at an honest zero until the input crosses
-  `maxContextChars`, then move. Do not run `/broke flush` while an agent
-  step is executing - it is designed to run between turns only.
-- **After:** `/broke stats` gives the per-pass breakdown,
-  `/broke measure` the real-run ledger, `/broke snapshot list` the milestone
-  trail. Optionally `/broke flush --yes` to slim the task before follow-up
-  prompts - undoable while `flush.undo` is on (default).
-- **If the badge says 0 but you expected savings:** run `/broke why` - it
-  walks the gates live and names the first one blocking.
+The decision that matters most: pick the deepest level whose losses you
+accept. The three levels are strictly additive (`truncate` includes
+`structural`, `summarize` includes both), the content-preserving
+`structural` pass runs on every call anyway, and every lossy pass only
+engages above `maxContextChars` (default 60000 chars, about 15k tokens).
+At the shipped default the reference benchmark removes ~32% of the input,
+at `summarize` with the free local model ~90%.
 
 ## How it works
 
-`onOptimizeMessages` fires before every model call. Broke runs up to four
-passes over everything older than the protected turns:
+`onOptimizeMessages` fires before every model call. Four passes run over
+everything older than the protected region (the task brief plus the last
+`protectedTurns` user turns):
 
-1. **structural**: removes zero-content messages, collapses identical
-   adjacent tool results (only when the producing tool-call, name and
-   input, matches too), merges consecutive assistant texts.
-2. **errors**: old tool results that are compiler/test error output (tsc,
-   Python/pytest, Jest/Vitest, Node stack traces) are replaced by their
-   diagnostic essence with an explicit
-   `… [broke: error summary - N lines → M lines]` marker. Only
-   command/compiler/test tools are compressed: file reads, search results
-   and docs that merely *look* like errors (an `Error:` heading, `●`
-   bullets) are never rewritten.
-3. **truncate**: old tool outputs are cut to head+tail under combined
-   hard limits (200 lines and 20 KB); oversized tool-call inputs are
-   replaced by a `__broke` preview.
-4. **summarize**: when the input exceeds the threshold and the old region
-   is big enough, it is replaced by one `[broke-compacted]` summary. The
-   summary is cached per task and re-validated against the region's
-   content fingerprint; a regeneration happens only when new turns enter
-   the region. Regions larger than the summarizer's input cap are chunked
-   at message boundaries and summarized hierarchically - each chunk within
-   the cap, one meta-call combining the parts, a hard budget of 8 part +
-   1 meta calls; messages beyond the budget stay in the context verbatim,
-   and the marker states the coverage ("Summarized X of Y messages").
-   Images, file attachments and reasoning parts are never silently
-   dropped: regions containing them are skipped (the truncate pass still
-   shrinks their text parts). A summary is never applied when it would
-   grow the context.
+1. **structural**: drop empty messages, collapse identical adjacent tool
+   results, merge consecutive assistant texts.
+2. **errors**: compiler/test output is replaced by its diagnostic essence
+   behind an explicit `… [broke: error summary - N lines → M lines]`
+   marker.
+3. **truncate**: old tool outputs cut to head+tail under combined hard
+   limits (200 lines and 20 KB); oversized tool-call inputs become a short
+   preview.
+4. **summarize**: above the threshold and with a large enough old region,
+   it is replaced by one cached `[broke-compacted]` summary.
 
 ```mermaid
 flowchart TD
@@ -445,195 +344,26 @@ flowchart TD
     A -. "after every commit" .-> SN["milestone snapshot<br/>summary-only by default"]
 ```
 
-After 3 consecutive summarize failures, broke disables summarization for
-that task and tells you why. The badge tooltip shows the disabled state;
-`/broke reset` or changing the summarizer backend/model re-enables it.
+Three guarantees hold on every run: images, file attachments and reasoning
+parts are never silently dropped, a summary is never applied when it would
+grow the context, and a `ContextValidator` reverts the whole compression
+when the tool-call/result pairing invariants do not hold. After 3
+consecutive summarize failures broke disables summarization for that task
+and says why; the badge tooltip shows the state, and `/broke reset` or a
+summarizer backend/model change re-enables it.
 
-### Cache-friendly mode (provider prompt cache)
+The per-pass rules, gates and failure handling are in
+[docs/overview.md](docs/overview.md#how-the-pipeline-works).
 
-Claude bills cache **writes** at 1.25x and cache **hits** at 0.1x; GPT and
-o-models bill cached input at 0.5x. Every recompressed byte therefore costs
-real money: a rewritten prefix re-writes the whole cache. Cache-friendly
-mode (`cache.profile`) keeps every byte that was already sent to the model
-byte-stable, so the provider's prompt cache keeps hitting between calls:
+## Feature deep dives
 
-- `anthropic` / `openai`: the sent-ledger freezes already-sent messages.
-  Structural merges re-derive identical bytes, the error/truncate passes
-  skip frozen outputs, and the summarize pass re-serves the cached summary
-  and appends new turns verbatim instead of regenerating over sent bytes.
-- `auto` (recommended): detects the rules from the task model - Claude
-  models get the Anthropic rules, GPT/o-models the OpenAI ones, anything
-  else keeps the plain behavior.
-- The **escape hatch** (`cache.escapeHatch`) is the one sanctioned cache
-  loss: a run that starts over `maxContextChars` gets exactly ONE
-  deliberate full rewrite, the hatch locks until a run fits under budget
-  again (hysteresis / re-arming), and the cache re-stabilizes on that run's output.
-  Escape operations are transactional: if output validation fails, changes revert
-  cleanly without locking the hatch or dropping cache state.
-  With the hatch off, sent bytes are never rewritten - even over budget.
-
-Two honesty notes on the detection, both about not pricing something that
-cannot happen:
-
-- Providers with no documented cache economics resolve to no cache
-  awareness at all. That includes `llmapi` (new in AiderDesk 0.85) and any
-  provider broke does not know - a local or unlisted runtime must not be
-  billed as if it had a cache.
-- **OpenAI Zero Data Retention organizations** send stateless requests
-  (`store: false`, AiderDesk 0.84+). Nothing is stored server-side, so the
-  0.5x cached-input rate can never apply. broke has no API to read the
-  host's provider settings, so this one fact has to be asserted:
-  set `cache.openaiStateless on` (or `cache.profile off`) if your
-  organization runs stateless. Only the `auto` path consults it - an
-  explicit `cache.profile` always wins, because you know your own
-  organization better than a model-name sniff does.
-
-
-The badge gear (⚙) opens a quick settings dialog with the core knobs.
-Both it and the full settings panel offer **Task length**
-(`short / normal / long / custom`) and **Broke automation**
-(`autonomous / manual`) selectors. These settings are extension-wide;
-task-length presets leave the cache profile and escape hatch unchanged.
-Editing a preset-owned field (level, threshold, protected turns, truncate
-limits, summarize-after) relabels the mode to `custom` immediately, in the
-panel, in the badge dialog and on disk - a late write from the host or
-another surface cannot restore a stale preset label. Long-mode selection
-(`mode long` or `config set mode long`, any quoting that actually
-persists) shows the Ollama/cloud cost and consent guidance BEFORE the
-write; invalid spellings are reported as a rejection, never as pending
-Long guidance. The full settings panel retains cache controls and their
-inline tooltips. Cancel and Escape dismiss the badge dialog during
-loading, previewing, or errors, but are blocked while a save is in
-progress to avoid implying that an in-flight write was cancelled.
-`/broke measure` reports escape rewrites plus the provider-reported cache
-tokens (writes / reads / billed).
-
-### ST-slicing (tool-level, opt-in)
-
-Independent of the input pipeline, `slice.enabled` (default **off**)
-rewrites what large file reads deliver to the model: instead of full file
-bodies, the agent receives an interface view - imports, type/interface
-declarations in full, function/class signatures with bodies elided,
-dataclass fields and def signatures for Python - capped at
-`slice.maxChars` with an honest fallback to full content when the view
-would not shrink or would grow too large. The view carries an explicit
-`[broke: interface view - N of M lines ...]` marker naming the escape
-hatch (`/broke slice off`).
-
-The *focus* file always returns in full: explicitly via
-`/broke slice focus <path>`, automatically after an edit-tool call on it
-(`focusAuto`), or while it has pending task changes. Because this rewrites
-the stored tool result (unlike the input pipeline above), it is opt-in by
-default - and the rewrite is **irreversible**: disabling slicing later does
-not restore already-stored views. The AiderDesk extension API currently
-offers no way to keep the original output and send a projection (the tool
-event carries a single `output` field); if that changes, broke will adopt a
-non-destructive pipeline.
-
-Known gap (verified by spike S1): files Aider itself injects into context -
-repo map, `/add`, connector-read content - bypass tool hooks entirely and
-are never sliced. Slicing only covers what flows through file-read tools.
-Savings appear as an estimate under `slice:` in `/broke stats`.
-
-### Snapshots & flush (F3)
-
-Long sessions pile up intermediate steps the agent no longer needs. Broke's
-F3 records **milestone snapshots** - compact, human-inspectable JSON files
-(`goal`, `achieved`, changed `files`, optional commit hash, a masked text
-summary) under the data root (`snapshots/<taskId-slug>-<hash>/`, outside the swappable extension tree). They are written
-automatically after every successful commit (`snapshot.onCommit`, default
-on), optionally on detected test-green tool results (`snapshot.onTestPass`,
-default off), and manually via `/broke snapshot [label]`.
-
-The *flush* is the only destructive operation in broke. `/broke flush`
-replaces everything after the original task brief with ONE `[broke-state]`
-message carrying that state record - so long-running tasks can restart each
-step from brief + current state instead of the full scrollback. It is manual,
-asks for confirmation (`flush.confirm`), writes BOTH the snapshot record and
-a raw-history undo file BEFORE touching any message (when `flush.undo` is on,
-default), aborts untouched if
-those writes fail or the undo file would exceed its size cap, and
-`/broke flush --undo <n>` restores the byte-identical
-history afterwards. Auto/manual snapshots are summary-only by default
-(`snapshot.keepHistory` off, review F-01); undo files for them are opt-in.
-
-Known limitation (spike S2): AiderDesk also maintains
-`.aider.chat.history.md` in the task folder as its own connector artifact.
-Replacing the context messages does not rewrite that file; depending on the
-AiderDesk version it may re-hydrate old content on the next prompt. If you
-observe flushed content returning, prefer AiderDesk's native
-handoffConversation-style flows or report back to the broke issue tracker -
-the acceptance docs track this gap explicitly.
-
-### Local project search (broke-search tool)
-
-`search.enabled` (default **on**) registers a `broke-search` agent tool
-backed by a per-project keyword index: identifier-aware tokenizer, BM25
-ranking, top-k results with `path:line` plus ±6 context lines around each
-best match - and the snippet summary *is* the token control. Every result
-set stays under `search.maxChars` (default 6000 chars ≈ 1.5k tokens)
-including a one-line footer stating how many results and indexed files it
-came from.
-
-Honest positioning against what AiderDesk already ships: Broke's index is
-**offline** (no embedding model needed), persisted per project under
-the data root (`index/<projectHash>/`, BRK-016), re-indexed incrementally by mtime/size diffing
-(triggered on commits and re-checked before queries once the 60s freshness window expires), and strictly budgeted.
-It complements rather than replaces `power---semantic_search` or the repo
-map.
-
-Privacy by construction: the on-disk index contains term postings and file
-metadata ONLY - never file contents or snippets; snippets are read live
-from disk at query time and behave exactly like any normal file read in
-stored history. Skipped from indexing: `node_modules`, `.git`, `dist`,
-`build`, `vendor`, `.aider-desk`, non-code extensions and files above
-`search.maxFileKB`. Indexes survive deploys and `/broke update` (preserve
-lists) up to 64 MB.
-
-No savings are claimed for this feature anywhere in the badge or stats:
-value comes from the agent choosing budgeted snippets over bulk file reads,
-which is behavior - not pipeline compression. One honest tradeoff to know:
-every registered tool ships its JSON schema with every model call, so
-agents that never search pay a small constant cost; `/broke search off`
-(and the settings dialog) unregisters the tool while leaving the built
-index on disk for later re-enabling. `/broke index [rebuild] | status` and
-`/broke search <query>` cover control and manual use without an agent.
-
-## Security notes
-
-The summarize pass condenses conversation content (tool outputs, web
-content, files) with a small model and feeds the summary back into the
-main model's context. When that content is attacker-influenced, prompt
-injection can survive the condensation: the summarizer prompt tells the
-model to treat its input as untrusted data, common secret patterns are
-masked before the text leaves, and the generated summary is inserted
-with an explicit machine-generated framing ("treat as data, not
-instructions"), but all three are mitigations, not a hard boundary.
-Treat compressed summaries with the same caution as the raw
-web/file content any tool fetches: broke itself never executes the
-summarizer's output, it only stores it as history. Switching
-`summarize.via` to the task's own cloud model does not remove the risk,
-it only changes which model sees the untrusted text first.
-
-Snapshots (F3) persist small JSON records and optional raw-history undo
-files **locally** under the data root (outside the swappable extension tree). Every record field derived
-from conversation content passes through the same secret masking as all
-broke artifacts; they are bounded by count (50 records per task) and by
-bytes (25 MB per task, individual undo files capped at 10 MB, oldest
-records evicted when a budget is exceeded). If your
-conversation contains long-lived credentials that none of the masking
-patterns catch, disable snapshots or move them off shared machines.
-
-broke-search (F4) returns raw code/file snippets - the same content class
-as any file-read tool result. The persisted index contains no file text
-(only term postings + metadata), so removing an indexed secret means
-editing/removing the FILE itself; nothing searchable lingers in
-`index/`. Queries run live against disk, honoring the same skip rules in
-every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
-The indexer and snippet reader strictly enforce workspace confinement
-via canonical `realpath` validation, rejecting symlinks that resolve outside
-the workspace root or target sensitive paths (`.env`, dot-directories, skipped folders).
-
+| Feature | What it does | Page |
+|---|---|---|
+| Cache-friendly mode | keeps already-sent bytes byte-stable so the provider prompt cache keeps hitting; one sanctioned full rewrite as escape hatch | [docs/features.md](docs/features.md#cache-friendly-mode-provider-prompt-cache) |
+| ST-slicing | interface views instead of full file bodies for large reads (opt-in, and the rewrite is irreversible) | [docs/features.md](docs/features.md#st-slicing-tool-level-opt-in) |
+| Snapshots & flush | milestone records per commit, plus the one destructive operation in broke (manual, confirmed, undoable) | [docs/features.md](docs/features.md#snapshots--flush-f3) |
+| broke-search | offline keyword index serving budgeted `path:line` snippets to the agent | [docs/features.md](docs/features.md#local-project-search-broke-search-tool) |
+| Security notes | prompt injection through summaries, what lands on disk, workspace confinement of the indexer | [docs/features.md](docs/features.md#security-notes) |
 
 ## Configuration
 
@@ -666,6 +396,7 @@ the workspace root or target sensitive paths (`.env`, dot-directories, skipped f
 | search.maxResults / maxChars | 8 / 6000 | top-k results and TOTAL char budget per query (maxChars hard range 500-50,000; the footer counts toward the budget) |
 | search.contextLines | 6 | context lines kept around each best match |
 | search.maxFileKB | 512 | files larger than this never enter the index (hard ceiling 2048) |
+| search.scanBudgetMs | 2000 | wall-clock budget for one index scan (100-60,000); hitting it marks the index `truncated`, which the search footer reports - raise it on a huge monorepo |
 | summarize.via | `local` | local (Ollama) / cloud |
 | summarize.localModel | `qwen2.5-coder:3b` | Ollama model tag |
 | summarize.ollamaUrl | `http://127.0.0.1:11434` | Ollama base URL |
@@ -697,52 +428,41 @@ broke is in active development. The roadmap
 ([docs/feats.md](docs/feats.md)) documents the shipped features F1-F4 with
 implementation specs; Feature 5 (mode presets short/normal/long/custom with
 a Broke automation selector, reachable from the badge settings and the
-settings panel) shipped in 1.2.1 - see the exact preset table in
-docs/feats.md. Still on the
+settings panel) is part of the current release; it was introduced in
+1.2.1 - see the exact preset table in docs/feats.md. Still on the
 candidate backlog: an expanded live UI (estimated savings next to proven
 ones, colored activity dot), minimalist operation and honest benchmarking -
-all unscheduled. Suggestions and bug reports are very welcome: just open an
-[issue](https://github.com/777marvin/ext-broke/issues).
+all unscheduled.
 
 broke targets AiderDesk's extension API. The compression logic itself is
 plain TypeScript, so porting it to other agent platforms is possible in
 principle, it is simply not planned right now.
 
-## Support
-
-- Usage questions, misbehavior, bug reports: open an
-  [issue](https://github.com/777marvin/ext-broke/issues). Attaching the
-  output of `/broke why`, `/broke stats` or `/broke measure` speeds up
-  diagnosis a lot - none of it contains conversation content.
-- Security issues: never in a public issue - follow
-  [SECURITY.md](SECURITY.md) (private GitHub advisory).
-- Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Development
-
-```powershell
-npm install
-npm run typecheck    # tsc --noEmit
-npm test             # node --test (tsx), pure-function tests
-npm run bench        # deterministic reference benchmark
-npm run measure      # analyze measure.jsonl (per-run real-session records)
-npm run validate:ui  # validate the JSX UI components (syntax + types)
-```
-
-Conventional commits, Keep a Changelog, semantic versioning.
-
 ## Documentation
 
+- [docs/tuning.md](docs/tuning.md): which lever for which situation, per task length, plus the autonomous-run playbook
+- [docs/features.md](docs/features.md): deep dives per feature (cache-friendly mode, ST-slicing, snapshots & flush, broke-search, security notes)
 - [docs/overview.md](docs/overview.md): module map and pipeline internals
 - [docs/token-saving.md](docs/token-saving.md): all levers that save tokens
 - [docs/aiderdesk-builtin.md](docs/aiderdesk-builtin.md): what AiderDesk already saves on its own (verified from source)
 - [docs/local-models.md](docs/local-models.md): what local models can really do on this hardware (RTX 3050, 4 GB VRAM)
-- [docs/feats.md](docs/feats.md): roadmap and feature specs
-- [docs/review-backlog.md](docs/review-backlog.md): open findings from the code review (severity, fix approach)
+- [docs/feats.md](docs/feats.md): feature specs and as-built record
+- [docs/review-backlog.md](docs/review-backlog.md): the review ledger, a historical record of findings that are all closed
+
+## Support, contributing and development
+
+- Usage questions, misbehavior, bug reports: open an
+  [issue](https://github.com/777marvin/ext-broke/issues). Attaching the
+  output of `/broke why`, `/broke stats` or `/broke measure` speeds up
+  diagnosis a lot - none of it contains conversation content. This is my
+  first public repository, so bug reports and feature ideas are very
+  welcome.
+- Security issues: never in a public issue - follow
+  [SECURITY.md](SECURITY.md) (private GitHub advisory).
+- Contributing and local development: see
+  [CONTRIBUTING.md](CONTRIBUTING.md), which also lists the `npm run`
+  commands, the conventional-commit and changelog conventions, and how a
+  release is cut and signed.
 
 ## License
 
