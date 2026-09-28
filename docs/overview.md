@@ -1,6 +1,10 @@
 # Project Overview
 
-*Snapshot: release v1.3.0 (2026-09-28) - AiderDesk 0.83-0.85
+*Snapshot: release v1.3.2 (2026-09-28) - the documentation truth pass and its
+three gates, shipped after 1.3.1 failed its own gate: the documentation
+checks had assumed a checkout carrying git tags, and most CI jobs do not,
+so the release was never published and 1.3.2 carries both the work and the
+fix. Prior snapshot: release v1.3.0 (2026-09-28) - AiderDesk 0.83-0.85
 compatibility: the host floor moved to 0.84 (`/broke diff` via
 `TaskContext.getUpdatedFileDiff`), plus the opt-in per-message `broke: why`
 menu row (0.85) and the `cache.openaiStateless` assertion. Prior snapshot:

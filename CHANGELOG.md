@@ -13,12 +13,49 @@ release.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-09-28
+
+Carries the documentation work of 1.3.1, which was never published. One
+fix, in the gate this release introduced: the documentation checks assumed
+a checkout that carries git tags, and most CI jobs do not.
+
+### Fixed
+
+- **`check:docs` failed in every CI job that does not fetch tags.** The gate
+  read the tag list and compared it against the changelog and the release
+  claims in the prose. In a checkout without tags - the normal state for
+  the coverage, deps-current and UI jobs - every changelog heading looked
+  untagged and every release claim looked fabricated, so four jobs went red
+  and the release never got past its own gate. The coverage thresholds were
+  never the problem; the job reported `pass 633 / fail 2` with both
+  failures in the documentation tests.
+  The tag-dependent checks now skip when there is no tag list and say so,
+  and the repository-level tests skip with the same reason. Only the `test`
+  job and the release workflow set `fetch-tags: true`, and those are the
+  runs that have authority over release claims.
+  Verified end to end in a `git clone --no-tags` checkout: the gate exits 0
+  and the suite reports 21 passed, 2 skipped for the stated reason.
+- Two of the tests that read the repository had the same defect as the bug
+  they were added for, including one that built its "with tags" fixture
+  from the tag list it was trying to prove something about. Both now take
+  their input from the changelog itself, so they verify what they claim
+  wherever they run.
+
 ## [1.3.1] - 2026-09-28
+
+> **This version was never published.** The release workflow's full CI gate
+> failed on 2026-09-28, so no GitHub release was created and the signing job
+> was skipped. The `v1.3.1` tag exists and is protected, so it cannot be
+> moved - like `v1.2.1`, it is now a permanent marker for a release that
+> does not exist. Nothing can install it: the updater resolves releases
+> through `/releases/tags/<tag>`. The cause was a defect in this release's
+> own documentation gate, fixed in 1.3.2, which is the first published
+> release containing the work below.
 
 No behavior change. A documentation truth pass over everything the repo
 claimed, plus the three gates that stop the same drift from coming back,
-and one packaging fix: this is the first release whose tarball contains
-only the extension and its documentation.
+and one packaging fix: this is the first release whose tarball would
+contain only the extension and its documentation.
 
 The pass found that several claims had drifted from the code over two
 releases - an install command that installed into the wrong directory, a
