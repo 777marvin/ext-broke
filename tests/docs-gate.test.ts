@@ -21,10 +21,13 @@ import {
   findChangelogTagErrors,
   findConfigTableErrors,
   findReleaseClaimErrors,
+  isShallowRepo,
   leafPaths,
   repoTags,
   runChecks,
+  tagsAreAuthoritative,
 } from '../scripts/docs-checks';
+import { execFileSync } from 'node:child_process';
 import { DEFAULT_CONFIG } from '../config';
 
 const REPO_ROOT = join(import.meta.dirname, '..');
@@ -145,12 +148,13 @@ test('leafPaths: flattens nested blocks to dotted paths', () => {
 });
 
 test('every changelog release heading is a real tag or a declared pre-tag exception', (t) => {
-  // This assertion needs the real tag list, so it needs a checkout that has
-  // one. It skips otherwise - the same rule the gate follows. The function's
-  // own behaviour is covered below with fixture tags, so nothing is lost
-  // where the checkout is tagless.
+  // This assertion needs a tag list it can trust, which means a repository
+  // that is not shallow - a --depth 1 fetch of a tagged commit carries
+  // exactly one tag and would make every older release look untagged. It
+  // skips otherwise, following the same rule as the gate. The function's own
+  // behaviour is covered below with fixture tags either way.
   const tags = new Set(repoTags());
-  if (tags.size === 0) return t.skip('this checkout has no git tags');
+  if (!tagsAreAuthoritative(tags, REPO_ROOT)) return t.skip('this checkout cannot be trusted about git tags');
   const changelog = readFileSync(join(REPO_ROOT, 'CHANGELOG.md'), 'utf8');
   const headings = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1]);
   assert.ok(headings.length > 10, `expected many releases, found ${headings.length}`);
@@ -178,11 +182,12 @@ test('findChangelogTagErrors: [Unreleased] and link references are not releases'
 });
 
 test('the real repository passes its own gate', (t) => {
-  // A checkout without tags has no authority on release claims, and the gate
-  // skips them there. Skipping mirrors that instead of asserting something
-  // the checkout cannot know - this suite runs in CI jobs with fetch-tags off.
-  if (repoTags().length === 0) {
-    return t.skip('this checkout has no git tags');
+  // A checkout that cannot be trusted about tags has no authority on release
+  // claims, and the gate skips them there. Skipping mirrors that instead of
+  // asserting something the checkout cannot know - this suite runs in CI jobs
+  // that check out with depth 1 and no fetch-tags.
+  if (!tagsAreAuthoritative(new Set(repoTags()), REPO_ROOT)) {
+    return t.skip('this checkout cannot be trusted about git tags');
   }
   const { errors, skipped } = runChecks(REPO_ROOT);
   assert.deepEqual(errors, []);
@@ -208,4 +213,44 @@ test('tag-dependent checks run with tags and are skipped, cleanly, without them'
   assert.deepEqual(withoutTags.errors, [], 'without tags there is nothing to be wrong about');
   assert.equal(withoutTags.skipped.length, 1, 'exactly one skip, reported once');
   assert.match(withoutTags.skipped[0], /no git tags/);
+});
+
+test('tagsAreAuthoritative: a non-empty tag list is still not authority in a shallow repo', () => {
+  // This is the failure CI hit twice. `git fetch --depth 1` of a tagged commit
+  // auto-follows that ONE tag, so `git tag --list` is non-empty and useless:
+  // a gate that only checks "are there tags" asserts against a list that
+  // cannot answer the question. Verified against a real depth-1 clone, which
+  // is why the shallow case is asserted against this repository's own
+  // is-shallow flag rather than a mocked git.
+  const shallow = execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
+  const oneTag = new Set(['v1.0.0']);
+
+  assert.equal(isShallowRepo(REPO_ROOT), shallow === 'true', 'isShallowRepo reports the repository state');
+
+  if (shallow === 'true') {
+    // A shallow checkout: one tag must be refused, an empty one too.
+    assert.equal(tagsAreAuthoritative(oneTag, REPO_ROOT), false, 'one tag in a shallow clone is not authority');
+    assert.equal(tagsAreAuthoritative(new Set(), REPO_ROOT), false, 'no tags is never authority');
+  } else {
+    // The real repository is complete, so a full list is authority and an
+    // empty one is not. A deliberately partial list is NOT detectable as
+    // partial here, which is why shallowness is the signal and not a count.
+    assert.equal(tagsAreAuthoritative(oneTag, REPO_ROOT), true);
+    assert.equal(tagsAreAuthoritative(new Set(), REPO_ROOT), false);
+  }
+});
+
+test('runChecks reports the shallow reason, not a false release error', () => {
+  const changelog = readFileSync(join(REPO_ROOT, 'CHANGELOG.md'), 'utf8');
+  const headings = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => `v${m[1]}`);
+  // One tag, many releases: exactly the CI state that produced 19 bogus
+  // "has no git tag" errors. With a root that is not this repository the
+  // shallow probe is answered by the same rule, so pin the message shape.
+  const result = runChecks(REPO_ROOT, new Set(headings.slice(0, 1)));
+  if (tagsAreAuthoritative(new Set(headings.slice(0, 1)), REPO_ROOT)) {
+    assert.equal(result.skipped.length, 0, 'this checkout is complete, so the partial list is used as given');
+  } else {
+    assert.deepEqual(result.errors.filter((e) => /has no git tag/.test(e)), [], 'no false release error');
+    assert.match(result.skipped[0], /git tags|shallow/);
+  }
 });

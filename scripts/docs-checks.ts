@@ -223,6 +223,38 @@ export function repoTags(): string[] {
     .filter(Boolean);
 }
 
+/**
+ * True when a shallow repository (git rev-parse --is-shallow-repository).
+ *
+ * This is the honest authority signal, and it is not the same as "has no
+ * tags": a `git fetch --depth 1` of a tagged commit brings in exactly ONE
+ * tag, the one pointing at the fetched object. That is what actions/checkout
+ * does in every job without `fetch-tags: true`, and it is why a
+ * `tags.length === 0` guard was not enough - the tag list was neither empty
+ * nor complete, and every older release looked untagged.
+ *
+ * A shallow repository cannot be authoritative about which releases exist,
+ * because by construction it does not have the history the tags hang from.
+ */
+export function isShallowRepo(root = REPO_ROOT): boolean {
+  try {
+    return execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: root, encoding: 'utf8' }).trim() === 'true';
+  } catch {
+    // No git at all, or not a repository: treat as "no authority" rather than
+    // guessing. A missing git must not turn into a release-claim error.
+    return true;
+  }
+}
+
+/**
+ * The tag-dependent checks may only assert when the tag list is trustworthy:
+ * a non-empty list from a repository that is not shallow. Anything else skips
+ * with a reason instead of reporting a release as untagged.
+ */
+export function tagsAreAuthoritative(tags: Set<string>, root = REPO_ROOT): boolean {
+  return tags.size > 0 && !isShallowRepo(root);
+}
+
 export function runChecks(root = REPO_ROOT, tags?: Set<string>): CheckResult {
   const read = (f: string) => readFileSync(join(root, f), 'utf8');
   const errors: string[] = [];
@@ -241,15 +273,21 @@ export function runChecks(root = REPO_ROOT, tags?: Set<string>): CheckResult {
     errors.push('docs/overview.md: no "Snapshot: release vX.Y.Z" header - keep it, the gate reads that line');
   }
 
-  // A checkout without tags is not evidence of a problem - it is the normal
-  // state in every CI job that does not set `fetch-tags: true`. Asserting
-  // release claims against an empty tag list would make this gate fail in
-  // exactly the jobs where it has no authority, so it skips instead and
-  // says so. The `test` job and the release workflow both fetch tags, and
-  // those are the runs that gate a release.
+  // A checkout that cannot be trusted about tags is not evidence of a
+  // problem, it is the normal state in every CI job without
+  // `fetch-tags: true` AND `fetch-depth: 0`. Asserting release claims there
+  // would make this gate fail in exactly the jobs where it has no authority,
+  // so it skips and says so.
+  //
+  // Note the authority test is "not shallow", not "has tags": a --depth 1
+  // fetch of a tagged commit auto-follows that one tag, so the list is
+  // non-empty and still cannot answer the question. The `test` job and the
+  // release workflow use fetch-depth 0 + fetch-tags true, and those are the
+  // runs that gate a release.
   const tagList = tags ?? new Set(repoTags());
-  if (tagList.size === 0) {
-    skipped.push('release claims and changelog tags (this checkout has no git tags; run it with fetch-tags)');
+  if (!tagsAreAuthoritative(tagList, root)) {
+    const why = tagList.size === 0 ? 'this checkout has no git tags' : 'this checkout is shallow, so its tag list is incomplete';
+    skipped.push(`release claims and changelog tags (${why}; run it with fetch-depth: 0 and fetch-tags: true)`);
   } else {
     errors.push(...findChangelogTagErrors(read('CHANGELOG.md'), tagList));
     for (const file of [...new Set(['docs/overview.md', ...VERSION_CHECKED])]) {
