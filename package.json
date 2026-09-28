@@ -48,7 +48,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@aiderdesk/extensions": "^0.32.1",
+    "@aiderdesk/extensions": "^0.35.0",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
