@@ -15,7 +15,8 @@
  *
  * Verified consumed props against @aiderdesk/extensions 0.32.1 and
  * @aiderdesk/extensions 0.33.0 (checked against these hotovo/aider-desk source
- * commits), and re-verified against @aiderdesk/extensions 0.35.0:
+ * commits), and re-verified against @aiderdesk/extensions 0.35.0 and
+ * @aiderdesk/extensions 0.37.0:
  * - 0.32.1: d671c96a5b744d1215b4b9f2938f3bfa171802ea
  * - 0.33.0: ef09179b705eed5acb04b313c9acc5e39e7314f4
  * 0.35.0 was verified against a HOST SOURCE CHECKOUT, AiderDesk v0.85.0 at
@@ -26,6 +27,15 @@
  *   (one global host instead of a Radix provider per instance). Its exported
  *   prop signature - content, children, side, align, delayDuration, maxWidth
  *   - is unchanged, so the shape vendored below still holds.
+ * 0.37.0 was re-verified against a HOST SOURCE CHECKOUT, AiderDesk v0.87.0 at
+ * commit 5bbb13baccc03c247461c5f744901078178e090f (0.37.0 is the SDK that
+ * ships with 0.87, read from the host tree at that tag - not the npm tarball,
+ * whose line trails the host by a release):
+ * - Button, Checkbox, Input and Select are unchanged since the 0.35.0 pass:
+ *   the v0.87 commit only touched CodeBlock, CompactSelect and BaseDialog
+ *   under components/common, none of them consumed here;
+ * - Tooltip is unchanged (content, children, side, align, delayDuration,
+ *   maxWidth).
  * So the shapes below are current: only the version reference was stale.
  * One capability degrades on a 0.84 host: the 'task-message-bar-menu'
  * placement does not exist there (it lands in 0.85), so the opt-in message
@@ -36,6 +46,7 @@
  * These corrections apply to both verified versions. When a real AiderDesk
  * checkout is present, the validator prefers its live repo types.
  * Source: https://github.com/hotovo/aider-desk/tree/ef09179b705eed5acb04b313c9acc5e39e7314f4
+ * Source (0.87 re-check): https://github.com/hotovo/aider-desk/tree/5bbb13baccc03c247461c5f744901078178e090f
  *
  * Re-vendor when bumping the minimum supported AiderDesk version.
  */

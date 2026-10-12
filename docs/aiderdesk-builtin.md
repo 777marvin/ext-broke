@@ -114,13 +114,14 @@ Recommended profile setup for token-heavy agentic work:
   hotovo-aider-desk\src\main\`).
 - `docs/aiderdesk-reference.md` (project notes, gathered 2026-08-07).
 
-## 6. What 0.83 - 0.85 changed for extensions (verified 2026-09-28)
+## 6. What 0.83 - 0.87 changed for extensions (0.83-0.85 verified 2026-09-28, 0.86-0.87 verified 2026-10-12)
 
 ### Unchanged, and it matters
 
-- **`agent/optimizer.ts` is byte-identical between v0.82.0 and v0.85.0.**
+- **`agent/optimizer.ts` is byte-identical between v0.82.0 and v0.85.0, and
+  still byte-identical at v0.87.0 (17,205 bytes).**
   Broke's entire pipeline hangs off `onOptimizeMessages` at this exact point,
-  so the hook did not move across three releases.
+  so the hook did not move across five releases.
 - `UpdatedFile` is still `{ path, additions, deletions }`. 0.84 moved diffs to
   lazy per-file loading, but the file LIST stayed cheap and shape-compatible.
 - `getUpdatedFiles()` still shells out per call (`git ls-files --others
@@ -137,6 +138,10 @@ Recommended profile setup for token-heavy agentic work:
 | 0.85 | `LlmApiProvider` (`llmapi`) | Resolves to no cache economics, like every unknown provider |
 | 0.85 | placement `task-message-bar-menu` | The opt-in per-message `broke: why` row. The host mounts such a component once per FINISHED message, hence `loadData: false`, a user-message filter, and a default-off toggle |
 | 0.85 | `CommandDefinition.execute(args, ctx, images?)` | Attached images are accepted and ignored: they are not text, not a measurable saving, and a data URL has no business in the task log |
+| 0.86 | `onToolsetCreated`, `getProviders`, `smartCompact`, `getEstimatedTokens` | No action: not consumed - broke hooks `onOptimizeMessages`/`onAfterCommit` and reads `TaskContext` directly |
+| 0.87 | `Tool.description`/`Tool.inputSchema` forwarded into the `allTools` record passed to an extension tool's `execute` | No action: `broke-search` already declares a description and a zod `inputSchema`, so it stays valid - the host now surfaces both to the Programmatic Tool Calls sandbox (`searchTools`/`describeTool`), which makes `broke-search` discoverable there |
+| 0.87 | `BeforeCommitEvent.skipGitHooks?`, `api.commitChanges(..., skipGitHooks, ...)` | No action: broke listens to `onAfterCommit` and reads `event.message`; it never calls `api.commitChanges` |
+| 0.87 | `ModeDefinition.icon` now names a full react-icons component incl. pack prefix | No action: broke registers no modes |
 
 ### Version-floor evidence, and a trap
 
@@ -145,6 +150,8 @@ Recommended profile setup for token-heavy agentic work:
 | v0.83.0 | 0.32.1 | no | no |
 | v0.84.0 | 0.33.0 | **yes** | **no** (0.33.0 lacks it) |
 | v0.85.0 | 0.35.0 | yes | yes (first in 0.34.0) |
+| v0.86.0 | 0.36.0 | yes | yes |
+| v0.87.0 | 0.37.0 | yes | yes |
 
 The published SDK and the host source disagree: npm's 0.33.0 does not
 contain a method the v0.84.0 source already has. **Prove an API's runtime

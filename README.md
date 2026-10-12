@@ -128,6 +128,12 @@ Windows). Without it the CLI installs into `.aider-desk/extensions` of the
 folder you happened to be standing in. It downloads the extension and
 installs its dependency automatically.
 
+The CLI runs a full `npm install` in the extension folder, so it also pulls
+broke's development toolchain (test runner, coverage, typecheck). That is why
+the install prints a few hundred packages, an npm deprecation notice, and
+possibly an `npm audit` advisory: none of it is loaded at runtime - broke's
+only runtime dependency is `zod`.
+
 **Manual install:**
 
 ```bash

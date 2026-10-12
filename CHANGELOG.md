@@ -13,6 +13,29 @@ release.
 
 ## [Unreleased]
 
+### Changed
+
+- Re-verified the vendored host UI contract (`scripts/host-ui-contract.d.ts`)
+  and the per-version SDK table (`docs/aiderdesk-builtin.md`) against AiderDesk
+  v0.87.0 (SDK 0.37.0). No consumed prop or hook shape changed - the v0.87
+  Extension API additions (tool `description`/`inputSchema` forwarding,
+  `skipGitHooks`, mode icons) are additive and `broke` already satisfies or
+  ignores them - so only the version reference was stale. The `deps-current`
+  CI job (typecheck + tests against `@aiderdesk/extensions@latest`) is green
+  again.
+
+### Fixed
+
+- **The dependency-audit CI job was red on a dev-only advisory.**
+  `brace-expansion` 5.0.9, reached through `c8` -> `test-exclude` ->
+  `minimatch`, carries two high-severity DoS advisories, so
+  `npm audit --audit-level=high` failed the `audit` job. An `overrides` entry
+  now pins `brace-expansion` to `>=5.0.12`. It is a devDependency chain, so no
+  runtime code changes; the extension's only runtime dependency is still
+  `zod`. This is also the `1 high severity vulnerability` the extension
+  installer reports - the CLI runs a full `npm install`, devDependencies
+  included (see README).
+
 ## [1.3.3] - 2026-09-28
 
 The first published release that carries the documentation work of 1.3.1
