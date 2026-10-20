@@ -171,11 +171,12 @@ real-session numbers.
   `npm run validate:ui` (JSX UI components, syntax + prop types; vendored
   AiderDesk validator script)
 - Conventions: Conventional Commits, Keep a Changelog, SemVer + annotated tags
-- Compatibility: the declared API line is `@aiderdesk/extensions` ^0.35.0
-  (see package.json; the AiderDesk 0.85 SDK); CI runs typecheck + tests
-  against both the lockfile and `@latest` so API drift is caught on every
-  push. Host floor: AiderDesk >= 0.84, since `/broke diff` reads
-  `TaskContext.getUpdatedFileDiff`, which the host added in 0.84
+- Compatibility: the declared API line is `@aiderdesk/extensions` ^0.38.0
+  (see package.json; the SDK that ships with AiderDesk 0.88); CI runs
+  typecheck + tests against both the lockfile and `@latest` so API drift is
+  caught on every push. Host floor: AiderDesk >= 0.88, the release that
+  dispatches the message-preparation hooks broke relies on
+  (`onTransformMessages`, `onOptimizeMessages`, `onApplyCacheControl`)
   (`docs/aiderdesk-builtin.md` carries the per-version SDK table)
 - Deploy / update: installed instances update themselves via `/broke
   update` (installs the latest tagged release from GitHub; `update check`
@@ -184,7 +185,7 @@ real-session numbers.
   `~/.aider-desk/extensions/broke/` stays the bootstrap for fresh machines
   and the dev loop for uncommitted changes (`/broke update` refuses git
   checkouts by design)
-- Runtime deps: AiderDesk >= 0.84, Node >= 22 (see `engines` in
+- Runtime deps: AiderDesk >= 0.88, Node >= 22 (see `engines` in
   package.json), `zod`; Ollama for `summarize via local`
 
 ## Docs

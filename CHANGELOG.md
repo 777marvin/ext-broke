@@ -15,6 +15,17 @@ release.
 
 ### Changed
 
+- **Adopted `@aiderdesk/extensions` 0.38.0 and raised the minimum supported
+  AiderDesk host to 0.88.** The 0.88 message-preparation pipeline breaks
+  `onOptimizeMessages` semantics (`event.originalMessages` is now the
+  transformation stage's output, not raw stored context) and adds the
+  `onTransformMessages` and `onApplyCacheControl` hooks, which `broke` now
+  uses for the pre-transform baseline and the frozen-prefix cache breakpoint.
+  The vendored host UI contract (`scripts/host-ui-contract.d.ts`) and the
+  per-version SDK table (`docs/aiderdesk-builtin.md`) were re-verified against
+  the installed v0.88 bundle; no consumed UI prop shape moved.
+  **Heads-up: a host on 0.84-0.87 can no longer update to this version** - it
+  does not dispatch those hooks.
 - Re-verified the vendored host UI contract (`scripts/host-ui-contract.d.ts`)
   and the per-version SDK table (`docs/aiderdesk-builtin.md`) against AiderDesk
   v0.87.0 (SDK 0.37.0). No consumed prop or hook shape changed - the v0.87
