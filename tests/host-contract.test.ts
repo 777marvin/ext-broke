@@ -20,7 +20,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionContext } from '@aiderdesk/extensions';
 import type { Config } from '../config';
-import { snapshotTaskDir } from '../snapshot';
+// NOTE: snapshot (and everything it reaches: paths/tokens/config) is imported
+// LAZILY in before(), never statically. A hoisted `import ... from '../snapshot'`
+// would load those modules BEFORE the process.env overrides below and freeze
+// their module-level path constants (MEASURE_PATH, CONFIG_PATH, ...) to the
+// default runtime dir - the env isolation this file's header promises.
 
 const tmp = mkdtempSync(join(tmpdir(), 'broke-contract-'));
 process.env.BROKE_CONFIG_PATH = join(tmp, 'config.json');
@@ -35,12 +39,16 @@ let DEFAULT_CONFIG: (typeof import('../config'))['DEFAULT_CONFIG'];
 let saveConfig: (typeof import('../config'))['saveConfig'];
 let parseBrokeCommand: (typeof import('../commands'))['parseBrokeCommand'];
 let MAX_DIFF_FILES_READ: (typeof import('../diff'))['MAX_DIFF_FILES_READ'];
+let loadRunRecords: (typeof import('../tokens'))['loadRunRecords'];
+let snapshotTaskDir: (typeof import('../snapshot'))['snapshotTaskDir'];
 
 before(async () => {
   ({ default: Broke } = await import('../index'));
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
   ({ parseBrokeCommand } = await import('../commands'));
   ({ MAX_DIFF_FILES_READ } = await import('../diff'));
+  ({ loadRunRecords } = await import('../tokens'));
+  ({ snapshotTaskDir } = await import('../snapshot'));
 });
 
 after(() => {
@@ -502,6 +510,73 @@ describe('host contract: /broke diff (TaskContext.getUpdatedFileDiff, AiderDesk 
 
     const out = await runDiff(context, task, ['diff', '600']);
     assert.match(out, /not shown/i, 'a tight budget names what it left out');
+  });
+});
+
+/**
+ * AiderDesk 0.88 message-preparation semantics (breaking). `onOptimizeMessages`
+ * now receives the TRANSFORMATION stage's output as `originalMessages`, not the
+ * raw stored context: the host's default `transformMessages` rewrites an old
+ * `subagents---run_task` result into its final text and strips `responses`/
+ * `promptContext` from `aider---run_prompt` results BEFORE broke runs. These
+ * tests pin that broke is agnostic to the difference - it must still compress
+ * the payload and still price the run from the trailing message's real usage.
+ */
+describe('host contract: 0.88 message-preparation semantics', () => {
+  /** The trailing message carries the provider's real usage; earlier tool results do not. */
+  function transformedConversation(): unknown[] {
+    return [
+      { id: 'u0', role: 'user', content: 'run the subagent' },
+      { id: 'a1', role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'subagents---run_task', input: { subagentId: 'x' } }] },
+      {
+        id: 't1',
+        role: 'tool',
+        // Post-transform shape: the whole subagent message array was replaced
+        // by its last text - a plain `text` result, no `value.messages`.
+        content: [{ type: 'tool-result', toolCallId: 'tc1', toolName: 'subagents---run_task', output: { type: 'text', value: Array.from({ length: 900 }, (_, i) => `subagent line ${i}: done`).join('\n') } }],
+      },
+      { id: 'u1', role: 'user', content: 'second turn' },
+      { id: 'a2', role: 'assistant', content: 'work'.padEnd(400, '.') },
+      { id: 'u2', role: 'user', content: 'third turn' },
+      { id: 'a3', role: 'assistant', content: 'more'.padEnd(400, '.') },
+      { id: 'u3', role: 'user', content: 'fourth turn - keep this visible', usageReport: { sentTokens: 1234, cacheWriteTokens: 400, cacheReadTokens: 56 } },
+    ];
+  }
+
+  it('compresses the transformation output without caring that originalMessages is post-transform', async () => {
+    writeConfig();
+    const ext = new Broke();
+    const { context } = makeHost('mp-transform');
+    (ext as unknown as { context: ExtensionContext }).context = context;
+
+    const messages = transformedConversation();
+    const out = await ext.onOptimizeMessages({ originalMessages: messages, optimizedMessages: messages } as never, context);
+    assert.ok(out && typeof out === 'object' && 'optimizedMessages' in (out as object), 'compression result returned');
+    const compressed = (out as { optimizedMessages: unknown[] }).optimizedMessages;
+    assert.ok(JSON.stringify(compressed).length < JSON.stringify(messages).length, 'payload shrank');
+    const t1 = compressed.find((m) => (m as { id?: string }).id === 't1') as { content: Array<{ output?: { value?: string } }> };
+    assert.ok(t1.content[0].output?.value?.includes('[broke: truncated'), 'post-transform tool output is truncated like any other');
+  });
+
+  it("prices the run from the trailing message's usage, not from earlier tool results", async () => {
+    writeConfig();
+    const ext = new Broke();
+    const { context } = makeHost('mp-usage');
+    (ext as unknown as { context: ExtensionContext }).context = context;
+
+    const messages = transformedConversation();
+    await ext.onOptimizeMessages({ originalMessages: messages, optimizedMessages: messages } as never, context);
+
+    const recs = loadRunRecords().filter((r) => r.taskId === 'mp-usage');
+    assert.equal(recs.length, 1, 'exactly one run record for this task');
+    const rec = recs[0] as {
+      lastSentTokens?: number;
+      lastCacheWriteTokens?: number;
+      lastCacheReadTokens?: number;
+    };
+    assert.equal(rec.lastSentTokens, 1234, 'usage read from the trailing message');
+    assert.equal(rec.lastCacheWriteTokens, 400);
+    assert.equal(rec.lastCacheReadTokens, 56);
   });
 });
 
