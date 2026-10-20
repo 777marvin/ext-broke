@@ -20,10 +20,14 @@ release.
   `onApplyCacheControl` hook places ONE `cache_control` marker on the last
   byte-stable (already-sent) message, instead of letting the host mark the
   moving tail - so a changed tail no longer invalidates the cached prefix.
-  The anchor index is captured in `onOptimizeMessages` before that run is
-  marked as sent. Merges into any existing `providerOptions` and never
-  replaces them. Runs that anchor set `anchored: true` on their
-  `measure.jsonl` record and log one line; no savings figure is claimed.
+  `onOptimizeMessages` captures that message before the run is marked as sent,
+  together with a content fingerprint; the apply hook re-locates it by that
+  fingerprint, because the host rebuilds the array in between
+  (`convertImageToolResults` inserts a user message after an image tool
+  result, shifting every later index). Merges into any existing
+  `providerOptions` and never replaces them. Runs that anchor set
+  `anchored: true` and the `anchorIndex` on their `measure.jsonl` record and
+  log one line; no savings figure is claimed.
 - **Pre-transform baseline in the measurement ledger.** The 0.88
   `onTransformMessages` hook records the pre-transform context size as
   `baselineChars` on the run record, so "what the host pipeline removed before
@@ -54,6 +58,21 @@ release.
 
 ### Fixed
 
+- **The frozen-prefix anchor is re-located by content, not by a stale index.**
+  The host rebuilds the message array between `onOptimizeMessages` and
+  `onApplyCacheControl` (`convertImageToolResults` inserts a user message after
+  an image tool result), so a position captured in the optimize stage can point
+  at the wrong message by the time the marker is placed. The anchor is captured
+  as a content fingerprint and re-located in the apply hook - the exact index
+  when it still matches, else the last message with that fingerprint, else no
+  marker at all.
+- **A captured anchor is dropped when the optimize run throws.** Compression is
+  best effort and the host keeps going to `onApplyCacheControl` with the
+  untouched array; without this, a stale anchor from an earlier run could mark a
+  message that was never sent.
+- **`anchorBreakpoint` merges one level deeper.** A sibling inside a provider's
+  `cacheControl` object (e.g. Anthropic's `ttl`) set by the host or another
+  extension is now preserved instead of being overwritten.
 - **The dependency-audit CI job was red on a dev-only advisory.**
   `brace-expansion` 5.0.9, reached through `c8` -> `test-exclude` ->
   `minimatch`, carries two high-severity DoS advisories, so

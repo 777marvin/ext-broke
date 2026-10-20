@@ -28,6 +28,15 @@ byte-stable, so the provider's prompt cache keeps hitting between calls:
   Escape operations are transactional: if output validation fails, changes revert
   cleanly without locking the hatch or dropping cache state.
   With the hatch off, sent bytes are never rewritten - even over budget.
+- The **anchor breakpoint** (`cache.anchorBreakpoint`, default **off**, opt-in,
+  Anthropic only) moves the single `cache_control` marker the host sends. The
+  host marks the LAST message by default - a moving target, so any change to
+  the tail invalidates the whole cached prefix. Broke instead marks the last
+  message it has already sent (its frozen prefix), so the provider caches the
+  byte-stable history and a changing tail no longer busts it. The marker is
+  MERGED into whatever `providerOptions` the host or another extension already
+  set, never replaced. It needs the `anthropic` profile and is a no-op when
+  nothing has been sent yet.
 
 Two honesty notes on the detection, both about not pricing something that
 cannot happen:
