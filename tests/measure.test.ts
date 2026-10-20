@@ -271,6 +271,17 @@ describe('cache-friendly run records (task 6)', () => {
     assert.equal(r.escaped, undefined);
     assert.equal(r.lastCacheWriteTokens, undefined);
     assert.equal(r.lastSentTokens, undefined);
+    assert.equal(r.anchored, undefined, '0.88 anchor flag stays absent when not anchored');
+    assert.equal(r.baselineChars, undefined, '0.88 pre-transform baseline stays absent when unobserved');
+  });
+
+  it('carries the 0.88 anchor flag and pre-transform baseline when provided', () => {
+    const r = buildRunRecord('t', report(), undefined, true, 42000);
+    assert.equal(r.anchored, true);
+    assert.equal(r.baselineChars, 42000);
+    // Baseline is a PRE-transform observation, so it is never smaller than the
+    // post-transform input broke actually saw.
+    assert.ok(r.baselineChars > r.charsBefore);
   });
 
   it('lastCallUsage walks backwards to the newest provider usage report', () => {

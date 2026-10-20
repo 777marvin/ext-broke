@@ -12,6 +12,7 @@ import type {
   ToolCalledEvent,
   ToolDefinition,
   ToolFinishedEvent,
+  TransformMessagesEvent,
   UIComponentDefinition,
 } from '@aiderdesk/extensions';
 import { applyBrokeCommand, coerceConfigValue, formatEstimate, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand, type BrokeCommand } from './commands';
@@ -250,6 +251,12 @@ export default class Broke implements Extension {
    */
   private readonly anchorIndexByTask = new Map<string, number>();
   /**
+   * Pre-transform context size per task, observed at `onTransformMessages`
+   * (0.88, observation only). Consumed and cleared by recordReport so it can
+   * never leak from one run into a later record. Bounded like the rest.
+   */
+  private readonly baselineCharsByTask = new Map<string, number>();
+  /**
    * Reentry guard (per task): the cloud summarizer calls task.generateText,
    * and that call can fire onOptimizeMessages again on the same extension
    * instance. Without the guard the summarizer's own input would be
@@ -380,6 +387,28 @@ export default class Broke implements Extension {
   // threshold), which is what makes the input compression "permanent": every
   // input the model sees is already compressed.
   // -------------------------------------------------------------------------
+  /**
+   * Contract wrapper (AiderDesk 0.88 `onTransformMessages`): pure OBSERVATION.
+   * Captures the pre-transform context size as the run's baseline - the honest
+   * split between "what the host pipeline removed" and "what broke removed".
+   * Never rewrites: returns undefined, always.
+   */
+  async onTransformMessages(event: TransformMessagesEvent, context: ExtensionContext): Promise<void | Partial<TransformMessagesEvent>> {
+    try {
+      const task = context.getTaskContext();
+      if (!task) return undefined;
+      const taskId = task.data.id;
+      // Reentry: the cloud summarizer's generateText re-enters this pipeline;
+      // never observe (or later record) via its prompt.
+      if (this.optimizingTasks.has(taskId)) return undefined;
+      if (!getConfig().enabled) return undefined;
+      boundedMapSet(this.baselineCharsByTask, taskId, messagesChars(event.originalMessages));
+    } catch {
+      // Observation only - never let it reach the host model call.
+    }
+    return undefined;
+  }
+
   /**
    * Contract wrapper (review R13): NOTHING in broke may break the host's
    * model call - including a throwing getTaskContext or any other host
@@ -966,6 +995,11 @@ export default class Broke implements Extension {
   }
 
   private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null, lastUsage?: LastCallUsage, anchored = false): void {
+    // The pre-transform baseline observed by onTransformMessages for THIS run.
+    // Consumed (cleared) FIRST, so a no-op run cannot leak a stale value into
+    // the next recorded run.
+    const baselineChars = this.baselineCharsByTask.get(taskId);
+    this.baselineCharsByTask.delete(taskId);
     // No-op runs (nothing compressed, nothing attempted) are not compression
     // runs: counting them inflates `passes` and appends a stats line on
     // EVERY model call.
@@ -1024,7 +1058,7 @@ export default class Broke implements Extension {
     // Per-run measurement ledger (NOT throttled - one record per real run is
     // the point). Rotation-capped like stats.jsonl, config-gated, best effort.
     if (getConfig().stats.measure) {
-      persistRunRecord(buildRunRecord(taskId, report, lastUsage, anchored));
+      persistRunRecord(buildRunRecord(taskId, report, lastUsage, anchored, baselineChars));
     }
 
     const savedChars = report.structuralChars + report.errorChars + report.truncateChars + report.summarizeChars;

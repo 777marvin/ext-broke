@@ -24,6 +24,11 @@ release.
   marked as sent. Merges into any existing `providerOptions` and never
   replaces them. Runs that anchor set `anchored: true` on their
   `measure.jsonl` record and log one line; no savings figure is claimed.
+- **Pre-transform baseline in the measurement ledger.** The 0.88
+  `onTransformMessages` hook records the pre-transform context size as
+  `baselineChars` on the run record, so "what the host pipeline removed before
+  broke saw the payload" stays distinguishable from "what broke removed". The
+  hook is pure observation - it never rewrites the messages.
 
 ### Changed
 

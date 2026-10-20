@@ -40,6 +40,7 @@ let saveConfig: (typeof import('../config'))['saveConfig'];
 let parseBrokeCommand: (typeof import('../commands'))['parseBrokeCommand'];
 let MAX_DIFF_FILES_READ: (typeof import('../diff'))['MAX_DIFF_FILES_READ'];
 let loadRunRecords: (typeof import('../tokens'))['loadRunRecords'];
+let messagesChars: (typeof import('../tokens'))['messagesChars'];
 let snapshotTaskDir: (typeof import('../snapshot'))['snapshotTaskDir'];
 
 before(async () => {
@@ -47,7 +48,7 @@ before(async () => {
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
   ({ parseBrokeCommand } = await import('../commands'));
   ({ MAX_DIFF_FILES_READ } = await import('../diff'));
-  ({ loadRunRecords } = await import('../tokens'));
+  ({ loadRunRecords, messagesChars } = await import('../tokens'));
   ({ snapshotTaskDir } = await import('../snapshot'));
 });
 
@@ -577,6 +578,30 @@ describe('host contract: 0.88 message-preparation semantics', () => {
     assert.equal(rec.lastSentTokens, 1234, 'usage read from the trailing message');
     assert.equal(rec.lastCacheWriteTokens, 400);
     assert.equal(rec.lastCacheReadTokens, 56);
+  });
+
+  it('observes the pre-transform baseline via onTransformMessages and never rewrites', async () => {
+    writeConfig();
+    const ext = new Broke();
+    const { context } = makeHost('mp-baseline');
+    (ext as unknown as { context: ExtensionContext }).context = context;
+
+    // The pre-transform context (raw stored context + reminders). It is LARGER
+    // than what broke sees, because the host pipeline strips it down first.
+    const preTransform = transformedConversation();
+    const ret = await ext.onTransformMessages(
+      { originalMessages: preTransform, transformedMessages: preTransform.slice() } as never,
+      context,
+    );
+    assert.equal(ret, undefined, 'observation only - the hook never rewrites');
+
+    // The pipeline then optimizes what broke actually receives.
+    const optimizationInput = transformedConversation();
+    await ext.onOptimizeMessages({ originalMessages: optimizationInput, optimizedMessages: optimizationInput } as never, context);
+
+    const recs = loadRunRecords().filter((r) => r.taskId === 'mp-baseline');
+    assert.equal(recs.length, 1, 'one run record');
+    assert.equal(recs[0].baselineChars, messagesChars(preTransform as never), 'baseline equals the pre-transform size');
   });
 });
 
