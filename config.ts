@@ -251,6 +251,14 @@ const CacheSchema = z.object({
    * the user intervenes.
    */
   escapeHatch: z.boolean().default(true),
+  /**
+   * AiderDesk 0.88 `onApplyCacheControl`: place ONE Anthropic `cache_control`
+   * breakpoint at the LAST byte-stable (already-sent) message, so the provider
+   * caches broke's frozen prefix instead of the host default's moving tail.
+   * Only acts when the resolved cache profile is 'anthropic'; off by default
+   * like every behavior-changing pass. No effect on other providers.
+   */
+  anchorBreakpoint: z.boolean().default(false),
 });
 const cacheDefault = CacheSchema.parse({});
 

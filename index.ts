@@ -2,6 +2,7 @@ import { readFileSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type {
   AfterCommitEvent,
+  ApplyCacheControlEvent,
   CommandDefinition,
   ContextMessage,
   Extension,
@@ -29,7 +30,8 @@ import {
   type SummarizeDeps,
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, resolveCacheProfile, saveConfig, type Config } from './config';
-import { clearTask, isSent, markSent } from './cache';
+import { clearTask, frozenPrefixLength, isSent, markSent } from './cache';
+import { ANTHROPIC_BREAKPOINT, anchorBreakpoint } from './cachecontrol';
 import { DEFAULT_DIFF_BUDGET_CHARS, MAX_DIFF_FILES_READ, formatDiffDigest, type DiffFileInput } from './diff';
 import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
@@ -238,6 +240,16 @@ export default class Broke implements Extension {
    */
   private readonly lastObservation = new Map<string, { at: number; inputChars: number }>();
   /**
+   * Cache-breakpoint anchor per task (AiderDesk 0.88 `onApplyCacheControl`).
+   * Holds the index of the last ALREADY-SENT message (the byte-stable prefix)
+   * captured in `onOptimizeMessages` BEFORE that run's output is marked as
+   * sent. It has to be captured there: by the time `onApplyCacheControl` runs,
+   * `markSent` has already recorded the whole output, so a live `isSent` scan
+   * would return the full length and anchor at the moving tail (the host
+   * default). Consumed (and cleared) once per model call by the anchor hook.
+   */
+  private readonly anchorIndexByTask = new Map<string, number>();
+  /**
    * Reentry guard (per task): the cloud summarizer calls task.generateText,
    * and that call can fire onOptimizeMessages again on the same extension
    * instance. Without the guard the summarizer's own input would be
@@ -386,6 +398,52 @@ export default class Broke implements Extension {
     }
   }
 
+  /**
+   * Contract wrapper (AiderDesk 0.88 `onApplyCacheControl`): nothing in broke
+   * may break the host's model call. Runs LAST in the message-preparation
+   * pipeline, after the host's own cache annotation, so broke MERGES into -
+   * never replaces - any marker already present.
+   */
+  async onApplyCacheControl(event: ApplyCacheControlEvent, context: ExtensionContext): Promise<Partial<ApplyCacheControlEvent> | void> {
+    try {
+      return await this.applyAnchor(event, context);
+    } catch (err) {
+      try {
+        context.log(`Broke: cache breakpoint failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+      } catch {
+        // even logging may fail on a hostile surface - swallow
+      }
+      return undefined;
+    }
+  }
+
+  /**
+   * Place ONE Anthropic prompt-cache breakpoint at the last byte-stable
+   * (already-sent) message, captured in `onOptimizeMessages`. Opt-in, Anthropic
+   * only, and a no-op during the cloud summarizer's own generateText (reentry
+   * guard). Returns undefined (no rewrite) whenever it cannot act, so the host
+   * keeps its own annotation untouched.
+   */
+  private async applyAnchor(event: ApplyCacheControlEvent, context: ExtensionContext): Promise<Partial<ApplyCacheControlEvent> | void> {
+    const task = context.getTaskContext();
+    if (!task) return;
+    const taskId = task.data.id;
+    // Reentry: the cloud summarizer's generateText re-enters this pipeline;
+    // never touch its prompt (mirrors the onOptimizeMessages guard).
+    if (this.optimizingTasks.has(taskId)) return;
+    const config = getConfig();
+    if (!config.enabled || !config.cache.anchorBreakpoint) return;
+    const profile = resolveCacheProfile(config, { provider: task.data.provider, model: task.data.model ?? task.data.mainModel });
+    if (profile !== 'anthropic') return;
+    // Consume the captured anchor: one model call, one anchor.
+    const anchorIndex = this.anchorIndexByTask.get(taskId);
+    this.anchorIndexByTask.delete(taskId);
+    const messages = event.messages;
+    if (anchorIndex === undefined || anchorIndex < 0 || !Array.isArray(messages) || anchorIndex >= messages.length) return;
+    context.log(`broke: anchored the prompt-cache breakpoint at message ${anchorIndex + 1}/${messages.length} (frozen prefix)`);
+    return { messages: anchorBreakpoint(messages, anchorIndex, ANTHROPIC_BREAKPOINT) };
+  }
+
   private async optimizeMessages(event: OptimizeMessagesEvent, context: ExtensionContext): Promise<Partial<OptimizeMessagesEvent> | void> {
     const task = context.getTaskContext();
     if (!task) return;
@@ -426,6 +484,24 @@ export default class Broke implements Extension {
         summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
         cache: cacheOpts,
       });
+      // 0.88 cache-breakpoint anchor: capture the last ALREADY-SENT message
+      // (the byte-stable prefix) BEFORE this run's output is marked, so
+      // `onApplyCacheControl` can place the provider breakpoint there instead
+      // of on the moving tail. Only meaningful (and computed) when the feature
+      // is on and the profile is Anthropic; otherwise any stale entry is
+      // dropped so a later toggle cannot anchor on an old index.
+      let anchored = false;
+      if (profile === 'anthropic' && config.cache.anchorBreakpoint) {
+        const prefix = frozenPrefixLength(taskId, messages);
+        if (prefix > 0) {
+          boundedMapSet(this.anchorIndexByTask, taskId, prefix - 1);
+          anchored = true;
+        } else {
+          this.anchorIndexByTask.delete(taskId);
+        }
+      } else {
+        this.anchorIndexByTask.delete(taskId);
+      }
       // Record what THIS run is about to send so the next run can keep these
       // bytes stable. Marking happens for the unchanged path too - identity
       // output is exactly the prefix the next run must preserve.
@@ -436,7 +512,7 @@ export default class Broke implements Extension {
       // Provider-reported usage of the last completed call: real cache
       // write/read tokens flow into the measure ledger (task 6) instead of a
       // chars/4 guess.
-      this.recordReport(taskId, report, price, lastCallUsage(event.originalMessages));
+      this.recordReport(taskId, report, price, lastCallUsage(event.originalMessages), anchored);
       // Observe every real pipeline run - touched or not. No-op runs are
       // still facts the UI needs: they are how a zero badge explains itself.
       boundedMapSet(this.lastObservation, taskId, { at: Date.now(), inputChars: report.totalCharsBefore });
@@ -889,7 +965,7 @@ export default class Broke implements Extension {
     }
   }
 
-  private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null, lastUsage?: LastCallUsage): void {
+  private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null, lastUsage?: LastCallUsage, anchored = false): void {
     // No-op runs (nothing compressed, nothing attempted) are not compression
     // runs: counting them inflates `passes` and appends a stats line on
     // EVERY model call.
@@ -948,7 +1024,7 @@ export default class Broke implements Extension {
     // Per-run measurement ledger (NOT throttled - one record per real run is
     // the point). Rotation-capped like stats.jsonl, config-gated, best effort.
     if (getConfig().stats.measure) {
-      persistRunRecord(buildRunRecord(taskId, report, lastUsage));
+      persistRunRecord(buildRunRecord(taskId, report, lastUsage, anchored));
     }
 
     const savedChars = report.structuralChars + report.errorChars + report.truncateChars + report.summarizeChars;

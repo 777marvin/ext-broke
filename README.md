@@ -383,6 +383,7 @@ The per-pass rules, gates and failure handling are in
 | protectedTurns | 2 | last N user turns never compressed |
 | cache.profile | `off` | off / auto / anthropic / openai - keep the provider prompt cache hitting (see Cache-friendly mode) |
 | cache.escapeHatch | on | one deliberate cache-invalidating rewrite on real budget overruns |
+| cache.anchorBreakpoint | off | (Anthropic only, profile `anthropic`) place the prompt-cache breakpoint at broke's frozen prefix instead of the moving tail, so the provider caches the byte-stable history |
 | cache.openaiStateless | off | the OpenAI provider runs stateless (Zero Data Retention, `store: false`) - switches OFF the OpenAI cached-input economics, which cannot apply to a request that stores nothing |
 | truncate.maxLines / maxKB | 200 / 20 | old tool output limits |
 | truncate.maxInputChars | 2000 | tool-call input trim threshold |

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach } from 'node:test';
-import { clearTask, isSent, markSent, ledgerStats } from '../cache';
+import { clearTask, isSent, markSent, ledgerStats, frozenPrefixLength } from '../cache';
 import type { ContextMessage } from '@aiderdesk/extensions';
 
 /**
@@ -127,5 +127,25 @@ describe('sent-ledger bounds and hygiene', () => {
     // Messages without a usable id fall back to serialization matching.
     markSent('t1', [{ role: 'assistant', content: 'no id here' } as never]);
     assert.equal(isSent('t1', { role: 'assistant', content: 'no id here' } as never), true);
+  });
+});
+
+describe('frozenPrefixLength (cache-breakpoint anchor)', () => {
+  it('counts the leading run of sent messages and stops at the first unsent', () => {
+    clearTask('fp');
+    markSent('fp', [msg('a', 'one'), msg('b', 'two')]);
+    // d was sent in a LATER window but sits after the never-sent c, so the
+    // leading run still ends at b - the anchor must be a contiguous prefix.
+    markSent('fp', [msg('d', 'four')]);
+    const messages = [msg('a', 'one'), msg('b', 'two'), msg('c', 'three'), msg('d', 'four')];
+    assert.equal(frozenPrefixLength('fp', messages), 2);
+  });
+
+  it('returns 0 for a task with no ledger (and for a never-sent first message)', () => {
+    clearTask('fp-none');
+    assert.equal(frozenPrefixLength('fp-none', [msg('a', 'one'), msg('b', 'two')]), 0);
+    clearTask('fp-second');
+    markSent('fp-second', [msg('b', 'two')]);
+    assert.equal(frozenPrefixLength('fp-second', [msg('a', 'one'), msg('b', 'two')]), 0);
   });
 });

@@ -114,3 +114,25 @@ export function ledgerStats(taskId: string): { tracked: boolean; entries: number
   const ledger = ledgers.get(taskId);
   return { tracked: ledger !== undefined, entries: ledger ? ledger.size : 0 };
 }
+
+/**
+ * Length of the leading run of messages whose exact bytes are already in the
+ * sent-ledger - the byte-stable prefix. It is the correct place to anchor a
+ * provider cache breakpoint: everything before it is immutable across runs,
+ * so the provider's prefix cache keeps hitting there even when the moving
+ * tail (active window) changes. 0 when the first message was never sent (or
+ * the task has no ledger), which callers read as "no anchor".
+ *
+ * The scan is contiguous on purpose: a breakpoint only caches the prefix UP TO
+ * it, so a later sent message behind a never-sent one buys nothing and must
+ * not extend the anchor.
+ */
+export function frozenPrefixLength(taskId: string, messages: readonly ContextMessage[]): number {
+  if (!taskId || !Array.isArray(messages)) return 0;
+  let n = 0;
+  for (const message of messages) {
+    if (!message || typeof message !== 'object' || !isSent(taskId, message)) break;
+    n += 1;
+  }
+  return n;
+}

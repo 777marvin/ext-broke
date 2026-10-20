@@ -46,7 +46,7 @@ describe('badge overlay UI actions (task 7)', () => {
     const cfg = (await ext.executeUIExtensionAction('broke-status', 'getConfig', [], makeHost())) as Record<string, unknown>;
     assert.ok(cfg && typeof cfg === 'object');
     assert.equal(cfg.enabled, DEFAULT_CONFIG.enabled);
-    assert.deepEqual(cfg.cache, { profile: 'off', escapeHatch: true, openaiStateless: false });
+    assert.deepEqual(cfg.cache, { profile: 'off', escapeHatch: true, openaiStateless: false, anchorBreakpoint: false });
   });
 
   it('setConfig persists a valid config and returns ok + the parsed result', async () => {

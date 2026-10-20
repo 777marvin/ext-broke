@@ -192,6 +192,13 @@
             onChange={(checked) => updateConfig({ ...config, cache: { ...cacheCfg, escapeHatch: checked } })}
           />
         </Tooltip>
+        <Tooltip content="Anthropic only (profile Anthropic). Places the prompt-cache breakpoint at broke's frozen prefix - the last message already sent to the model - instead of letting the host mark the moving tail. The provider then caches the byte-stable history, so a changed tail does not invalidate the cached prefix. Requires AiderDesk 0.88+. No effect on other providers.">
+          <Checkbox
+            label="Anchor the cache breakpoint at the frozen prefix (Anthropic)"
+            checked={cacheCfg.anchorBreakpoint ?? false}
+            onChange={(checked) => updateConfig({ ...config, cache: { ...cacheCfg, anchorBreakpoint: checked } })}
+          />
+        </Tooltip>
         <Tooltip content="For OpenAI organizations with Zero Data Retention, where requests run stateless (store: false) and nothing is stored server-side. OpenAI's cached-input price then cannot apply, so the OpenAI cache rules are switched off instead of being priced optimistically. Only used when the profile is Auto - an explicit profile always wins. broke cannot read this setting from AiderDesk, so it has to be set here.">
           <Checkbox
             label="OpenAI runs stateless (Zero Data Retention)"

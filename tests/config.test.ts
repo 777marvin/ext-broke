@@ -169,6 +169,12 @@ describe('applyConfigUpdates', () => {
     assert.equal(before.cache.profile, previous, 'original cache object not mutated');
     assert.equal(updated.cache.profile, 'anthropic');
   });
+
+  it('CONF-002: cache.anchorBreakpoint defaults off and round-trips', () => {
+    assert.equal(mergeConfig({}).cache.anchorBreakpoint, false, 'the 0.88 anchor toggle is opt-in');
+    const updated = applyConfigUpdates(mergeConfig({}), [['cache.anchorBreakpoint', true]]);
+    assert.equal(updated.cache.anchorBreakpoint, true);
+  });
 });
 
 describe('updateConfigPaths', () => {

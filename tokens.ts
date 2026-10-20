@@ -373,6 +373,12 @@ export interface RunRecord {
   cacheProfile?: 'anthropic' | 'openai' | 'off';
   /** True when this run was an escape-hatch rewrite (deliberate cache invalidation). */
   escaped?: boolean;
+  /**
+   * True when this run placed the provider cache breakpoint at broke's frozen
+   * prefix (AiderDesk 0.88 `onApplyCacheControl`, opt-in). Observation only -
+   * never a savings claim. Absent (not false) on every other run/old record.
+   */
+  anchored?: boolean;
   /** Provider-reported usage of the most recent completed call BEFORE this run. Optional: pre-task-6 records lack them. */
   lastSentTokens?: number;
   lastCacheWriteTokens?: number;
@@ -381,7 +387,7 @@ export interface RunRecord {
 }
 
 /** Map a compression report to its measurement record (pure). */
-export function buildRunRecord(taskId: string, report: CompressReport, lastUsage?: LastCallUsage): RunRecord {
+export function buildRunRecord(taskId: string, report: CompressReport, lastUsage?: LastCallUsage, anchored = false): RunRecord {
   const rec: RunRecord = {
     kind: 'run',
     taskId,
@@ -402,6 +408,7 @@ export function buildRunRecord(taskId: string, report: CompressReport, lastUsage
   // and 'off'-profile runs keep their exact historical shape.
   if (report.cacheProfile) rec.cacheProfile = report.cacheProfile;
   if (report.escaped) rec.escaped = true;
+  if (anchored) rec.anchored = true;
   if (lastUsage) {
     rec.lastSentTokens = lastUsage.sentTokens;
     if (lastUsage.cacheWriteTokens !== undefined) rec.lastCacheWriteTokens = lastUsage.cacheWriteTokens;

@@ -13,6 +13,18 @@ release.
 
 ## [Unreleased]
 
+### Added
+
+- **`cache.anchorBreakpoint` (opt-in, Anthropic only): anchor the prompt-cache
+  breakpoint at broke's frozen prefix.** The new AiderDesk 0.88
+  `onApplyCacheControl` hook places ONE `cache_control` marker on the last
+  byte-stable (already-sent) message, instead of letting the host mark the
+  moving tail - so a changed tail no longer invalidates the cached prefix.
+  The anchor index is captured in `onOptimizeMessages` before that run is
+  marked as sent. Merges into any existing `providerOptions` and never
+  replaces them. Runs that anchor set `anchored: true` on their
+  `measure.jsonl` record and log one line; no savings figure is claimed.
+
 ### Changed
 
 - **Adopted `@aiderdesk/extensions` 0.38.0 and raised the minimum supported
