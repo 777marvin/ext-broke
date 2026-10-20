@@ -33,8 +33,9 @@ pipeline, compression applies to the input of each model call only. Since
 1.2.0 the optional cache-friendly mode keeps already-sent bytes byte-stable
 so the provider's prompt cache keeps hitting (sent-ledger, escape hatch
 with hysteresis, provider-reported cache tokens in the measure ledger).
-Since 1.3.0 it targets AiderDesk 0.84 and newer and adds `/broke diff`
-(a budgeted digest of the uncommitted changes) to the command surface.
+It targets AiderDesk 0.88 and newer (the message-preparation hooks) and adds
+`/broke diff` (a budgeted digest of the uncommitted changes) to the command
+surface.
 
 | Level | What happens | Loss |
 |---|---|

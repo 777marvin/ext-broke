@@ -64,6 +64,16 @@ describe('cachecontrol: anchorBreakpoint (pure)', () => {
     });
   });
 
+  it('merges one nested level, so siblings inside cacheControl survive', () => {
+    const out = anchorBreakpoint(
+      [msg('a', 'a'), msg('b', 'b', { anthropic: { cacheControl: { type: 'ephemeral', ttl: '1h' } } })],
+      1,
+      ANTHROPIC_BREAKPOINT,
+    );
+    const target = out[1] as { providerOptions?: Record<string, Record<string, unknown>> };
+    assert.deepEqual(target.providerOptions, { anthropic: { cacheControl: { type: 'ephemeral', ttl: '1h' } } });
+  });
+
   it('is a no-op for an out-of-range or negative anchor (returns the input unchanged)', () => {
     const input = [msg('a', 'a'), msg('b', 'b')];
     assert.equal(anchorBreakpoint(input, -1, ANTHROPIC_BREAKPOINT), input);
@@ -167,6 +177,49 @@ describe('onApplyCacheControl: prefix anchor (opt-in, Anthropic only)', () => {
     });
   });
 
+  it('relocates the anchor by content when the host shifted the array (convertImageToolResults)', async () => {
+    cfg();
+    const ext = new Broke();
+    const context = host('cc-shift');
+    (ext as unknown as { context: ExtensionContext }).context = context;
+
+    // Anchor captured at index 2 (m2 'gamma') by the two-optimize run.
+    await primeAnExtend(ext, context);
+    // The host's convertImageToolResults INSERTS a user message after an image
+    // tool result - everything after it shifts by one, so a raw index would
+    // now point at the inserted, never-sent message.
+    const shifted = [
+      msg('m0', 'alpha'),
+      msg('m1', 'beta'),
+      { id: 'img', role: 'user', content: [{ type: 'file', data: { type: 'data', data: 'x' }, mediaType: 'image/png' }] },
+      msg('m2', 'gamma'),
+      msg('m3', 'delta'),
+      msg('m4', 'epsilon'),
+    ] as unknown as ContextMessage[];
+
+    const out = (await ext.onApplyCacheControl({ originalMessages: shifted, messages: shifted } as ApplyCacheControlEvent, context)) as
+      | { messages: ContextMessage[] }
+      | undefined;
+    assert.ok(out && Array.isArray(out.messages));
+    assert.deepEqual((out.messages[3] as { providerOptions?: unknown }).providerOptions, ANTHROPIC_BREAKPOINT, 'marker follows m2 to index 3');
+    assert.equal((out.messages[2] as { providerOptions?: unknown }).providerOptions, undefined, 'the inserted image message is not marked');
+  });
+
+  it('places no marker when the array no longer contains the anchor content', async () => {
+    cfg();
+    const ext = new Broke();
+    const context = host('cc-absent');
+    (ext as unknown as { context: ExtensionContext }).context = context;
+
+    await primeAnExtend(ext, context);
+    const other = [msg('x0', 'zzz'), msg('x1', 'yyy')];
+    assert.equal(
+      await ext.onApplyCacheControl({ originalMessages: other, messages: other } as ApplyCacheControlEvent, context),
+      undefined,
+      'a different array must never be marked',
+    );
+  });
+
   it('does nothing when the profile is not anthropic, the toggle is off, or no prefix was sent', async () => {
     // Profile 'off'.
     cfg({ cache: { profile: 'off', escapeHatch: true, openaiStateless: false, anchorBreakpoint: true } });
@@ -249,6 +302,8 @@ describe('onApplyCacheControl: prefix anchor (opt-in, Anthropic only)', () => {
     const recs = loadRunRecords().filter((r) => r.taskId === 'cc-record');
     assert.ok(recs.length >= 2, 'both runs recorded');
     assert.equal(recs[0].anchored, undefined, 'run 1 sent nothing before -> not anchored');
+    assert.equal(recs[0].anchorIndex, undefined, 'run 1 carries no anchor index');
     assert.equal(recs[recs.length - 1].anchored, true, 'run 2 anchored at the frozen prefix');
+    assert.equal(typeof recs[recs.length - 1].anchorIndex, 'number', 'the anchor index is recorded for audit');
   });
 });

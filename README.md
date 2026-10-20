@@ -193,10 +193,12 @@ active by default, every lever is documented under [Usage](#usage) and
 
 ## Requirements
 
-- AiderDesk ≥ 0.84, Node.js ≥ 22. 0.84 is the floor because `/broke diff`
-  reads the uncommitted changes through `TaskContext.getUpdatedFileDiff`,
-  which the host added in 0.84; on an older host that one command reports
-  what it needs and everything else in broke keeps working. From 0.80 on,
+- AiderDesk ≥ 0.88, Node.js ≥ 22. 0.88 is the floor because broke hooks the message-preparation pipeline
+  (`onTransformMessages`, `onOptimizeMessages`, `onApplyCacheControl`), which
+  the host added in 0.88; a 0.84-0.87 host does not dispatch those hooks and
+  cannot run this version. broke also reads the uncommitted changes through
+  `TaskContext.getUpdatedFileDiff` (host 0.84+), now implied by the higher
+  floor. From 0.80 on,
   broke also registers its config watcher via `context.addDisposable()`, so
   disabling or uninstalling the extension releases its directory handle
   automatically.

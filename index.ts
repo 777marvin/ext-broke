@@ -31,7 +31,7 @@ import {
   type SummarizeDeps,
 } from './compress';
 import { ConfigSchema, CONFIG_PATH, getConfig, getConfigWarning, invalidateConfigCache, resolveCacheProfile, saveConfig, type Config } from './config';
-import { clearTask, frozenPrefixLength, isSent, markSent } from './cache';
+import { clearTask, frozenPrefixLength, isSent, markSent, messageFingerprint } from './cache';
 import { ANTHROPIC_BREAKPOINT, anchorBreakpoint } from './cachecontrol';
 import { DEFAULT_DIFF_BUDGET_CHARS, MAX_DIFF_FILES_READ, formatDiffDigest, type DiffFileInput } from './diff';
 import { migrateLegacyRuntimeData } from './paths';
@@ -209,6 +209,23 @@ function scanBiggestCommandResultChars(messages: ReadonlyArray<{ role?: unknown;
   return biggest;
 }
 
+/**
+ * Re-locate a captured cache-breakpoint anchor in the array the host passes to
+ * `onApplyCacheControl`. The host REBUILDS that array between the two hooks
+ * (`convertImageToolResults` inserts a user message after any image tool
+ * result, shifting every later index), so the stored index can be stale: fall
+ * back to the LAST message whose content fingerprint matches, and give up
+ * (-1) when nothing matches - a different array entirely must never be marked.
+ */
+function resolveAnchorIndex(messages: ContextMessage[], capture: { index: number; fingerprint: string }): number {
+  const at = messages[capture.index] as ContextMessage | undefined;
+  if (at && messageFingerprint(at) === capture.fingerprint) return capture.index;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messageFingerprint(messages[i] as ContextMessage) === capture.fingerprint) return i;
+  }
+  return -1;
+}
+
 export default class Broke implements Extension {
   static metadata = {
     name: 'Broke',
@@ -249,7 +266,20 @@ export default class Broke implements Extension {
    * would return the full length and anchor at the moving tail (the host
    * default). Consumed (and cleared) once per model call by the anchor hook.
    */
-  private readonly anchorIndexByTask = new Map<string, number>();
+  /**
+   * Cache-breakpoint anchor per task (AiderDesk 0.88 `onApplyCacheControl`):
+   * the INDEX of the last ALREADY-SENT message (the byte-stable prefix) plus
+   * its content FINGERPRINT, captured in `onOptimizeMessages` BEFORE that run
+   * is marked as sent. It has to be captured there: by the time
+   * `onApplyCacheControl` runs, `markSent` has already recorded the whole
+   * output, so a live `isSent` scan would return the full length and anchor at
+   * the moving tail (the host default). The fingerprint exists because the
+   * HOST rebuilds the array between the two hooks (`convertImageToolResults`
+   * inserts a user message after an image tool result), which shifts indices -
+   * the hook re-locates the message by content instead. Consumed (and cleared)
+   * once per model call by the anchor hook.
+   */
+  private readonly anchorIndexByTask = new Map<string, { index: number; fingerprint: string }>();
   /**
    * Pre-transform context size per task, observed at `onTransformMessages`
    * (0.88, observation only). Consumed and cleared by recordReport so it can
@@ -465,12 +495,14 @@ export default class Broke implements Extension {
     const profile = resolveCacheProfile(config, { provider: task.data.provider, model: task.data.model ?? task.data.mainModel });
     if (profile !== 'anthropic') return;
     // Consume the captured anchor: one model call, one anchor.
-    const anchorIndex = this.anchorIndexByTask.get(taskId);
+    const capture = this.anchorIndexByTask.get(taskId);
     this.anchorIndexByTask.delete(taskId);
     const messages = event.messages;
-    if (anchorIndex === undefined || anchorIndex < 0 || !Array.isArray(messages) || anchorIndex >= messages.length) return;
-    context.log(`broke: anchored the prompt-cache breakpoint at message ${anchorIndex + 1}/${messages.length} (frozen prefix)`);
-    return { messages: anchorBreakpoint(messages, anchorIndex, ANTHROPIC_BREAKPOINT) };
+    if (!capture || !Array.isArray(messages)) return;
+    const index = resolveAnchorIndex(messages, capture);
+    if (index < 0) return;
+    context.log(`broke: anchored the prompt-cache breakpoint at message ${index + 1}/${messages.length} (frozen prefix)`);
+    return { messages: anchorBreakpoint(messages, index, ANTHROPIC_BREAKPOINT) };
   }
 
   private async optimizeMessages(event: OptimizeMessagesEvent, context: ExtensionContext): Promise<Partial<OptimizeMessagesEvent> | void> {
@@ -520,10 +552,15 @@ export default class Broke implements Extension {
       // is on and the profile is Anthropic; otherwise any stale entry is
       // dropped so a later toggle cannot anchor on an old index.
       let anchored = false;
+      let anchorIndex = -1;
       if (profile === 'anthropic' && config.cache.anchorBreakpoint) {
         const prefix = frozenPrefixLength(taskId, messages);
         if (prefix > 0) {
-          boundedMapSet(this.anchorIndexByTask, taskId, prefix - 1);
+          anchorIndex = prefix - 1;
+          boundedMapSet(this.anchorIndexByTask, taskId, {
+            index: anchorIndex,
+            fingerprint: messageFingerprint(messages[anchorIndex]),
+          });
           anchored = true;
         } else {
           this.anchorIndexByTask.delete(taskId);
@@ -541,7 +578,7 @@ export default class Broke implements Extension {
       // Provider-reported usage of the last completed call: real cache
       // write/read tokens flow into the measure ledger (task 6) instead of a
       // chars/4 guess.
-      this.recordReport(taskId, report, price, lastCallUsage(event.originalMessages), anchored);
+      this.recordReport(taskId, report, price, lastCallUsage(event.originalMessages), anchored, anchored ? anchorIndex : undefined);
       // Observe every real pipeline run - touched or not. No-op runs are
       // still facts the UI needs: they are how a zero badge explains itself.
       boundedMapSet(this.lastObservation, taskId, { at: Date.now(), inputChars: report.totalCharsBefore });
@@ -552,7 +589,11 @@ export default class Broke implements Extension {
         return { optimizedMessages: messages };
       }
     } catch (err) {
-      // Never break the model call - compression is best effort.
+      // Never break the model call - compression is best effort. Drop any
+      // anchor captured by an EARLIER run too: this run failed, so the host
+      // will still reach onApplyCacheControl with the untouched array, and a
+      // stale anchor must not mark a message of a different run.
+      this.anchorIndexByTask.delete(taskId);
       context.log(`Broke: compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
     } finally {
       this.optimizingTasks.delete(taskId);
@@ -994,7 +1035,7 @@ export default class Broke implements Extension {
     }
   }
 
-  private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null, lastUsage?: LastCallUsage, anchored = false): void {
+  private recordReport(taskId: string, report: CompressReport, price: TaskModelPrice | null, lastUsage?: LastCallUsage, anchored = false, anchorIndex?: number): void {
     // The pre-transform baseline observed by onTransformMessages for THIS run.
     // Consumed (cleared) FIRST, so a no-op run cannot leak a stale value into
     // the next recorded run.
@@ -1058,7 +1099,7 @@ export default class Broke implements Extension {
     // Per-run measurement ledger (NOT throttled - one record per real run is
     // the point). Rotation-capped like stats.jsonl, config-gated, best effort.
     if (getConfig().stats.measure) {
-      persistRunRecord(buildRunRecord(taskId, report, lastUsage, anchored, baselineChars));
+      persistRunRecord(buildRunRecord(taskId, report, lastUsage, anchored, baselineChars, anchorIndex));
     }
 
     const savedChars = report.structuralChars + report.errorChars + report.truncateChars + report.summarizeChars;

@@ -178,7 +178,10 @@ availability from the host source at the floor tag, not from the npm
 tarball** - the tarball only bounds the compile surface. This is why broke's
 floor is **0.88** (the release that dispatches the message-preparation hooks)
 while it compiles against 0.38.0. The old 0.84 floor, justified by
-`getUpdatedFileDiff`, is now implied by the higher one.
+`getUpdatedFileDiff`, is now implied by the higher one. (The 0.88 row's
+`getUpdatedFileDiff` cells read `yes` only because that column is kept for
+continuity - the real evidence for the 0.88 floor is the message-preparation
+dispatches above, read from the installed v0.88 bundle.)
 
 ### Host behaviour worth knowing
 

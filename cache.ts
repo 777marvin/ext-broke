@@ -59,6 +59,18 @@ function hashOf(serialized: string): string {
   return createHash('sha256').update(serialized).digest('hex');
 }
 
+/**
+ * Content fingerprint of a message: the ledger's matching key (role + content +
+ * toolCallId). Exported so callers that must re-locate a message across an
+ * array the HOST rebuilt (e.g. `convertImageToolResults` inserts a user message
+ * after an image tool result and shifts every later index) can match by
+ * content instead of by a now-stale position. Never throws.
+ */
+export function messageFingerprint(msg: ContextMessage): string {
+  if (!msg || typeof msg !== 'object') return '';
+  return hashOf(serialize(msg));
+}
+
 /** Track messages contained in an optimize-run OUTPUT as "already sent". */
 export function markSent(taskId: string, messages: readonly ContextMessage[]): void {
   if (!taskId || !Array.isArray(messages)) return;

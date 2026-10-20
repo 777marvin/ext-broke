@@ -379,6 +379,8 @@ export interface RunRecord {
    * never a savings claim. Absent (not false) on every other run/old record.
    */
   anchored?: boolean;
+  /** Index of the message that carried the breakpoint, when `anchored` is true (0.88). */
+  anchorIndex?: number;
   /**
    * Size (chars) of the PRE-TRANSFORM context observed at
    * `onTransformMessages` for this run (AiderDesk 0.88). Observation only: the
@@ -394,7 +396,7 @@ export interface RunRecord {
 }
 
 /** Map a compression report to its measurement record (pure). */
-export function buildRunRecord(taskId: string, report: CompressReport, lastUsage?: LastCallUsage, anchored = false, baselineChars?: number): RunRecord {
+export function buildRunRecord(taskId: string, report: CompressReport, lastUsage?: LastCallUsage, anchored = false, baselineChars?: number, anchorIndex?: number): RunRecord {
   const rec: RunRecord = {
     kind: 'run',
     taskId,
@@ -416,6 +418,7 @@ export function buildRunRecord(taskId: string, report: CompressReport, lastUsage
   if (report.cacheProfile) rec.cacheProfile = report.cacheProfile;
   if (report.escaped) rec.escaped = true;
   if (anchored) rec.anchored = true;
+  if (anchorIndex !== undefined) rec.anchorIndex = anchorIndex;
   if (baselineChars !== undefined) rec.baselineChars = baselineChars;
   if (lastUsage) {
     rec.lastSentTokens = lastUsage.sentTokens;

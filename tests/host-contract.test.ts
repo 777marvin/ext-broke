@@ -603,5 +603,38 @@ describe('host contract: 0.88 message-preparation semantics', () => {
     assert.equal(recs.length, 1, 'one run record');
     assert.equal(recs[0].baselineChars, messagesChars(preTransform as never), 'baseline equals the pre-transform size');
   });
+
+  it('onTransformMessages is inert under the reentry guard, when disabled, and on a hostile/absent task', async () => {
+    writeConfig();
+    const ext = new Broke();
+    const { context } = makeHost('mp-transform-guard');
+    (ext as unknown as { context: ExtensionContext }).context = context;
+    const event = { originalMessages: transformedConversation(), transformedMessages: [] };
+
+    // Reentry: the cloud summarizer's own generateText re-enters the pipeline.
+    (ext as unknown as { optimizingTasks: Set<string> }).optimizingTasks.add('mp-transform-guard');
+    assert.equal(await ext.onTransformMessages(event as never, context), undefined, 'guarded -> undefined');
+    (ext as unknown as { optimizingTasks: Set<string> }).optimizingTasks.delete('mp-transform-guard');
+
+    // Disabled pipeline.
+    writeConfig({ enabled: false });
+    assert.equal(await ext.onTransformMessages(event as never, context), undefined, 'disabled -> undefined');
+    writeConfig();
+
+    // Hostile task surface (getTaskContext throws) and a degenerate event.
+    const { context: hostile } = makeHost('mp-transform-hostile', { failGetTaskContext: new Error('boom') });
+    await assert.doesNotReject(ext.onTransformMessages(event as never, hostile));
+    await assert.doesNotReject(
+      ext.onTransformMessages({ originalMessages: [] } as never, context),
+    );
+    assert.equal(await ext.onTransformMessages({ originalMessages: [] } as never, context), undefined, 'missing transformedMessages is tolerated');
+  });
+});
+
+describe('host contract: runtime path isolation (env-before-import)', () => {
+  it('resolves its ledger path under the temp dir, not the developer runtime dir', async () => {
+    const { MEASURE_PATH } = await import('../tokens');
+    assert.ok(MEASURE_PATH.startsWith(tmp), `measure ledger path must be isolated under the temp dir, got: ${MEASURE_PATH}`);
+  });
 });
 
