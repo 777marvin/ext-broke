@@ -1,6 +1,6 @@
 # Tuning: what to use when
 
-broke ships sane defaults - most users never touch anything. This page is
+broke ships defaults intended for ordinary tasks. This page is
 the map for everyone who *does* want to tune: which lever helps in which
 situation, what each setting change actually buys you, and how autonomous
 agent runs differ from interactive sessions. For the raw command list see
@@ -8,10 +8,10 @@ the [README](../README.md#usage), for the internals
 [docs/overview.md](overview.md), for every setting and its default the
 [configuration table](../README.md#configuration).
 
-One principle first: **saved characters are billed again on every later
-model call.** Removing 10k chars at minute five of a long session removes
-them from dozens of subsequent requests - which is why almost every tune
-pays nearly nothing on short tasks and compounds massively on long ones.
+One principle first: fewer recurring input characters can mean fewer
+submitted tokens on later model calls. Actual billing depends on provider
+tokenization and cache rates, so the effect cannot be inferred from a
+character count alone.
 
 ## Which level for which job
 
@@ -20,23 +20,24 @@ The three levels are strictly additive; `truncate` includes `structural`,
 
 | You are doing | Recommended setup | Why |
 |---|---|---|
-| Short chats and quick fixes (input stays < ~60k chars) | Leave defaults | The lossy passes only engage above `maxContextChars` anyway; structural cleanup and the error pass stay active regardless |
+| Short chats and quick fixes (input stays < ~60k chars) | Leave defaults | Truncation and summarization wait for `maxContextChars`; qualifying old error output can be compressed sooner |
 | Debug-heavy work: compiler/test loops | `errors on` (default); raise `errors lines` to 12-15 if summaries feel starved | Error dumps get replaced by their diagnostic essence *even below the global threshold* (`errors.minChars` is its own gate) |
-| Medium sessions that cross the threshold regularly | `level truncate` + `measure on`; lower `maxContextChars` to ~45000 | Truncation of old tool outputs is the highest-value lossy pass - detail loss matters least there |
-| Long or milestone-heavy tasks | `level summarize` with the **local** Ollama summarizer; snapshots come free via `snapshot.onCommit` | The reference benchmark removes ~90% of the input at this level, with near-zero recurring cost since the summarizer runs locally |
+| Medium sessions that cross the threshold regularly | `level truncate` + `measure on`; consider a lower `maxContextChars` after reviewing results | Truncation shortens old tool outputs but can remove details needed later |
+| Long or milestone-heavy tasks | Consider `level summarize` with local Ollama; inspect the summary before relying on it | A synthetic benchmark with a stub summary removed ~90% of its input; local latency and quality vary |
 | Very long scrollback you want slimmed for good | Snapshot first, then `/broke flush` between milestones | Flush is the one destructive operation - manual, confirmed, and reversible through the history file |
 | Read-heavy agents exploring a big codebase | `/broke slice on`, clear the focus afterwards | Interface views instead of full bodies; the focus file (last edited) always comes back complete |
 | Finding where something lives without filling the context | Leave `search.enabled` on (default); combine with `/broke slice on` | The agent gets a `broke-search` tool and can pull path:line snippets under a char budget instead of bulk-reading files; sliced views keep the reads it still makes cheap |
 
-Rule of thumb for the summarizer backend: a **cloud** summarizer trades one
-extra request for the old region on every later call that re-sends it. It
+Rule of thumb for the summarizer backend: a **cloud** summarizer can make
+one or more extra requests to summarize an old region. The replacement is
+then available on later calls that re-send it. It
 pays off when that region is large and re-sent often, and loses when the
 task is short or the region small. The crossover moves with the
 summarizer's price, the summary length and the number of following calls,
 so there is no fixed number worth quoting here - the honest way to decide
-is to read the summarizer's own cost in `/broke stats` next to the
-measured gross saving. The default `local` has no such trade-off at all: it
-is free, just slower (~20-60 s per regeneration).
+is to compare provider billing with the estimated gross reduction in
+`/broke stats`. The default local route avoids a cloud summarizer charge
+but still uses local compute and adds latency that depends on the hardware.
 
 ## Settings and their effect on task length
 
@@ -46,21 +47,21 @@ Shorthand used below: **SHORT** = the conversation never crosses
 
 | Setting (default) | Effect on SHORT tasks | Effect on MEDIUM sessions | Effect on LONG tasks |
 |---|---|---|---|
-| `maxContextChars` (60000) | Raising/lowering changes nothing until the session crosses the line | Lowering engages the lossy passes sooner - usually the best single tune | Most sensitive lever here: set too high, broke stays passive while the bill grows; set too low, summaries churn constantly |
-| `protectedTurns` (2) | Nearly no effect (few user turns exist) | Moderate: each extra turn shields recent context but shrinks the compressible region | The classic over-tune mistake: protecting 8-10 turns on a long session can eat most of the savings - keep it low |
-| `truncate.maxLines` / `maxKB` (200 / 20) | Only relevant if old, huge outputs already exist | Primary dial for how much old output detail survives truncation | Every char kept here is re-billed on every later call - tighten before loosening |
+| `maxContextChars` (60000) | Changes when truncation/summarization become eligible | Lowering engages these passes sooner | Too high may leave large inputs untouched; too low may trigger frequent lossy passes |
+| `protectedTurns` (2) | Limited effect with few user turns | Each extra turn shields recent context but shrinks the compressible region | Choose it according to how much recent detail the task needs |
+| `truncate.maxLines` / `maxKB` (200 / 20) | Only relevant if old, huge outputs already exist | Controls how much old output detail survives truncation | More retained text can increase later input; caching changes its billing effect |
 | `truncate.maxInputChars` (2000) | Rarely relevant | Trims oversized tool-call inputs (long writes/greps) | Same compounding logic as above |
 | `errors.minChars` (8000) | **Works below the global gate**: a giant test log in a small chat gets compressed regardless | Good balance at 8000; go to ~5000 if your logs are routinely noisy | Low values start rewriting borderline outputs - watch for over-compression, not cost |
 | `errors.contextLines` (8) | Detail-per-failure tradeoff, tiny cost either way | Raise toward 12-15 if error summaries lose needed context | Pure quality knob; cost impact is negligible next to truncation |
-| `errors.toolLevel` (off) | Off: nothing touches stored history | On: tool results are rewritten *at the source* - savings become permanent instead of per-call | On also means irreversible rewrites plus archived copies (`errors.archive`) eating disk - default off is deliberate |
+| `errors.toolLevel` (off) | Off: this hook does not rewrite stored history | On: matching tool results are rewritten in stored history | Rewrites are irreversible; full outputs are archived only when `errors.archive` is also on |
 | `slice.enabled` (off) | Files under `minChars` (4000) pass through untouched; likely dormant | Pays off as soon as an agent reads multiple large files | Interface views shrink every subsequent call that still carries those reads - and the rewrite of stored results is irreversible; disable slicing later does not restore them |
 | `slice.focusAuto` (on) | - | Keeps the file just edited intact automatically | If reads return sliced views *you* did not want, check `/broke slice status` - explicit focus beats surprises |
-| `summarize.via` (local) | Nothing to summarize yet | Local adds seconds of latency per regeneration; cloud adds provider tokens | Local wins outright at scale: constant quality/cost ratio; cloud with `cloudModelId` = a cheap model only, never the task's frontier model |
+| `summarize.via` (local) | Nothing to summarize yet | Local adds hardware-dependent latency; cloud adds provider tokens | Compare summary quality, latency and billing for your workload before choosing a backend |
 | `summarize.afterTurns` (8) | Irrelevant until summarizing starts | Shields recent steps from summarization | Over-raising starves the summarizer on turn-poor sessions - note regions with zero user turns (autonomous loops) exempt themselves anyway |
-| `summarize.minChars` (8000) | Gate never met | Fine where it is | Do not lower much: a summary call costs one extra request, small regions never amortize it |
-| `snapshot.onCommit` (on) | Cheap, harmless | Free milestone trail after each commit | Summary-only by default (privacy review F-01): raw undo files are opt-in via `snapshot.keepHistory`. The destructive flush keeps its undo file via `flush.undo` (on) |
+| `summarize.minChars` (8000) | Gate usually not met | Controls the minimum old region size | Lower values can trigger extra summary work for small regions; compare quality and costs |
+| `snapshot.onCommit` (on) | Writes a local record after commits | May be useful for long tasks; inspect privacy implications | Summary-only by default (privacy review F-01): raw undo files are opt-in via `snapshot.keepHistory`. Flush keeps an undo file when `flush.undo` is on |
 | `snapshot.onTestPass` (off) | - | False positives on flaky suites made this opt-in | Enable only if your test runner prints a clean `passed`/exit-0 pattern reliably |
-| `stats.measure` (on) | Negligible overhead, records every compression run | These ledger records are your provable numbers (`/broke measure`) | Keep it on; 5 MB rotation bounds the file |
+| `stats.measure` (on) | Records per-run character counts | `/broke measure` summarizes observed input reductions | The 5 MB rotation bounds each ledger generation; records are not provider bills |
 | `search.enabled` (on) | Dormant cost only: the registered tool ships its JSON schema with every model call even if never used - `/broke search off` drops that for agents that never search | First real payoff: snippets replace whole-file reads when locating code | Compounds: smaller read results flow into every later call; commits trigger a throttled refresh, queries serve the snapshot within a 60s freshness window and re-scan after it (BRK-013 TTL) |
 | `search.maxChars` (6000) / `contextLines` (6) | Irrelevant while dormant | Tighten toward 4000 chars if result sets feel bloated | Lower budgets buy extra headroom below `maxContextChars`; snippets land there once, then get compressed like any other tool output |
 | `search.scanBudgetMs` (2000) | Irrelevant | Only matters if a result footer says the index is TRUNCATED | Raise it (max 60000) on a very large monorepo so the first full index finishes; a lower value keeps commit-time refreshes snappy at the cost of more refresh passes |
@@ -88,10 +89,10 @@ A practical playbook:
   code at all - locating definitions via budgeted snippets is exactly what
   keeps an autonomous loop's context from ballooning early. Decide
   consciously whether to enable `snapshot.onTestPass` - commit-based
-  snapshots alone are usually enough. Never wire `flush` into the loop itself.
-- **During:** let it run. Compression happens inside every model call;
-  expect the badge to stay at an honest zero until the input crosses
-  `maxContextChars`, then move. Do not run `/broke flush` while an agent
+  snapshots alone may be enough. Keep `flush` as an explicit between-turn action.
+- **During:** compression is considered on model calls. The badge can stay
+  at zero below `maxContextChars`, although qualifying error output can be
+  compressed earlier. Do not run `/broke flush` while an agent
   step is executing - it is designed to run between turns only.
 - **After:** `/broke stats` gives the per-pass breakdown,
   `/broke measure` the real-run ledger, `/broke snapshot list` the milestone
