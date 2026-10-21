@@ -1,20 +1,15 @@
 # Context Features: Design & Specs
 
-Design document and implementation specs for the `feat:` increments
-of the Broke extension. Every fact about the AiderDesk extension API in this
-document was verified against the authoritative builtin `extension-creator`
-skill (`%APPDATA%\aider-desk\Cache\extensions\hotovo-aider-desk\resources\skills\`,
-files `event-types.md` and `extension-interface.md`) and
-`docs/aiderdesk-reference.md`. Both sources are the maintainer's local
-install and private meta repo, neither is part of this repository, so the
-paths here are a record of where the verification came from rather than
-links you can follow. The host API surface this document depends on is
-re-stamped and version-pinned in
-[docs/aiderdesk-builtin.md](aiderdesk-builtin.md), which IS public.
+This is a historical design record for F1-F5 plus proposed later work.
+Its design sections, sample schemas and original target versions are not a
+current API reference. Use [README configuration](../README.md#configuration),
+`config.ts` and the current code for shipped behavior. Earlier checks used
+the maintainer's local AiderDesk installation and private project notes;
+those inputs are not reproducible from this repository. The dated, public
+host-version notes are in [aiderdesk-builtin.md](aiderdesk-builtin.md).
 
-Status: **As built**. F1-F5 are shipped; the per-feature "Implementation
-notes" blocks record the as-built decisions, and spike outcomes S1-S4 are
-recorded in the shared spike list below.
+F1-F5 shipped, but the sections below mix original proposals with later
+implementation notes. Spike outcomes S1-S4 are recorded below.
 
 ## Roadmap
 
@@ -23,7 +18,7 @@ recorded in the shared spike list below.
 | F1 | Active Log & Stack-Trace Compressor | 0.2.0 | S | shipped |
 | F2 | ST-Slicing (Semantic Context Thinning) | 0.7.0 | M | shipped |
 | F3 | State Snapshotting & Memory Flushing | 0.9.0 | M | shipped |
-| F4 | Local Keyword/Vector Index with snippet summaries | 0.10.0 | L | shipped |
+| F4 | Local keyword index with snippets (vector tier proposed) | 0.10.0 | L | keyword tier shipped |
 
 **Version reality check (2026-09-28):** F1 shipped in 0.2.0, F2 in
 v0.7.0, F3 in v0.9.0 (snapshots/, snapshot.ts module, config blocks,
@@ -33,8 +28,8 @@ F4 in v0.10.0 and F5 in v1.2.1 - a version whose release run failed, so F5
 first shipped in v1.2.2. Note that 0.2.0 carries no `v0.2.0` tag:
 the releases from 0.1.0 to 0.2.1 predate the tag-and-sign release process,
 were never published as GitHub releases, and are therefore not installable
-via `/broke update`. From v0.3.0 on, every version in the CHANGELOG has a
-tag and a published release. Whether F5 got a live AiderDesk smoke
+via `/broke update`. Most later versions have a tag and a published release;
+v1.2.1 is the documented exception. Whether F5 got a live AiderDesk smoke
 verification before its release is not recorded anywhere in this repo, so
 it is not claimed here.
 The original plan assigned F2 -> 0.3.0, F3 -> 0.4.0 and
@@ -60,7 +55,7 @@ idea-level, unscheduled candidates recorded
 | # | Candidate | Type | Effort | Status |
 |---|-----------|------|--------|--------|
 | F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (since v1.2.2) |
-| F6 | Live-UI expansion: provable + estimated savings, colored activity dot | feat | M | proposed |
+| F6 | Live-UI expansion: observed input reduction and estimates, activity dot | feat | M | proposed |
 | F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | proposed |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
 | F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
@@ -107,9 +102,9 @@ idea-level, unscheduled candidates recorded
   | truncate.maxLines | 200 | 200 | 120 |
   | truncate.maxKB | 20 | 20 | 12 |
   | summarize.afterTurns | 8 | 8 | 4 |
-- **F6 - Live-UI expansion.** Show saved money twice: proven
-  (measure-ledger backed) and estimated (chars/4-based, labeled) - the
-  estimated value in addition to the proven one. Animated status dot with
+- **F6 - Live-UI expansion.** Separate observed conversation-character
+  reduction, provider-reported usage and modeled monetary estimates. A
+  measurement ledger does not prove a billed saving. Animated status dot with
   color semantics: green = broke on and active, blue = benchmark/measure
   run, purple = summarizer currently running, yellow = error / needs
   attention, red = broke off.
@@ -117,12 +112,11 @@ idea-level, unscheduled candidates recorded
   essentials for non-power users (sane presets, one toggle, honest numbers
   at a glance); the current developer-facing surface stays as an explicit,
   optional dev mode.
-- **F8 - Honest internal benchmark.** A benchmark methodology that tells
-  the truth about broke: what is actually saved versus the baseline
-  (aiderdesk-builtin.md), measured on reproducible tasks, no vanity
-  metrics, estimated and proven numbers strictly separated.
-- **F9 - Honest user-facing benchmark.** A truth-telling, user-runnable
-  measurement path beyond `npm run bench` / `npm run measure`: users
+- **F8 - Internal benchmark methodology.** Compare reproducible tasks with
+  and without broke, separating observed input reduction, provider usage
+  and modeled monetary estimates.
+- **F9 - User-run measurement.** Provide a reproducible path beyond
+  `npm run bench` / `npm run measure`: users
   should be able to verify savings claims on their own sessions, with a
   clear methodology and documented caveats.
 - **S5 - Agent-facing skill/rule (investigation).** Should broke ship an
@@ -148,9 +142,10 @@ idea-level, unscheduled candidates recorded
 
 ## Cross-cutting principles
 
-1. **Non-destructive by default.** Everything that runs automatically must
-   leave the stored task history untouched (Broke's core promise). Destructive
-   operations (F3 flush) are manual, opt-in, and require confirmation.
+1. **Non-destructive by default.** The default input pipeline leaves stored
+   task history untouched. Opt-in slicing and tool-level error handling can
+   rewrite stored tool results; manual flush rewrites history and asks for
+   confirmation by default.
 2. **Opt-in for behavior-changing features.** F2 (slicing) and F3 (flush)
    change what the agent or the user sees; their config defaults are `off`.
    F1 and F4 are purely additive and default `on`.
@@ -524,7 +519,7 @@ Manual: real task with 20+ messages → snapshot → flush → follow-up prompt 
 
 ---
 
-## F4: Local Keyword/Vector Index with Snippet Summaries
+## F4: Local Keyword Index with Snippets (Vector Tier Proposed)
 
 **Version:** 0.10.0 (shipped 2026-08-27; originally planned for 0.5.0, which shipped without it). **Effort:** L.
 
@@ -547,12 +542,10 @@ Implementation notes (v1 as built, plan decisions E1-E7):
   (`getTools?(context, mode, agentProfile): ToolDefinition[]`). So broke-search
   registers against the REAL typed interface; the one unverified acceptance
   step stays a live agent session invoking the tool (post-deploy check).
-- **E2 persistence:** `index/<projectHash>/index.json` is carried by BOTH
-  deploy.ps1's extension preserve list AND update.ts `preserveRuntimeState`
-  (64 MB cap mirroring errors/). The update.ts path has hermetic regression
-  tests (`index/ preserve cap` suite); the deploy.ps1 side is covered by its
-  CI smoke jobs (dry-run + real secret-filtered deploy) instead of a dedicated
-  assertion that the preserved directory survives an actual swap.
+- **E2 persistence:** the current index lives under the versioned data root
+  outside the swappable installation. Earlier releases copied `index/`
+  through deploy/update preserve lists; the migration path retains that
+  legacy handling.
 - **E3 scope:** keyword BM25 ONLY. The config enum stays single-valued
   ('keyword') until vector/hybrid actually exist - no forward-declared dead
   options; embeddings land in v2 behind `search.backend` via `ollamaEmbed`.
@@ -562,9 +555,10 @@ Implementation notes (v1 as built, plan decisions E1-E7):
 - **E5 honesty:** NO savedChars/stats claims anywhere for F4. Value comes
   from agents choosing budgeted snippets over bulk reads; the tool footer
   reports result counts + indexed-file counts instead.
-- **E6 privacy/size:** persisted state = term postings + file metadata
-  (mtime/size/tokenCount) ONLY. Snippets are read live from disk at query
-  time and never reach storage beyond ordinary tool-result history.
+- **E6 privacy/size:** persisted state includes term postings and file
+  metadata (mtime/size/tokenCount). Terms and paths can reveal information
+  derived from file content. Snippets are read live from disk at query time
+  and are not stored in the index.
   Skip-list mirrors slice.ts plus `.aider-desk`; INDEX_MAX_ENTRIES caps
   pathological walks with an honest TRUNCATED flag.
 - **E7 default on:** a registered tool ships its JSON schema with every
@@ -584,6 +578,11 @@ used: it is global memory, not a per-project file index, and storing file
 snippets there would pollute it.
 
 ### Design
+
+The sample schema and commands below are the original proposal. In the
+shipped implementation `search.backend` accepts only `keyword`; vector and
+hybrid commands are not available. Consult `config.ts` and `commands.ts`
+for the live interface.
 
 **New module `indexer.ts`:**
 

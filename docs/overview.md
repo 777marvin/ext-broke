@@ -25,10 +25,10 @@ stale. Run `npm test` and `wc -l` for the current figures.*
 
 ## What broke is
 
-A token-budget extension for AiderDesk. It compresses the conversation input
-**before every model call**, in three depth levels, and can run the
-summarization pass on a **free local model** (Ollama) instead of the task's
-expensive model. The stored task history is never rewritten by the input
+A token-budget extension for AiderDesk. It can compress eligible older
+conversation messages on model calls, in three depth levels, and can run the
+summarization pass on local Ollama without an extra cloud summarizer request.
+The stored task history is not rewritten by the input
 pipeline, compression applies to the input of each model call only. Since
 1.2.0 the optional cache-friendly mode keeps already-sent bytes byte-stable
 so the provider's prompt cache keeps hitting (sent-ledger, escape hatch
@@ -41,7 +41,7 @@ surface.
 |---|---|
 | `structural` | drop empty messages, dedupe identical adjacent tool results (producing tool-call must match, XF1), merge consecutive assistant texts | text preserved; message framing may change (content-preserving) |
 | `truncate` (default) | + error compression of compiler/test output (tsc, Python/pytest, Jest/Vitest, Node stack traces) + head/tail truncation of old tool outputs, trimming of oversized tool-call inputs | middle of old outputs, error-dump detail |
-| `summarize` | + replace old conversation turns with a dense summary, via local Ollama (default, 0 cloud tokens) or a cloud model | detail of old turns |
+| `summarize` | + replace eligible old turns with a summary, via local Ollama (default, no cloud summarizer call) or a cloud model | detail of old turns |
 
 ## Module map
 
@@ -54,10 +54,10 @@ surface.
 | `errors.ts` | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir, retention sweep, archive on/off, XF9/XF10); `isCommandTool` classification |
 | `config.ts` | Zod schema (incl. the per-field bounds the settings dialog mirrors), defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` and `search.scanBudgetMs` toggles/knobs |
 | `cache.ts` | Sent-ledger (cache-friendly mode 1.2.0): per-task content-hash set (SHA-256 over {role, content, toolCallId}) of bytes already sent to the model, `markSent`/`isSent`/`clearTask`, FIFO 2000 entries per task, task LRU 50 - false "sent" only costs one compression chance, false "not sent" would bust the cache; `frozenPrefixLength` (longest leading already-sent run) and `messageFingerprint` (the ledger's content key, reused to re-locate a message across an array the HOST rebuilt) serve the 0.88 frozen-prefix anchor |
-| `cachecontrol.ts` | 0.88 `onApplyCacheControl` helper: `anchorBreakpoint` places ONE Anthropic `cache_control` breakpoint (`providerOptions.anthropic.cacheControl`) on a chosen message, merging into any existing `providerOptions` (one nested level) and never mutating the input; `ANTHROPIC_BREAKPOINT` is the marker shape |
+| `cachecontrol.ts` | 0.88 `onApplyCacheControl` helper: `anchorBreakpoint` adds an Anthropic `cache_control` breakpoint (`providerOptions.anthropic.cacheControl`) on a chosen message, merging into that message's existing `providerOptions` without mutating the input; the host's existing tail marker is not removed |
 | `paths.ts` | BRK-016 runtime-path decision: `runtimeDir()` = `BROKE_DATA_DIR` override, else the versioned `<extension>/../.broke-data/v1` sibling of the installation (outside the swap path); one-time marker-guarded best-effort migration of legacy artifacts (config.json, ledgers, snapshots, index, errors) with no-overwrite and EXDEV copy-then-remove fallback; injectable paths for hermetic tests |
 | `commands.ts` | `/broke` parser + all subcommands (status/why, stats with measured-reduction headline, estimate, measure, reset, selftest, update, snapshot/flush, index/search, level/threshold/limit tuning, help); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
-| `update.ts` | Self-update (`/broke update`): resolves the latest tagged GitHub release (`releases/latest`, fallback highest-semver tag), strict `vMAJOR.MINOR.PATCH` tag validation before any URL use, streaming tarball download with mid-stream cap (F-11), system-`tar` extraction, runtime data lives OUTSIDE the installation under the versioned `.broke-data/v1` root (BRK-016), so a swap cannot touch it - the legacy preserve list stays as a fallback for pre-migration installs (errors/ ≤ 100 MB, index/ ≤ 64 MB caps) and `node_modules` is never carried: `npm ci --omit=dev` always rebuilds from the verified lockfile (BRK-009), atomic swap with rollback plus in-place replacement when a Windows handle pins the directory; rename retries for transient locks (~4 s staggered), merge-over fallback for persistently locked entries (snapshot by copy, merged over, pruned back to payload contents), byte-size manifest verification of the copied payload before success is declared (.deployed-version is written only then), complete rollback on every failure path, transactional .update-state.json marker with stale-backup recovery incl. merge-copy fallback (F-02), non-fatal leftover-backup cleanup; git-checkout guard, concurrency lock; all I/O injectable for hermetic tests. Since 0.8.0 (R1): installs ONLY release ASSETS - Ed25519-signed SHA256SUMS verified against the embedded public key plus checksum match BEFORE extraction/npm ci; unsigned (pre-0.8.0) releases are refused |
+| `update.ts` | Self-update: resolves tagged GitHub release assets, verifies an Ed25519-signed SHA256SUMS manifest before extraction, rebuilds runtime dependencies from the lockfile, and keeps runtime data outside the installation tree. Uses a rename-based swap when possible; Windows file locks can require an in-place fallback with verification and attempted rollback. A crash during that fallback remains an [accepted limitation](review-backlog.md#accepted-limitations-explicit-reviewed). |
 | `tokens.ts` | Token estimation (chars/4), measured vs. modeled-counterfactual savings categories (BRK-022), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
 | `local.ts` | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
 | `validate.ts` | ContextValidator (external review P0): pure provider-bound invariant checks - no duplicate tool-call/result ids, no orphaned calls or results; `compressMessages` reverts to the original input when its output violates invariants that the input did not have |
@@ -65,7 +65,8 @@ surface.
 | `snapshot.ts` | F3 milestone snapshots: `snapshot [label]` records + onCommit/onTestPass triggers, summary-only records by default (`snapshot.keepHistory` off; the destructive flush keeps its undo file via `flush.undo`, D1), per-task 25 MB byte budget and 10 MB undo-file cap with size-aware eviction of the oldest record+history pairs (F-14), owner-only permissions (0600/0700), count-based rotation; ALL conversation-derived fields masked incl. taskName/files, collision-free hashed task dirs + unique filenames, readHistory refuses unexpected names/paths/shapes (BRK-019) |
 | `scripts/sign-release.mjs` | Release artifact signing: sha256sum manifest + Ed25519 signature (`BROKE_RELEASE_SIGNING_KEY`, CI-only) |
 | `.github/workflows/release.yml` | Tag-push release pipeline (BRK-007/008): full CI gate runs on the exact tagged commit (reusable workflow_call), then `release-sign-and-publish.yml` is called PINNED TO `@main` - the signing code always comes from protected main, never from the tag; ancestor check against origin/main, `environment: release` approval gate, assets built by `git archive` of the tag (the ONLY supported release path since 0.8.0) |
-| `.github/workflows/release-sign-and-publish.yml` | BRK-008 callee: signs the tag-built archive with the key from protected main and publishes release assets + SHA256SUMS + signature; requires the `release` environment approval || `pricing.ts` | 130 | Cost-savings math (`savedCostUsd`, `formatUsd`, `priceLabel`), task model price resolution by exact provider+model match (ambiguous bare ids stay unknown, BRK-022); since 1.2.0 provider cache economics (`cacheRates`: anthropic write 1.25x/read 0.1x, openai read 0.5x, off flat) + `cacheAdjustedSavedUsd` |
+| `.github/workflows/release-sign-and-publish.yml` | BRK-008 callee: signs the tag-built archive and publishes release assets + SHA256SUMS + signature; requires the `release` environment approval |
+| `pricing.ts` | Cost estimates from the task model's registered input price; cache multipliers are modeled assumptions, including a fixed OpenAI 0.5x read rate that varies by model in actual provider pricing |
 | `selftest.ts` | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
 | `scripts/bench.ts` | Deterministic reference benchmark (npm run bench): a 351,403-char synthetic session through the real pipeline with a stub summarizer, byte-reproducible; F4 keyword-index scenario for the counterfactual estimate model |
 | `scripts/measure.ts` | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
@@ -162,8 +163,8 @@ no paths, rotation-capped at 5 MB). `/broke measure` (in a task) or
 `npm run measure` (in the extension directory) aggregates the records:
 runs, tasks, per-run mean/median/max and per-task breakdowns - explicitly
 labeled as a sum over individual runs, not a cumulative context claim.
-Together with the badge and `/broke stats`, these are the provable
-real-session numbers.
+Together with the badge and `/broke stats`, these are observations of
+conversation-message character counts in real runs, not provider billing data.
 
 ## Commands / verification / deploy
 
@@ -194,6 +195,6 @@ real-session numbers.
 
 - `docs/token-saving.md`: full lever list
 - `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
-- `docs/local-models.md`: local-model capabilities on this hardware (RTX 3050, 4 GB VRAM)
-- `docs/feats.md`: the feature specs and as-built record, F1 (v0.2.0) through F5 (v1.2.1), plus the unscheduled F6-F9 candidates
+- `docs/local-models.md`: local Ollama setup and measurement limits
+- `docs/feats.md`: historical designs and implementation notes for F1-F5, plus unscheduled candidates
 - `docs/review-backlog.md`: the complete review ledger - self-review F1-F24, external XF1-XF16, external R1-R15, remediation F-01..F-16 - all dispositioned with severity, location, fix approach, commit mapping

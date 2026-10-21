@@ -8,8 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **On versions 0.1.0 to 0.2.1:** they are development history, not releases.
 They predate the tag-and-sign release process, carry no git tag, and were
 never published as GitHub releases, so `/broke update` cannot deliver
-them. From 0.3.0 on, every version below has both a tag and a published
-release.
+them. Most later versions have both a tag and a published release; v1.2.1
+has a tag but no published release (see the 1.2.1 entry).
 
 ## [Unreleased]
 
@@ -17,9 +17,10 @@ release.
 
 - **`cache.anchorBreakpoint` (opt-in, Anthropic only): anchor the prompt-cache
   breakpoint at broke's frozen prefix.** The new AiderDesk 0.88
-  `onApplyCacheControl` hook places ONE `cache_control` marker on the last
-  byte-stable (already-sent) message, instead of letting the host mark the
-  moving tail - so a changed tail no longer invalidates the cached prefix.
+  `onApplyCacheControl` hook adds a `cache_control` marker on the last
+  byte-stable (already-sent) message. It leaves the host's tail marker in
+  place; cache-hit improvement depends on provider behavior and is measured
+  through provider-reported usage.
   `onOptimizeMessages` captures that message before the run is marked as sent,
   together with a content fingerprint; the apply hook re-locates it by that
   fingerprint, because the host rebuilds the array in between
@@ -36,6 +37,10 @@ release.
 
 ### Changed
 
+- Corrected the README diagram and documentation claims about measured input
+  reduction, provider billing, prompt-cache eligibility, local model
+  performance, index privacy and Windows update recovery. Historical design
+  notes are labeled separately from the shipped interface.
 - **Adopted `@aiderdesk/extensions` 0.38.0 and raised the minimum supported
   AiderDesk host to 0.88.** The 0.88 message-preparation pipeline breaks
   `onOptimizeMessages` semantics (`event.originalMessages` is now the

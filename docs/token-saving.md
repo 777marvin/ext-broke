@@ -1,26 +1,26 @@
 # Token-Saving Strategies (how to actually save tokens)
 
-The goal is not "fewer tokens" as a number, it is **useful tokens per
-dollar**. Every lever below trades fidelity for size; the art is choosing
-which fidelity you can afford to lose, at which layer.
+The goal is to reduce unnecessary input while retaining enough context to
+complete the task. Some levers trade detail for size; inspect the resulting
+messages and provider usage before treating character counts as savings.
 
 ## The token lifecycle in AiderDesk
 
 ```
 per model call:
-  system prompt + rules + repo map + context files   ← fixed cost per turn
-  + conversation history (user/assistant/tool msgs)  ← grows with the task
-  + tool definitions + current tool results          ← recent additions
-  → model processes ALL of it on EVERY call
+  system prompt + rules + repo map + context files   ← often repeated
+  + conversation messages (user/assistant/tool)       ← may grow with the task
+  + tool definitions and current results               ← request dependent
+  → provider processes the submitted input; caching may change its price
 ```
 
 Two consequences:
 
-1. **The conversation history is billed N times**: once per model call.
-   Saving 10k tokens in the history saves 10k × (number of calls) input
-   tokens, not 10k.
-2. **Everything in the context is billed every turn**, so removing
-   something once helps forever, while shortening answers helps only once.
+1. Removing 10k actual input tokens from each of N later requests would
+   reduce submitted input by 10k × N tokens. The billing effect depends on
+   whether those tokens would have been cached and on the provider's rates.
+2. A shorter recurring input can help on later calls. A one-time output
+   reduction affects that response and any later calls that include it.
 
 ## The levers, ordered by leverage
 
@@ -29,26 +29,25 @@ Two consequences:
 | Lever | Where | Effect |
 |---|---|---|
 | Don't add files you don't need; drop files when done | task files (`addFile`, file picker) | per-turn saving × every call |
-| `includeRepoMap: false` or a finer map (tree-sitter-repo-map extension) | agent profile | repo map is billed every call |
+| `includeRepoMap: false` or a finer map (tree-sitter-repo-map extension) | agent profile | can reduce repeated input; provider caching affects the bill |
 | Keep rules (`rules/*.md`) and system prompts short | profile | fixed per-turn cost |
 | Subagents with `contextMemory: off` / `last-message` | profile → subagent | isolates subagent context; parent sees only the result |
-| Read files via grep/head/tail instead of full reads | agent behavior | full file contents are the #1 context hog |
+| Read only relevant file sections | agent behavior | avoids adding unnecessary file content |
 | `onFilesAdded` filters (extensions) | extension hook | never let noise in |
 
 ### B. Stop the history from growing (Broke's job)
 
 | Lever | When | Loss |
 |---|---|---|
-| Structural pass (dedupe, drop empties, merge) | every call | text preserved; message framing may change |
+| Structural pass (dedupe, drop empties, merge) | eligible calls | text preserved; message framing may change |
 | Error pass (compiler/test output → diagnostic essence) | above `errors.minChars`, old turns only | error-dump detail |
 | Truncate pass (head+tail of old tool outputs, trim tool-call inputs) | above threshold | middle of old outputs |
 | Summarize pass (LLM summary of old turns) | above threshold, old turns only | detail of old turns |
-| AiderDesk `Compact` / `Smart` compaction | at 30%/200k | same idea, reactive |
+| AiderDesk `Compact` / `Smart` compaction | at the configured host threshold | persistent host compaction; exact behavior depends on the host version |
 
-Rule of thumb: **the last N turns are the working set, never compress
-them.** Everything older is increasingly redundant (the model already acted
-on it; the file system already reflects it). Broke protects the last 2
-turns by default.
+The last N user turns are protected by broke's input pipeline (2 by
+default). Older content is only a candidate for compression; it may still
+contain facts the agent needs, so review lossy settings for your workload.
 
 ### C. Compress output tokens (one-time)
 
@@ -63,9 +62,9 @@ turns by default.
 
 | Lever | Notes |
 |---|---|
-| Cheaper model for routine tasks (per-task model override) | DeepSeek-class models ≈ 10-30× cheaper than frontier |
-| **Local model offload for summaries** (Broke `summarize via local`) | the summary generation costs **zero cloud tokens** |
-| Prompt caching (`--cache-prompts`) | stable prefix billed at cache rate (Anthropic/DeepSeek/OpenRouter) |
+| Lower-priced model for suitable tasks (per-task model override) | compare current provider rates and task quality |
+| **Local model offload for summaries** (Broke `summarize via local`) | avoids a cloud summarizer call; uses local compute |
+| Prompt caching | stable prefixes may qualify for a provider's model-specific cached-input rate |
 | Batch small tasks into one prompt | fewer fixed costs (system prompt per call) |
 
 ### E. Measure, then tune
@@ -74,7 +73,7 @@ turns by default.
   estimates, per task.
 - Broke: `/broke measure` (in a task) or `npm run measure` (extension
   directory): the measurement ledger `measure.jsonl` aggregates per-run
-  sizes and per-pass removals into provable real-session numbers - runs,
+  sizes and per-pass removals into observed real-session character counts - runs,
   tasks, per-run mean/median/max, per-task breakdowns. The totals are
   sums over individual runs of the same evolving conversation and are
   labeled as such, never presented as a cumulative context claim.
@@ -87,8 +86,9 @@ turns by default.
 
 Two different things, both real:
 
-1. **Transient (per call)**: every input the model sees is compressed,
-   but the stored task history stays intact. Broke does this. Pros:
+1. **Transient (per call)**: eligible messages can be compressed before a
+   model call while stored task history stays intact. Broke's default input
+   pipeline does this. Pros:
    reversible, no information destroyed in the log. Cons: the compression
    work repeats per call (mitigated by the summary cache).
 2. **Persistent**: the stored conversation is rewritten (old turns
@@ -112,12 +112,11 @@ docs/feats.md).
 - Merging adjacent assistant messages keeps the full text in the context
   (only the message framing disappears), so merges count 0 saved chars in
   the stats: the badge never inflates savings with merges.
-- A 3B local model summary of ~8k tokens of history costs ~0 cloud tokens
-  and ~20–60 s of local time; the same summary via a cloud model costs
-  input tokens of the summarizer call (usually cheaper than the turns it
-  replaces, but not free).
-- The built-in `Compact` uses the **task's model**; on a frontier model
-  that is the single most expensive token operation in the app.
+- A local summary uses no cloud summarizer request, but consumes local time
+  and compute. A cloud summary adds one or more billable requests; its net value depends
+  on the summary size, later reuse and model pricing.
+- In the documented AiderDesk 0.85 source snapshot, built-in `Compact` uses
+  the task model. Its cost depends on that model and the conversation size.
 
 ## Inspecting the diff without paying for it
 

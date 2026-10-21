@@ -8,11 +8,14 @@ in [docs/overview.md](overview.md); the tuning matrices are in
 
 ## Cache-friendly mode (provider prompt cache)
 
-Claude bills cache **writes** at 1.25x and cache **hits** at 0.1x; GPT and
-o-models bill cached input at 0.5x. Every recompressed byte therefore costs
-real money: a rewritten prefix re-writes the whole cache. Cache-friendly
-mode (`cache.profile`) keeps every byte that was already sent to the model
-byte-stable, so the provider's prompt cache keeps hitting between calls:
+The current code models Anthropic cache writes at 1.25x and reads at 0.1x,
+and OpenAI reads at 0.5x. These are fixed estimate parameters; actual
+cache rates and eligibility vary by model and provider. See the
+[Claude prompt-caching guide](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and [OpenAI prompt-caching guide](https://developers.openai.com/api/docs/guides/prompt-caching).
+Cache-friendly mode (`cache.profile`) tries to preserve already-sent message
+bytes. A stable prefix can improve cache reuse, but neither a hit nor a
+particular saving is guaranteed:
 
 - `anthropic` / `openai`: the sent-ledger freezes already-sent messages.
   Structural merges re-derive identical bytes, the error/truncate passes
@@ -29,30 +32,28 @@ byte-stable, so the provider's prompt cache keeps hitting between calls:
   cleanly without locking the hatch or dropping cache state.
   With the hatch off, sent bytes are never rewritten - even over budget.
 - The **anchor breakpoint** (`cache.anchorBreakpoint`, default **off**, opt-in,
-  Anthropic only) moves the single `cache_control` marker the host sends. The
-  host marks the LAST message by default - a moving target, so any change to
-  the tail invalidates the whole cached prefix. Broke instead marks the last
-  message it has already sent (its frozen prefix), so the provider caches the
-  byte-stable history and a changing tail no longer busts it. The marker is
-  MERGED into whatever `providerOptions` the host or another extension already
-  set, never replaced. It needs the `anthropic` profile and is a no-op when
-  nothing has been sent yet.
+  Anthropic only) adds a `cache_control` marker to the last already-sent
+  message in broke's frozen prefix. It does not remove the host's marker on
+  the tail. The provider may reuse an earlier prefix through its own lookback
+  even without this option, so measure cache-read tokens before claiming an
+  improvement. The marker is merged into that message's existing
+  `providerOptions`. This needs the `anthropic` profile and has no effect
+  when no prior message is in the sent ledger.
 
-Two honesty notes on the detection, both about not pricing something that
-cannot happen:
+Two limits of broke's cache accounting:
 
 - Providers with no documented cache economics resolve to no cache
   awareness at all. That includes `llmapi` (new in AiderDesk 0.85) and any
   provider broke does not know - a local or unlisted runtime must not be
   billed as if it had a cache.
-- **OpenAI Zero Data Retention organizations** send stateless requests
-  (`store: false`, AiderDesk 0.84+). Nothing is stored server-side, so the
-  0.5x cached-input rate can never apply. broke has no API to read the
-  host's provider settings, so this one fact has to be asserted:
-  set `cache.openaiStateless on` (or `cache.profile off`) if your
-  organization runs stateless. Only the `auto` path consults it - an
-  explicit `cache.profile` always wins, because you know your own
-  organization better than a model-name sniff does.
+- `cache.openaiStateless` is a conservative accounting switch for the
+  `auto` profile when you do not want broke to assume OpenAI cache hits.
+  Neither `store: false` nor Zero Data Retention by itself means prompt
+  caching is unavailable: OpenAI documents an in-memory cache mode for
+  eligible Zero Data Retention organizations. Broke cannot inspect the
+  host's provider settings or prove a hit from message stability alone;
+  compare provider-reported cache tokens instead. An explicit
+  `cache.profile` overrides this switch.
 
 ## ST-slicing (tool-level, opt-in)
 
@@ -121,24 +122,24 @@ set stays under `search.maxChars` (default 6000 chars ≈ 1.5k tokens)
 including a one-line footer stating how many results and indexed files it
 came from.
 
-Honest positioning against what AiderDesk already ships: Broke's index is
+Broke's index is
 **offline** (no embedding model needed), persisted per project under
 the data root (`index/<projectHash>/`, BRK-016), re-indexed incrementally by mtime/size diffing
 (triggered on commits and re-checked before queries once the 60s freshness window expires), and strictly budgeted.
 It complements rather than replaces `power---semantic_search` or the repo
 map.
 
-Privacy by construction: the on-disk index contains term postings and file
-metadata ONLY - never file contents or snippets; snippets are read live
-from disk at query time and behave exactly like any normal file read in
+The on-disk index contains term postings and file metadata, not full file
+contents or snippets. Terms and paths can still reveal sensitive information.
+Snippets are read live from disk at query time and behave like file reads in
 stored history. Skipped from indexing: `node_modules`, `.git`, `dist`,
 `build`, `vendor`, `.aider-desk`, non-code extensions and files above
-`search.maxFileKB`. Indexes survive deploys and `/broke update` (preserve
-lists) up to 64 MB.
+`search.maxFileKB`. Indexes live under the versioned data root, outside the
+swappable code tree.
 
-No savings are claimed for this feature anywhere in the badge or stats:
-value comes from the agent choosing budgeted snippets over bulk file reads,
-which is behavior - not pipeline compression. One honest tradeoff to know:
+No savings are claimed for this feature in the badge or compression stats:
+its value depends on the agent choosing snippets over bulk file reads.
+The registered tool also has a prompt cost:
 every registered tool ships its JSON schema with every model call, so
 agents that never search pay a small constant cost; `/broke search off`
 (and the settings dialog) unregisters the tool while leaving the built
@@ -162,19 +163,19 @@ summarizer's output, it only stores it as history. Switching
 it only changes which model sees the untrusted text first.
 
 Snapshots (F3) persist small JSON records and optional raw-history undo
-files **locally** under the data root (outside the swappable extension tree). Every record field derived
-from conversation content passes through the same secret masking as all
-broke artifacts; they are bounded by count (50 records per task) and by
+files **locally** under the data root (outside the swappable extension tree).
+Conversation-derived fields use best-effort pattern masking; unknown secrets
+can remain. Records are bounded by count (50 records per task) and by
 bytes (25 MB per task, individual undo files capped at 10 MB, oldest
 records evicted when a budget is exceeded). If your
 conversation contains long-lived credentials that none of the masking
 patterns catch, disable snapshots or move them off shared machines.
 
 broke-search (F4) returns raw code/file snippets - the same content class
-as any file-read tool result. The persisted index contains no file text
-(only term postings + metadata), so removing an indexed secret means
-editing/removing the FILE itself; nothing searchable lingers in
-`index/`. Queries run live against disk, honoring the same skip rules in
+as any file-read tool result. The persisted index contains term keys derived
+from file text. Removing or editing a file and rebuilding the index removes
+its postings; delete the project's index data if immediate erasure is
+required. Queries read current files from disk, honoring the same skip rules in
 every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
 The indexer and snippet reader strictly enforce workspace confinement
 via canonical `realpath` validation, rejecting symlinks that resolve outside

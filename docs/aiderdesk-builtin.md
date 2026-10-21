@@ -1,6 +1,6 @@
 # How AiderDesk already saves tokens (verified from source)
 
-Facts verified 2026-09-28 against an AiderDesk **v0.85.0** source checkout
+Sections 1-6 are a dated source snapshot, verified 2026-09-28 against an AiderDesk **v0.85.0** source checkout
 (`hotovo/aider-desk`, tag `v0.85.0`, commit
 `12d38d8e52543146e83e0dc44ef6439ba8aee099`). Earlier revisions of this file
 were verified against 0.77.x/0.78.0-dev. File references are relative to
@@ -68,9 +68,9 @@ by default, that's the gap savemytoken fills with per-tool limits.
 
 The task configuration supports Aider's `--cache-prompts` (option wired
 through `task/aider-manager.ts`). With cache-enabled providers (Anthropic,
-DeepSeek, OpenRouter cache tiers, Gemini), repeated system prompt + repo
-map prefix is billed at a fraction of the price. Broke's summaries benefit
-directly: a stable compacted prefix is exactly what caches love.
+  DeepSeek, OpenRouter cache tiers, Gemini), repeated prefixes may qualify
+  for cached-input pricing. The rate and eligibility depend on the provider
+  and model; a stable compacted prefix alone does not prove a cache hit.
 
 ## 5. Repo map & context files
 
@@ -88,10 +88,10 @@ directly: a stable compacted prefix is exactly what caches love.
 | Mechanism | When it runs | Relationship to Broke |
 |---|---|---|
 | Built-in optimizer | every call | Broke runs *after* it (`onOptimizeMessages`), so it compresses the already-optimized messages |
-| `Compact` (LLM summary) | at 30%/200k threshold | Expensive (same model). Broke's `summarize` level does the same job **proactively at a lower threshold and optionally via a free local model**, set `autoCompactionType: Smart` and let Broke do the lossy part |
+| `Compact` (LLM summary) | at the configured host threshold | In this source snapshot it uses the task model. Broke's optional `summarize` level can use local Ollama earlier; compare summary quality, latency and cost before changing the host compaction mode. |
 | `Smart` compaction | at threshold | Broke's structural + truncate passes are a light, per-call version of the same idea, it defers the emergency compaction |
 | MCP truncation (1000/50) | per MCP tool result | Broke truncates *old* tool results of extension tools (200 lines/20 KB default) on the way into context |
-| Prompt caching | per call | Broke keeps the compressed prefix stable → better cache hit rates |
+| Prompt caching | per call | Stable prefixes can improve cache reuse; confirm hits in provider usage data |
 | Repo map | per call | Smaller repo map / `includeRepoMap: false` + Broke = strictly smaller per-turn input |
 
 Recommended profile setup for token-heavy agentic work:
@@ -114,7 +114,7 @@ Recommended profile setup for token-heavy agentic work:
   hotovo-aider-desk\src\main\`).
 - `docs/aiderdesk-reference.md` (project notes, gathered 2026-08-07).
 
-## 6. What 0.83 - 0.88 changed for extensions (0.83-0.85 verified 2026-09-28, 0.86-0.87 verified 2026-10-12, 0.88 verified 2026-10-20)
+## 7. What 0.83 - 0.88 changed for extensions (0.83-0.85 verified 2026-09-28, 0.86-0.87 verified 2026-10-12, 0.88 verified 2026-10-20)
 
 ### Unchanged, and it matters
 
@@ -136,7 +136,7 @@ Recommended profile setup for token-heavy agentic work:
 | Release | Capability | Use in broke |
 |---|---|---|
 | 0.84 | `TaskContext.getUpdatedFileDiff(path, commitHash?)` | `/broke diff` - the first cheap way to READ diff content without shelling out to git |
-| 0.84 | `OpenAiProvider.store?` | Motivates `cache.openaiStateless`: a stateless request stores nothing, so the 0.5x cached-input rate cannot apply. Not detectable from an extension - no read API for host provider settings - so it is an explicit assertion |
+| 0.84 | `OpenAiProvider.store?` | Host setting relevant to response storage. It does not by itself determine prompt-cache eligibility; `cache.openaiStateless` is a conservative accounting switch. See [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching). |
 | 0.84 | `Group.ephemeral?` | No action: extensions see a flat `ContextMessage[]`, never groups |
 | 0.85 | `LlmApiProvider` (`llmapi`) | Resolves to no cache economics, like every unknown provider |
 | 0.85 | placement `task-message-bar-menu` | The opt-in per-message `broke: why` row. The host mounts such a component once per FINISHED message, hence `loadData: false`, a user-message filter, and a default-off toggle |
@@ -146,7 +146,7 @@ Recommended profile setup for token-heavy agentic work:
 | 0.87 | `BeforeCommitEvent.skipGitHooks?`, `api.commitChanges(..., skipGitHooks, ...)` | No action: broke listens to `onAfterCommit` and reads `event.message`; it never calls `api.commitChanges` |
 | 0.87 | `ModeDefinition.icon` now names a full react-icons component incl. pack prefix | No action: broke registers no modes |
 | 0.88 | `onTransformMessages` (message-preparation) | Pre-transform baseline observation: `originalMessages` is the raw stored context PLUS reminders, captured as `baselineChars` so "what the host pipeline removed" stays distinguishable from "what broke removed". The hook returns `undefined` - it never rewrites |
-| 0.88 | `onApplyCacheControl` (message-preparation) | The frozen-prefix cache breakpoint (opt-in, Anthropic only): broke places ONE `cache_control` marker at the last already-sent message, instead of relying on the host default's marker on the moving tail |
+| 0.88 | `onApplyCacheControl` (message-preparation) | The frozen-prefix cache breakpoint (opt-in, Anthropic only): broke adds a `cache_control` marker at the last already-sent message; the host's tail marker is not removed. Cache-hit improvement is not guaranteed. |
 | 0.88 | `OptimizeMessagesEvent.originalMessages` semantics | BREAKING (host ADR "Message-preparation hook semantics amendment", 2026-10-15): it is now the transformation stage's output, not raw stored context. `lastCallUsage` reads the trailing message's usage, which the transform does not touch |
 
 ### Message-preparation pipeline (0.88)

@@ -1,14 +1,11 @@
 # Review Backlog
 
-**Reading this file: it is a historical ledger, not an open bug list.**
-Every finding recorded here is closed, fixed on `main` or explicitly
-accepted as a documented limitation (the "Accepted limitations" section
-below, and the "Currently open / tracked" section further down, name the
-ones that are still live). The severity headings are kept as they were
-written at review time, so `## High` describes a finding from that round,
-not an unresolved issue in the current code.
+**Reading this file: it is a historical review ledger.** Many findings were
+fixed; some were accepted as limitations, and the "Currently open / tracked"
+section names residual work. Severity headings describe the original
+assessment, not necessarily the current code's state.
 
-Findings from the ruthless self-review of 2026-08-16 (typecheck clean,
+Findings from the self-review of 2026-08-16 (typecheck clean,
 80/80 tests green at review time). Severity: 🔴 high, 🟡 medium, ⚪ nit.
 Each finding lists the location, the problem and a concrete fix approach.
 
@@ -458,7 +455,7 @@ Manual follow-ups (GitHub repo settings, D6): protected `v*` tags, a
 
 # External Review Round 2 - 2026-08-29 (BRK-001..030)
 
-Findings from the hostile external review of 2026-08-29 (baseline commit
+Findings from the external review of 2026-08-29 (baseline commit
 `b79cba55`). Status split, so "closed" cannot be confused with "open":
 
 ## Historically closed (fixed on main)
