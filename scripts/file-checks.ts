@@ -34,6 +34,7 @@ export const ROOT_FILES = new Set([
   'CHANGELOG.md',
   'CONTRIBUTING.md',
   'ConfigComponent.jsx',
+  'DESIGN.md',
   'LICENSE',
   'MessageMenuItem.jsx',
   'README.md',

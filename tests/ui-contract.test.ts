@@ -80,7 +80,7 @@ describe('vendored host UI contract (BRK-024)', () => {
     assert.match(configComponent, /Escape hatch/, 'the escape hatch checkbox exists');
     assert.match(configComponent, /cache\.openaiStateless|openaiStateless/, 'the stateless-OpenAI toggle exists');
     assert.match(configComponent, /anchorBreakpoint/, 'the frozen-prefix cache-breakpoint anchor toggle exists');
-    assert.match(configComponent, /Task length/, 'F5 mode selector exists');
+    assert.match(configComponent, /Savings approach/, 'F5 mode selector uses outcome-focused language');
     assert.match(configComponent, /Broke automation/, 'F5 autonomy selector exists');
     assert.match(configComponent, /previewMode/, 'presets use the canonical backend');
     assert.match(configComponent, /<Tooltip/, 'options carry inline onboarding tooltips');
@@ -91,6 +91,6 @@ describe('vendored host UI contract (BRK-024)', () => {
     const statusBadge = readFileSync('StatusBadge.jsx', 'utf8');
     assert.match(statusBadge, /'getConfig'/, 'the overlay loads the config via the getConfig action');
     assert.match(statusBadge, /'setConfig'/, 'the overlay saves via the setConfig action');
-    assert.match(statusBadge, /broke settings/, 'the badge carries the settings entry point');
+    assert.match(statusBadge, /Context savings for every task/, 'the badge carries the plain-language settings entry point');
   });
 });

@@ -1189,16 +1189,15 @@ export default class Broke implements Extension {
     // configurations are not probed at all.
     void this.cachedOllamaStatus(config).catch(() => undefined);
     const fresh = this.freshOllamaStatus(config);
-    const ollamaNote =
-      !this.localSummarizerActive(config)
-        ? config.summarize.via === 'local'
-          ? 'local summarizer inactive - Ollama is not probed'
-          : `cloud summarizer (${config.summarize.cloudModelId || 'task model'})`
-        : fresh
-          ? fresh.reachable
-            ? `ollama reachable (${fresh.models.length} models)`
-            : `ollama NOT reachable - local summaries inactive (ollama serve)`
-          : 'ollama status check running in the background - the badge reports the result';
+    const approach =
+      config.mode === 'short' ? 'Safe' : config.mode === 'normal' ? 'Balanced' : config.mode === 'long' ? 'Maximum savings' : 'Custom';
+    const localSummaryNote = !this.localSummarizerActive(config)
+      ? ''
+      : fresh
+        ? fresh.reachable
+          ? ` Ollama reachable (${fresh.models.length} models); local summaries are ready.`
+          : ' Local summaries need setup; basic compression still works. Start Ollama when you want maximum savings.'
+        : ' Local summary setup is being checked in the background; basic compression still works.';
     const remotePlaintext = config.summarize.via === 'local' && isPlaintextRemoteUrl(config.summarize.ollamaUrl);
     const remoteBlocked =
       config.summarize.via === 'local' && isRemoteOllamaHost(config.summarize.ollamaUrl) && !config.summarize.allowRemoteHost;
@@ -1206,7 +1205,9 @@ export default class Broke implements Extension {
       .getTaskContext()
       ?.addLogMessage(
         'info',
-        `broke active - level: ${config.level}, threshold: ${config.maxContextChars.toLocaleString('en-US')} chars, protectedTurns: ${config.protectedTurns}, ${ollamaNote}${remotePlaintext ? ' - WARNING: remote Ollama via plaintext http, data is sent unencrypted' : ''}${remoteBlocked ? ' - NOTE: remote summarizer host is BLOCKED until you consent (/broke summarize allow-remote on)' : ''} - /broke help lists all commands`,
+        config.enabled
+          ? `Broke is ready — ${approach} is active for every task. Your saved task history stays unchanged.${localSummaryNote}${remotePlaintext ? ' Warning: the configured remote Ollama connection is unencrypted.' : ''}${remoteBlocked ? ' The remote summary host is blocked until you explicitly allow it in advanced settings.' : ''} Open the 💸 badge for status and settings.`
+          : 'Broke is off. Open the 💸 badge to turn automatic context savings back on.',
       );
     this.refreshUI(event.task.id);
   }

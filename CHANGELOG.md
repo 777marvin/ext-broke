@@ -15,6 +15,14 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Added
 
+- **A plain-language everyday view for the 💸 badge (first F7 slice).** The
+  dialog now leads with one understandable state, an outcome-focused savings
+  approach and three normal actions: Check setup, View savings and Why no
+  savings yet. Technical thresholds, cache controls and the command grid stay
+  available under a closed Advanced settings and diagnostics disclosure. The
+  task-start notice now explains that Broke is ready and points to the badge
+  instead of leading with thresholds and command syntax. `DESIGN.md` records
+  the durable visual and interaction contract for this surface.
 - **Hyperframes pipeline animation.** A restrained, technical README demo now
   shows eligible older context being cleaned, trimmed and optionally summarized
   before the next model call, while protected messages and stored task history
@@ -43,6 +51,9 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Changed
 
+- Renamed the user-facing Short/Normal/Long task-length framing to
+  Safe/Balanced/Maximum savings. The stored mode values and behavior remain
+  backward-compatible; only the user-facing mental model changed.
 - Reworked the README entry path around a plain-language value statement,
   one-command start, visual pipeline and clearer stored-history boundary.
 - Corrected the README diagram and documentation claims about measured input

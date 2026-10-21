@@ -117,7 +117,7 @@ describe('BRK-029: Ollama probing is gated, deduplicated and non-blocking', () =
     try {
       writeConfig({ level: 'truncate', ...localVia(fake.url) });
       const ext = new Broke();
-      const { context } = makeContext('task-gate-level');
+      const { context, logLines } = makeContext('task-gate-level');
 
       const data = (await ext.getUIExtensionData('broke-status', context)) as Record<string, unknown>;
       assert.equal(data.ollama, null, 'the badge must not probe Ollama while the level is truncate');
@@ -125,6 +125,10 @@ describe('BRK-029: Ollama probing is gated, deduplicated and non-blocking', () =
 
       await ext.onTaskInitialized({ task: { id: 'task-gate-level' } } as unknown as TaskInitializedEvent, context);
       assert.equal(fake.hits(), 0, 'task initialization must not probe Ollama while the level is truncate');
+      const initLine = logLines[logLines.length - 1] ?? '';
+      assert.match(initLine, /Broke is ready/i, 'the first task message leads with an understandable state');
+      assert.match(initLine, /open the .* badge/i, 'the first task message points to the graphical controls');
+      assert.doesNotMatch(initLine, /threshold|protectedTurns|\/broke help/i, 'the first task message does not lead with expert configuration');
     } finally {
       await fake.close();
     }
@@ -177,8 +181,8 @@ describe('BRK-029: Ollama probing is gated, deduplicated and non-blocking', () =
       const elapsed = Date.now() - started;
 
       assert.ok(elapsed < 300, 'task init must not wait for the Ollama probe (took ' + elapsed + 'ms)');
-      assert.ok(logLines.some((l) => l.includes('broke active')), 'the init notice is still emitted');
-      const initLine = logLines.find((l) => l.includes('broke active')) ?? '';
+      assert.ok(logLines.some((l) => l.includes('Broke is ready')), 'the init notice is still emitted');
+      const initLine = logLines.find((l) => l.includes('Broke is ready')) ?? '';
       assert.ok(!/reachable/.test(initLine), 'no reachability claim while the probe is still in flight');
       // The probe runs in the background - give it a moment to reach the
       // fake server, then confirm it really fired.
@@ -202,8 +206,8 @@ describe('BRK-029: Ollama probing is gated, deduplicated and non-blocking', () =
       assert.equal(fake.hits(), 1);
       await ext.onTaskInitialized({ task: { id: 'task-warm-init' } } as unknown as TaskInitializedEvent, context);
       assert.equal(fake.hits(), 1, 'a fresh cache answers the init line without a new probe');
-      const initLine = logLines.find((l) => l.includes('broke active')) ?? '';
-      assert.match(initLine, /ollama reachable \(1 models\)/);
+      const initLine = logLines.find((l) => l.includes('Broke is ready')) ?? '';
+      assert.match(initLine, /Ollama reachable \(1 models\)/);
     } finally {
       await fake.close();
     }

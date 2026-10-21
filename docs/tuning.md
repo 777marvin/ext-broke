@@ -103,16 +103,23 @@ A practical playbook:
 
 ## The settings dialog
 
-The badge gear (⚙) opens a quick settings dialog with the core knobs.
-Both it and the full settings panel offer **Task length**
-(`short / normal / long / custom`) and **Broke automation**
-(`autonomous / manual`) selectors. These settings are extension-wide;
-task-length presets leave the cache profile and escape hatch unchanged.
+The badge gear (⚙) opens the everyday view: a plain-language status,
+**Savings approach** (`Safe / Balanced / Maximum savings / Custom`) and the
+three common actions **Check setup**, **View savings** and
+**Why no savings yet?**. Balanced is the recommended default and needs no
+extra software. The technical controls and command grid start closed under
+**Advanced settings and diagnostics**; the full settings panel remains the
+expert surface.
+
+The saved values remain `short / normal / long / custom` for backward
+compatibility. Both the badge and full settings panel also retain **Broke
+automation** (`autonomous / manual`). These settings are extension-wide;
+the savings presets leave the cache profile and escape hatch unchanged.
 Editing a preset-owned field (level, threshold, protected turns, truncate
-limits, summarize-after) relabels the mode to `custom` immediately, in the
+limits, summarize-after) relabels the approach to `Custom` immediately, in the
 panel, in the badge dialog and on disk - a late write from the host or
-another surface cannot restore a stale preset label. Long-mode selection
-(`mode long` or `config set mode long`, any quoting that actually
+another surface cannot restore a stale preset label. Selecting Maximum
+savings (`mode long` or `config set mode long`, any quoting that actually
 persists) shows the Ollama/cloud cost and consent guidance BEFORE the
 write; invalid spellings are reported as a rejection, never as pending
 Long guidance. The full settings panel retains cache controls and their

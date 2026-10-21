@@ -29,8 +29,8 @@ npx @aiderdesk/extensions install -g https://github.com/777marvin/ext-broke
 ```
 
 Open any AiderDesk task. broke is active by default: the **💸 badge** shows
-its current state, the activation note names the active level, and
-`/broke selftest` exercises the pipeline on synthetic input. See
+its current state, the activation note says whether it is ready, and
+**Check setup** in the badge dialog exercises the pipeline on synthetic input. See
 [Install](#install) for requirements, Windows notes, manual setup and updates.
 
 ## Why I built this
@@ -200,12 +200,11 @@ restart: the running instance keeps its previously loaded code until then.
 for testing uncommitted changes during development; inside a git checkout
 `/broke update` refuses to run by design.
 
-**First five minutes:** open any task and check three things - the
-**💸 badge** shows in the status bar, the **activation note** states the
-active level and whether Ollama is reachable, and `/broke selftest` runs
-the whole pipeline on synthetic input. That is the whole setup: broke is
-active by default, every lever is documented under [Usage](#usage) and
-[Tuning](#tuning-what-to-use-when).
+**First five minutes:** open any task, click the **💸 badge** and leave
+**Balanced** selected. The dialog tells you whether Broke is ready; **Check
+setup** runs the whole pipeline on synthetic input if you want confirmation.
+That is the whole setup. Technical controls are optional and documented under
+[Usage](#usage) and [Tuning](#tuning-what-to-use-when).
 
 ## Requirements
 
@@ -242,12 +241,12 @@ active by default, every lever is documented under [Usage](#usage) and
 Once installed, broke runs automatically. You will see:
 
 - a **💸 badge** in the task status bar: estimated tokens saved for the
-  current task (tooltip shows the breakdown per pass, and money saved at
-  the current model's price). While a task has saved nothing yet, the badge
-  shows why: `💸 0 · 31k/60k` means the conversation input is still below
-  the threshold; `/broke why` gives the full gate-by-gate verdict;
-- an **activation note** in every new task, showing the active config and
-  whether Ollama is reachable;
+  current task. Open its gear for a plain-language state, the recommended
+  savings approach and common actions. While a task has saved nothing yet,
+  `💸 0 · 31k/60k` means the conversation is still too short for the lossy
+  passes; the dialog explains this without requiring a command;
+- an **activation note** in every new task that says whether Broke is ready
+  and points to the badge if anything needs attention;
 - a **notice** when a compression run saves ≥ ~1000 tokens.
 
 Scope note: broke measures and compresses only the **conversation messages**
@@ -255,13 +254,19 @@ it is handed before each model call. The system prompt, tool schemas and
 provider-side prompt caching are outside its reach: a task can show 100k+
 prompt tokens while broke correctly reports small or zero savings for it.
 
-Everything can be controlled from the chat (`/broke help` lists all
-commands) or from the gear icon on the extension card:
+For everyday use, leave **Balanced** selected. It shortens old technical
+output, needs no extra software, and keeps stored task history unchanged.
+The badge dialog also offers **Check setup**, **View savings** and
+**Why no savings yet?**. Technical thresholds and command tools stay under
+**Advanced settings and diagnostics**.
+
+Power users can still control everything from the chat (`/broke help` lists
+all commands) or from the advanced section of the badge dialog:
 
 ```
 /broke                             status + stats + ollama status
 /broke mode <short|normal|long|custom>
-                                   task-length preset (extension-wide)
+                                   savings approach (extension-wide)
 /broke autonomy <autonomous|manual>
                                    Broke automation only; manual = no automatic
                                    LLM summaries, tool rewrites or auto-snapshots
@@ -375,7 +380,7 @@ The input pipeline skips rich parts during summarization, refuses a summary
 that would grow the context, and reverts its output if compression introduces
 invalid tool-call/result pairing into previously valid input. After 3
 consecutive summarize failures broke disables summarization for that task
-and says why; the badge tooltip shows the state, and `/broke reset` or a
+and says why; the badge dialog shows the state, and `/broke reset` or a
 summarizer backend/model change re-enables it.
 
 The per-pass rules, gates and failure handling are in
@@ -397,7 +402,7 @@ The per-pass rules, gates and failure handling are in
 |---|---|---|
 | enabled | on | Master switch |
 | level | `truncate` | structural / truncate / summarize |
-| mode | `custom` | task-length preset label (short / normal / long / custom); an edit to any preset-owned field flips it to `custom` |
+| mode | `custom` | savings-approach value (short / normal / long / custom, shown as Safe / Balanced / Maximum savings / Custom); an edit to any preset-owned field flips it to `custom` |
 | autonomy | `autonomous` | Broke automation only: `manual` suppresses automatic summarization, tool rewrites, auto-snapshots and index refreshes - explicit commands keep working |
 | maxContextChars | 60000 | ≈15k tokens, engages lossy passes |
 | protectedTurns | 2 | last N user turns never compressed |

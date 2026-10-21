@@ -31,7 +31,7 @@ test('isExpectedFile: the three JSX components are expected', () => {
 });
 
 test('isExpectedFile: repo documentation and license are expected', () => {
-  for (const f of ['README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE', 'package.json', 'package-lock.json', 'tsconfig.json', '.gitignore']) {
+  for (const f of ['README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'DESIGN.md', 'SECURITY.md', 'LICENSE', 'package.json', 'package-lock.json', 'tsconfig.json', '.gitignore']) {
     assert.ok(isExpectedFile(f), `${f} should be allowed`);
   }
 });
