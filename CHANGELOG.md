@@ -15,6 +15,12 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Added
 
+- **Hyperframes pipeline animation.** A restrained, technical README demo now
+  shows eligible older context being cleaned, trimmed and optionally summarized
+  before the next model call, while protected messages and stored task history
+  remain unchanged. The editable source, GitHub GIF, MP4 and static poster ship
+  together; the outdated stats screenshot was removed in favor of live,
+  maintainable measurement explanations.
 - **`cache.anchorBreakpoint` (opt-in, Anthropic only): anchor the prompt-cache
   breakpoint at broke's frozen prefix.** The new AiderDesk 0.88
   `onApplyCacheControl` hook adds a `cache_control` marker on the last
@@ -37,6 +43,8 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Changed
 
+- Reworked the README entry path around a plain-language value statement,
+  one-command start, visual pipeline and clearer stored-history boundary.
 - Corrected the README diagram and documentation claims about measured input
   reduction, provider billing, prompt-cache eligibility, local model
   performance, index privacy and Windows update recovery. Historical design

@@ -1,0 +1,12 @@
+{
+  "duration": 10,
+  "assertions": [
+    { "kind": "appearsBy", "selector": "#brand-name", "bySec": 0.5 },
+    { "kind": "before", "a": "#input-panel", "b": "#processor" },
+    { "kind": "before", "a": "#processor", "b": "#output-panel" },
+    { "kind": "staysInFrame", "selector": "#input-panel" },
+    { "kind": "staysInFrame", "selector": "#processor" },
+    { "kind": "staysInFrame", "selector": "#output-panel" },
+    { "kind": "keepsMoving", "withinSelector": "#pipeline-world", "maxStaticSec": 2.4 }
+  ]
+}

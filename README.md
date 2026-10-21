@@ -1,46 +1,61 @@
 # broke
 
-A token-budget extension for [AiderDesk](https://github.com/hotovo/aider-desk).
-It can shorten conversation messages before AiderDesk sends them to a model.
-The deepest level can use a local Ollama model for summaries, avoiding an
-additional cloud summarization request.
+**Send less repeated context in long
+[AiderDesk](https://github.com/hotovo/aider-desk) sessions.**
+
+broke compresses eligible older conversation material before each model call,
+while protecting the first request and recent turns. The default pipeline
+changes the payload sent to the model, not the stored task history. Its deepest
+optional level can summarize locally with [Ollama](https://ollama.com), without
+an additional cloud summarization request.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/777marvin/ext-broke)](https://github.com/777marvin/ext-broke/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/777marvin/ext-broke/ci.yml)](https://github.com/777marvin/ext-broke/actions)
 
 <p align="center">
-  <img src="docs/assets/stats.png" alt="broke in a real AiderDesk session: /broke stats output with per-pass savings, 💸 badge in the status bar" width="720">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/broke-pipeline-poster.png">
+    <img src="docs/assets/broke-pipeline.gif" alt="Animated broke pipeline: eligible older context is cleaned, trimmed, and optionally summarized locally before a smaller payload is sent to the model; the first request, recent turns, and stored task history stay protected" width="960">
+  </picture>
 </p>
 
-**Author:** [@777marvin](https://github.com/777marvin), this is my first
-public repository. The extension is in active development, and feedback,
-bug reports and feature ideas are very welcome (see [Status](#status)).
+<p align="center"><sub>Only the next model payload is reduced. Stored task history remains unchanged.</sub></p>
+
+## Start in one command
+
+```bash
+npx @aiderdesk/extensions install -g https://github.com/777marvin/ext-broke
+```
+
+Open any AiderDesk task. broke is active by default: the **💸 badge** shows
+its current state, the activation note names the active level, and
+`/broke selftest` exercises the pipeline on synthetic input. See
+[Install](#install) for requirements, Windows notes, manual setup and updates.
 
 ## Why I built this
 
-Conversation history can grow across model calls. AiderDesk already optimizes
-messages and offers automatic compaction at a configured threshold; broke
-adds per-call compression of eligible older messages. Its optional summary
-pass can use [Ollama](https://ollama.com) locally, with no additional cloud
-summarizer charges. Actual cost depends on provider tokenization, prompt
-caching, the selected model and later calls.
+Long AI coding tasks repeatedly send growing conversation context. AiderDesk
+already optimizes messages and can compact a task at a configured threshold;
+broke adds a smaller per-call cleanup of eligible older material. The goal is
+simple: send less repeated context while keeping the task brief and recent
+work available to the model.
 
-## What it does: in plain words
+## How it works
 
-Broke works on the conversation messages AiderDesk is about to send.
-The default input pipeline changes the messages sent to the model, not the
-stored task history. Optional tool-level slicing/error rewriting and manual
-flush do change stored history:
+broke runs on the conversation messages AiderDesk is about to send. Each level
+adds to the one before it:
 
 | Level | What happens | Does anything get lost? |
 |---|---|---|
-| `structural` | removes empty messages, collapses eligible identical adjacent tool results and merges consecutive assistant texts | text content preserved; message framing may change |
-| `truncate` (default) | shrinks qualifying compiler/test logs, old tool outputs and oversized tool-call inputs | old output and tool-call detail |
-| `summarize` | replaces eligible old turns with a summary from local Ollama (default) or a configured cloud model | fine detail of old turns |
+| Clean: `structural` | removes empty messages, collapses eligible identical adjacent tool results and merges consecutive assistant texts | text content is preserved; message framing may change |
+| Trim: `truncate` (default) | shrinks qualifying compiler/test logs, old tool outputs and oversized tool-call inputs | old output and tool-call detail |
+| Summarize: `summarize` | replaces eligible old turns with a summary from local Ollama (default) or a configured cloud model | fine detail of old turns |
 
-The input pipeline protects the first user message and recent turns. It may
-also leave other messages unchanged when a gate blocks compression.
+The first user message and recent turns are protected. A run can still save
+zero when the task is short or a safety gate blocks compression. Optional
+tool-level slicing/error rewriting and manual flush are separate features that
+can change stored history; they are opt-in or explicitly confirmed.
 
 ## Does it actually save money?
 
@@ -58,10 +73,10 @@ Three measurement levels:
   may differ from the rates for your model (see
   [cache-friendly mode](docs/features.md#cache-friendly-mode-provider-prompt-cache)).
 
-Beyond those tiers, the numbers broke itself shows are the ones your own
-tasks produce: the 💸 badge and `/broke stats` measure every run with the
-`chars / 4` heuristic and show them per pass, per task (the stats
-headline is the measured before/after reduction).
+The evidence surface stays live instead of freezing one session into a
+screenshot: the 💸 badge and `/broke stats` report what your own tasks produce.
+They measure every run with the `chars / 4` heuristic and show the result per
+pass and per task (the stats headline is the measured before/after reduction).
 
 Want measurements from your own sessions? Turn on the
 measurement ledger (`/broke measure on`, default) and broke appends one
