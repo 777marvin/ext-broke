@@ -373,6 +373,21 @@ export interface RunRecord {
   cacheProfile?: 'anthropic' | 'openai' | 'off';
   /** True when this run was an escape-hatch rewrite (deliberate cache invalidation). */
   escaped?: boolean;
+  /**
+   * True when this run placed the provider cache breakpoint at broke's frozen
+   * prefix (AiderDesk 0.88 `onApplyCacheControl`, opt-in). Observation only -
+   * never a savings claim. Absent (not false) on every other run/old record.
+   */
+  anchored?: boolean;
+  /** Index of the message that carried the breakpoint, when `anchored` is true (0.88). */
+  anchorIndex?: number;
+  /**
+   * Size (chars) of the PRE-TRANSFORM context observed at
+   * `onTransformMessages` for this run (AiderDesk 0.88). Observation only: the
+   * gap to `charsBefore` is what the HOST pipeline removed before broke saw the
+   * payload - never a broke saving. Absent on runs/old records without it.
+   */
+  baselineChars?: number;
   /** Provider-reported usage of the most recent completed call BEFORE this run. Optional: pre-task-6 records lack them. */
   lastSentTokens?: number;
   lastCacheWriteTokens?: number;
@@ -381,7 +396,7 @@ export interface RunRecord {
 }
 
 /** Map a compression report to its measurement record (pure). */
-export function buildRunRecord(taskId: string, report: CompressReport, lastUsage?: LastCallUsage): RunRecord {
+export function buildRunRecord(taskId: string, report: CompressReport, lastUsage?: LastCallUsage, anchored = false, baselineChars?: number, anchorIndex?: number): RunRecord {
   const rec: RunRecord = {
     kind: 'run',
     taskId,
@@ -402,6 +417,9 @@ export function buildRunRecord(taskId: string, report: CompressReport, lastUsage
   // and 'off'-profile runs keep their exact historical shape.
   if (report.cacheProfile) rec.cacheProfile = report.cacheProfile;
   if (report.escaped) rec.escaped = true;
+  if (anchored) rec.anchored = true;
+  if (anchorIndex !== undefined) rec.anchorIndex = anchorIndex;
+  if (baselineChars !== undefined) rec.baselineChars = baselineChars;
   if (lastUsage) {
     rec.lastSentTokens = lastUsage.sentTokens;
     if (lastUsage.cacheWriteTokens !== undefined) rec.lastCacheWriteTokens = lastUsage.cacheWriteTokens;

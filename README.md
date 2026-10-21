@@ -193,10 +193,12 @@ active by default, every lever is documented under [Usage](#usage) and
 
 ## Requirements
 
-- AiderDesk ≥ 0.84, Node.js ≥ 22. 0.84 is the floor because `/broke diff`
-  reads the uncommitted changes through `TaskContext.getUpdatedFileDiff`,
-  which the host added in 0.84; on an older host that one command reports
-  what it needs and everything else in broke keeps working. From 0.80 on,
+- AiderDesk ≥ 0.88, Node.js ≥ 22. 0.88 is the floor because broke hooks the message-preparation pipeline
+  (`onTransformMessages`, `onOptimizeMessages`, `onApplyCacheControl`), which
+  the host added in 0.88; a 0.84-0.87 host does not dispatch those hooks and
+  cannot run this version. broke also reads the uncommitted changes through
+  `TaskContext.getUpdatedFileDiff` (host 0.84+), now implied by the higher
+  floor. From 0.80 on,
   broke also registers its config watcher via `context.addDisposable()`, so
   disabling or uninstalling the extension releases its directory handle
   automatically.
@@ -383,6 +385,7 @@ The per-pass rules, gates and failure handling are in
 | protectedTurns | 2 | last N user turns never compressed |
 | cache.profile | `off` | off / auto / anthropic / openai - keep the provider prompt cache hitting (see Cache-friendly mode) |
 | cache.escapeHatch | on | one deliberate cache-invalidating rewrite on real budget overruns |
+| cache.anchorBreakpoint | off | (Anthropic only, profile `anthropic`) place the prompt-cache breakpoint at broke's frozen prefix instead of the moving tail, so the provider caches the byte-stable history |
 | cache.openaiStateless | off | the OpenAI provider runs stateless (Zero Data Retention, `store: false`) - switches OFF the OpenAI cached-input economics, which cannot apply to a request that stores nothing |
 | truncate.maxLines / maxKB | 200 / 20 | old tool output limits |
 | truncate.maxInputChars | 2000 | tool-call input trim threshold |

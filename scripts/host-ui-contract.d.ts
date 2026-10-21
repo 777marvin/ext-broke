@@ -5,18 +5,23 @@
  * shapes - never against `any` fallbacks that let typos pass silently.
  * This file pins the shapes the components actually consume, hand-vendored
  * from AiderDesk v0.80.0 / @aiderdesk/extensions 0.31.
- * Minimum supported host: AiderDesk 0.84. That is the floor because
- * `/broke diff` consumes TaskContext.getUpdatedFileDiff, which the HOST added in
- * 0.84 (verified in packages/common/src/extensions.ts at tag v0.84.0) - the
- * first PUBLISHED SDK exposing it is 0.34.0, one minor after the 0.33.0 that
- * ships with 0.84, so the npm tarball is NOT a reliable witness for what a
- * host version implements. Prove every API's runtime availability from the host
- * source at the floor tag; the tarball only bounds the compile surface.
+ * Minimum supported host: AiderDesk 0.88. That is the floor because
+ * `broke` hooks the MESSAGE-PREPARATION pipeline, which only exists from 0.88
+ * onward: `onTransformMessages` and `onApplyCacheControl` are dispatched by
+ * `prepareMessagesForModel` there, and the `onOptimizeMessages` input semantics
+ * changed (its `originalMessages` is now the transformation stage's output, not
+ * raw stored context). A 0.84-0.87 host does not dispatch those hooks, so it can
+ * no longer run broke 1.3.4+. (The earlier 0.84 floor came from `/broke diff`
+ * consuming TaskContext.getUpdatedFileDiff; that requirement is now implied by
+ * the higher floor.) The npm tarball is NOT a reliable witness for what a host
+ * version implements - prove every API's runtime availability from the host
+ * source (or the installed bundle) at the floor version; the tarball only bounds
+ * the compile surface.
  *
  * Verified consumed props against @aiderdesk/extensions 0.32.1 and
  * @aiderdesk/extensions 0.33.0 (checked against these hotovo/aider-desk source
- * commits), and re-verified against @aiderdesk/extensions 0.35.0 and
- * @aiderdesk/extensions 0.37.0:
+ * commits), and re-verified against @aiderdesk/extensions 0.35.0,
+ * @aiderdesk/extensions 0.37.0 and @aiderdesk/extensions 0.38.0:
  * - 0.32.1: d671c96a5b744d1215b4b9f2938f3bfa171802ea
  * - 0.33.0: ef09179b705eed5acb04b313c9acc5e39e7314f4
  * 0.35.0 was verified against a HOST SOURCE CHECKOUT, AiderDesk v0.85.0 at
@@ -36,10 +41,24 @@
  *   under components/common, none of them consumed here;
  * - Tooltip is unchanged (content, children, side, align, delayDuration,
  *   maxWidth).
+ * 0.38.0 is the SDK that ships with AiderDesk v0.88.0 and is now the compile
+ * target (`@aiderdesk/extensions` in package.json). Verification basis differs
+ * from the earlier passes: the host was read from the INSTALLED v0.88 bundle,
+ * whose `prepareMessagesForModel` dispatches the three message-preparation hooks
+ * in order (`onTransformMessages` -> `onOptimizeMessages` -> `onApplyCacheControl`)
+ * and whose generated types carry `TransformMessagesEvent`,
+ * `ApplyCacheControlEvent`, `Extension.onTransformMessages` and
+ * `Extension.onApplyCacheControl`:
+ * - Button, Checkbox, Input, Select and Tooltip are unchanged since the 0.37.0
+ *   pass - no consumed UI prop shape moved;
+ * - BREAKING (host ADR "Message-preparation hook semantics amendment",
+ *   2026-10-15): `OptimizeMessagesEvent.originalMessages` is now the
+ *   TRANSFORMATION stage's output, not raw stored context;
+ * - NEW hooks consumed by broke: `onTransformMessages` (pre-transform baseline
+ *   observation) and `onApplyCacheControl` (frozen-prefix cache breakpoint).
+ * The 0.84-0.87 degrade note below is historic: at the 0.88 floor every
+ * supported host carries the 'task-message-bar-menu' placement (0.85+).
  * So the shapes below are current: only the version reference was stale.
- * One capability degrades on a 0.84 host: the 'task-message-bar-menu'
- * placement does not exist there (it lands in 0.85), so the opt-in message
- * menu simply does not render - it is off by default for that reason too.
  * Sources: src/renderer/src/components/{common/{Button,Checkbox,Input,Select},ui/Tooltip}.tsx
  * and src/renderer/src/contexts/ExtensionsContext.tsx (direct UI registry).
  * Tooltip takes content (not label); Button requires children, not label.

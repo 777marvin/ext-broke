@@ -33,8 +33,9 @@ pipeline, compression applies to the input of each model call only. Since
 1.2.0 the optional cache-friendly mode keeps already-sent bytes byte-stable
 so the provider's prompt cache keeps hitting (sent-ledger, escape hatch
 with hysteresis, provider-reported cache tokens in the measure ledger).
-Since 1.3.0 it targets AiderDesk 0.84 and newer and adds `/broke diff`
-(a budgeted digest of the uncommitted changes) to the command surface.
+It targets AiderDesk 0.88 and newer (the message-preparation hooks) and adds
+`/broke diff` (a budgeted digest of the uncommitted changes) to the command
+surface.
 
 | Level | What happens | Loss |
 |---|---|
@@ -47,12 +48,13 @@ Since 1.3.0 it targets AiderDesk 0.84 and newer and adds `/broke diff`
 | File | Responsibility |
 |---|---|
 | `indexer.ts` | F4 local keyword index (0.10.0): identifier tokenizer, incremental mtime/size merge (bounded scan: `search.scanBudgetMs` wall-clock budget + per-merge document cap for the O(all-terms) delete path, INDEX_MAX_ENTRIES cap), BM25 ranking, live snippet windows (mergeWindows/renderSnippet), total char-budget enforcement per query (footer included, BRK-017), builtAt/scannedAt freshness split (TTL measures the last freshness CHECK), atomic index/<projectHash>/index.json persistence (unique tmp + file/parent fsync) (postings + metadata ONLY, corruption-tolerant load; persisted relPaths are confinement-validated, the project root is re-checked, projectHash is a 64-bit SHA-256 prefix with legacy-dir cleanup, F-09), dirOverride isolation for tests; never throws upward |
-| `index.ts` | Extension entry: class Broke implements Extension, onLoad (BRK-016 one-time legacy-data migration before the first config read; BRK-029 starts the Ollama status probe in the background), onOptimizeMessages (core pipeline, shouldCompress content gate F-10, summarize auto-disable gate, reentry guard), onToolFinished (optional tool-level rewrite + F3 test-green trigger), onAfterCommit (snapshot milestones), onTaskInitialized (activation notice), getCommands (thin wrapper over executeBrokeCommand, the single /broke command surface incl. snapshots, flush, update wiring, config-watcher close/reopen for the folder swap), executeUIExtensionAction incl. the allowlisted `runCommand` used by the badge Quick Commands, getTools (broke-search tool + throttled index refresh off commit signals), getUIComponents (badge), config API (getConfigComponent/getConfigData/saveConfigData), per-run measurement persistence in recordReport; on AiderDesk >= 0.80 the watcher is additionally registered via context.addDisposable() so disable/uninstall releases the directory handle |
+| `index.ts` | Extension entry: class Broke implements Extension, onLoad (BRK-016 one-time legacy-data migration before the first config read; BRK-029 starts the Ollama status probe in the background), onOptimizeMessages (core pipeline, shouldCompress content gate F-10, summarize auto-disable gate, reentry guard), onTransformMessages (pre-transform baseline observation, 0.88), onApplyCacheControl (frozen-prefix cache breakpoint, opt-in, Anthropic, 0.88), onToolFinished (optional tool-level rewrite + F3 test-green trigger), onAfterCommit (snapshot milestones), onTaskInitialized (activation notice), getCommands (thin wrapper over executeBrokeCommand, the single /broke command surface incl. snapshots, flush, update wiring, config-watcher close/reopen for the folder swap), executeUIExtensionAction incl. the allowlisted `runCommand` used by the badge Quick Commands, getTools (broke-search tool + throttled index refresh off commit signals), getUIComponents (badge), config API (getConfigComponent/getConfigData/saveConfigData), per-run measurement persistence in recordReport (incl. the 0.88 `anchored`/`anchorIndex`/`baselineChars` fields); on AiderDesk >= 0.80 the watcher is additionally registered via context.addDisposable() so disable/uninstall releases the directory handle |
 | `compress.ts` | Core pipeline: `compressibleRange` (region protection), `shouldCompress` content gate (F-10), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + disclosure telemetry + extended secret patterns F-13, hierarchical chunked summarization with 8+1 call budget F-07, content-fingerprinted summary cache F-06), `compressMessages` (with `CompressOptions` gate). Since 1.2.0 cache-friendly mode: `frozen` predicate keeps sent bytes byte-identical in passes 1-3, escape hatch with hysteresis (one deliberate rewrite per budget crossing, `escape.locked` released by an under-budget run), summarize gated on sent bytes in BOTH the generate and the cache-reuse branch (byte-stable incremental shape forced, history edits ship untouched, `frozenSkip` reports a frozen refusal instead of a silent no-op) |
 | `output.ts` | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
 | `errors.ts` | Error compressor: detects tsc / pytest / Jest / Vitest / Node stack traces in the text extracted via `output.ts` (plain `text` **and** structured `json`/`content` outputs shaped `{ stdout, stderr, exitCode }`), builds the diagnostic essence, archives full output at tool level (hash-suffixed names, size-capped dir, retention sweep, archive on/off, XF9/XF10); `isCommandTool` classification |
 | `config.ts` | Zod schema (incl. the per-field bounds the settings dialog mirrors), defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` and `search.scanBudgetMs` toggles/knobs |
-| `cache.ts` | Sent-ledger (cache-friendly mode 1.2.0): per-task content-hash set (SHA-256 over {role, content, toolCallId}) of bytes already sent to the model, `markSent`/`isSent`/`clearTask`, FIFO 2000 entries per task, task LRU 50 - false "sent" only costs one compression chance, false "not sent" would bust the cache |
+| `cache.ts` | Sent-ledger (cache-friendly mode 1.2.0): per-task content-hash set (SHA-256 over {role, content, toolCallId}) of bytes already sent to the model, `markSent`/`isSent`/`clearTask`, FIFO 2000 entries per task, task LRU 50 - false "sent" only costs one compression chance, false "not sent" would bust the cache; `frozenPrefixLength` (longest leading already-sent run) and `messageFingerprint` (the ledger's content key, reused to re-locate a message across an array the HOST rebuilt) serve the 0.88 frozen-prefix anchor |
+| `cachecontrol.ts` | 0.88 `onApplyCacheControl` helper: `anchorBreakpoint` places ONE Anthropic `cache_control` breakpoint (`providerOptions.anthropic.cacheControl`) on a chosen message, merging into any existing `providerOptions` (one nested level) and never mutating the input; `ANTHROPIC_BREAKPOINT` is the marker shape |
 | `paths.ts` | BRK-016 runtime-path decision: `runtimeDir()` = `BROKE_DATA_DIR` override, else the versioned `<extension>/../.broke-data/v1` sibling of the installation (outside the swap path); one-time marker-guarded best-effort migration of legacy artifacts (config.json, ledgers, snapshots, index, errors) with no-overwrite and EXDEV copy-then-remove fallback; injectable paths for hermetic tests |
 | `commands.ts` | `/broke` parser + all subcommands (status/why, stats with measured-reduction headline, estimate, measure, reset, selftest, update, snapshot/flush, index/search, level/threshold/limit tuning, help); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
 | `update.ts` | Self-update (`/broke update`): resolves the latest tagged GitHub release (`releases/latest`, fallback highest-semver tag), strict `vMAJOR.MINOR.PATCH` tag validation before any URL use, streaming tarball download with mid-stream cap (F-11), system-`tar` extraction, runtime data lives OUTSIDE the installation under the versioned `.broke-data/v1` root (BRK-016), so a swap cannot touch it - the legacy preserve list stays as a fallback for pre-migration installs (errors/ ≤ 100 MB, index/ ≤ 64 MB caps) and `node_modules` is never carried: `npm ci --omit=dev` always rebuilds from the verified lockfile (BRK-009), atomic swap with rollback plus in-place replacement when a Windows handle pins the directory; rename retries for transient locks (~4 s staggered), merge-over fallback for persistently locked entries (snapshot by copy, merged over, pruned back to payload contents), byte-size manifest verification of the copied payload before success is declared (.deployed-version is written only then), complete rollback on every failure path, transactional .update-state.json marker with stale-backup recovery incl. merge-copy fallback (F-02), non-fatal leftover-backup cleanup; git-checkout guard, concurrency lock; all I/O injectable for hermetic tests. Since 0.8.0 (R1): installs ONLY release ASSETS - Ed25519-signed SHA256SUMS verified against the embedded public key plus checksum match BEFORE extraction/npm ci; unsigned (pre-0.8.0) releases are refused |
@@ -171,11 +173,12 @@ real-session numbers.
   `npm run validate:ui` (JSX UI components, syntax + prop types; vendored
   AiderDesk validator script)
 - Conventions: Conventional Commits, Keep a Changelog, SemVer + annotated tags
-- Compatibility: the declared API line is `@aiderdesk/extensions` ^0.35.0
-  (see package.json; the AiderDesk 0.85 SDK); CI runs typecheck + tests
-  against both the lockfile and `@latest` so API drift is caught on every
-  push. Host floor: AiderDesk >= 0.84, since `/broke diff` reads
-  `TaskContext.getUpdatedFileDiff`, which the host added in 0.84
+- Compatibility: the declared API line is `@aiderdesk/extensions` ^0.38.0
+  (see package.json; the SDK that ships with AiderDesk 0.88); CI runs
+  typecheck + tests against both the lockfile and `@latest` so API drift is
+  caught on every push. Host floor: AiderDesk >= 0.88, the release that
+  dispatches the message-preparation hooks broke relies on
+  (`onTransformMessages`, `onOptimizeMessages`, `onApplyCacheControl`)
   (`docs/aiderdesk-builtin.md` carries the per-version SDK table)
 - Deploy / update: installed instances update themselves via `/broke
   update` (installs the latest tagged release from GitHub; `update check`
@@ -184,7 +187,7 @@ real-session numbers.
   `~/.aider-desk/extensions/broke/` stays the bootstrap for fresh machines
   and the dev loop for uncommitted changes (`/broke update` refuses git
   checkouts by design)
-- Runtime deps: AiderDesk >= 0.84, Node >= 22 (see `engines` in
+- Runtime deps: AiderDesk >= 0.88, Node >= 22 (see `engines` in
   package.json), `zod`; Ollama for `summarize via local`
 
 ## Docs
