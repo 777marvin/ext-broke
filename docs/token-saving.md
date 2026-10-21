@@ -37,12 +37,18 @@ Two consequences:
 
 ### B. Stop the history from growing (Broke's job)
 
+<p align="center">
+  <img src="assets/broke-pipeline.gif" alt="Animated broke pipeline: Clean, Trim, Summarize" width="960">
+</p>
+
+<p align="center"><sub>Only the next model payload is reduced. Stored task history remains unchanged.</sub></p>
+
 | Lever | When | Loss |
 |---|---|---|
-| Structural pass (dedupe, drop empties, merge) | eligible calls | text preserved; message framing may change |
-| Error pass (compiler/test output → diagnostic essence) | above `errors.minChars`, old turns only | error-dump detail |
-| Truncate pass (head+tail of old tool outputs, trim tool-call inputs) | above threshold | middle of old outputs |
-| Summarize pass (LLM summary of old turns) | above threshold, old turns only | detail of old turns |
+| Clean: `structural` (dedupe, drop empties, merge) | eligible calls | text preserved; message framing may change |
+| Trim: `errors` (compiler/test output → diagnostic essence) | above `errors.minChars`, old turns only | error-dump detail |
+| Trim: `truncate` (head+tail of old tool outputs, trim tool-call inputs) | above threshold | middle of old outputs |
+| Summarize: `summarize` (local Ollama or cloud summary of old turns) | above threshold, old turns only | detail of old turns |
 | AiderDesk `Compact` / `Smart` compaction | at the configured host threshold | persistent host compaction; exact behavior depends on the host version |
 
 The last N user turns are protected by broke's input pipeline (2 by

@@ -95,14 +95,20 @@ surface.
 
 ## How the pipeline works
 
-`onOptimizeMessages` fires before every model call. Four passes run over
-everything older than the protected region:
+<p align="center">
+  <img src="assets/broke-pipeline.gif" alt="Animated broke pipeline: eligible older context is cleaned, trimmed, and optionally summarized locally before a smaller payload is sent to the model; the first request, recent turns, and stored task history stay protected" width="960">
+</p>
 
-1. **structural**: drop empty messages, dedupe identical adjacent tool
+<p align="center"><sub>Only the next model payload is reduced. Stored task history remains unchanged.</sub></p>
+
+`onOptimizeMessages` fires before every model call. Three progressive stages (Clean, Trim, and optional Summarize) run over eligible older context:
+
+1. **Clean (`structural`)**: drop empty messages, dedupe identical adjacent tool
    results (only when the producing tool-call, name and input, matches
    too, XF1), merge consecutive assistant texts (text survives, framing
    may change).
-2. **errors** (F1): compiler/test output becomes its diagnostic essence
+2. **Trim (`truncate` & `errors` F1)**:
+   - **errors**: compiler/test output becomes its diagnostic essence
    with an explicit `… [broke: error summary - N lines → M lines]` marker.
    Engages per-message above `errors.minChars` (default 8000), before
    truncate. Only command/compiler/test tools are compressed (same
@@ -112,10 +118,10 @@ everything older than the protected region:
    (`errors.toolLevel`, archives originals under `<extension>/errors/`;
    the archive can be switched off entirely and is retention-swept,
    default 30 days, XF10).
-3. **truncate**: old tool outputs → head+tail with marker under combined
+   - **truncate**: old tool outputs → head+tail with marker under combined
    hard limits (≤ 200 lines AND ≤ 20 KB after the cut, XF5); tool-call
    inputs over 2000 chars → `__broke` preview.
-4. **summarize**: region ≥ `afterTurns` (8) user turns (or a region with
+3. **Summarize (`summarize`)**: region ≥ `afterTurns` (8) user turns (or a region with
    NO user turn at all - autonomous single-prompt tool loops - which would
    otherwise never qualify) and input above
    `maxContextChars` (60000 ≈ 15k tokens) → one `[broke-compacted]`

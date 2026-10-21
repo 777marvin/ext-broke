@@ -51,6 +51,10 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Changed
 
+- **Visually aligned documentation with the Hyperframes pipeline animation.**
+  `docs/overview.md` and `docs/token-saving.md` now feature the pipeline
+  animation and consistently present the Clean, Trim, Summarize stages,
+  protected message boundary and unchanged task history lane.
 - Renamed the user-facing Short/Normal/Long task-length framing to
   Safe/Balanced/Maximum savings. The stored mode values and behavior remain
   backward-compatible; only the user-facing mental model changed.
@@ -82,6 +86,11 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- **README hyperframes animation showed a static poster for reduced-motion users.**
+  Removed the `prefers-reduced-motion: reduce` source tag from the README image
+  markup so users with OS or browser animation effects disabled (common under
+  Windows accessibility settings) receive the animated pipeline demo rather
+  than a static poster frame.
 - **The frozen-prefix anchor is re-located by content, not by a stale index.**
   The host rebuilds the message array between `onOptimizeMessages` and
   `onApplyCacheControl` (`convertImageToolResults` inserts a user message after
