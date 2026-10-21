@@ -56,7 +56,7 @@ idea-level, unscheduled candidates recorded
 |---|-----------|------|--------|--------|
 | F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (since v1.2.2) |
 | F6 | Live-UI expansion: observed input reduction and estimates, activity dot | feat | M | proposed |
-| F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | proposed |
+| F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | in progress (everyday-view slice in Unreleased) |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
 | F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
 
@@ -76,7 +76,7 @@ idea-level, unscheduled candidates recorded
   configs migrate to `custom` + `autonomous` without value changes. Entry
   points: the badge gear (accessible dialog: focus trap and focus
   restoration; Cancel and Escape work during loading, previewing and errors
-  but are blocked while saving; Task length + Broke automation selectors)
+  but are blocked while saving; Savings approach + Broke automation selectors)
   and the top of the full settings panel; the canonical preset
   table lives in presets.ts and is consumed via the `previewMode` UI
   action (never duplicated in JSX). Review-round hardening: batched config
@@ -111,7 +111,11 @@ idea-level, unscheduled candidates recorded
 - **F7 - Minimalist operation.** Reduce the daily-driver surface to the
   essentials for non-power users (sane presets, one toggle, honest numbers
   at a glance); the current developer-facing surface stays as an explicit,
-  optional dev mode.
+  optional dev mode. The first Unreleased slice makes the badge dialog the
+  everyday surface: plain-language state, Safe/Balanced/Maximum-savings
+  choices, three task-focused actions, and a closed advanced disclosure that
+  preserves every technical control and command tool. Remaining F7 work is a
+  broader first-run/install flow and usability validation with non-experts.
 - **F8 - Internal benchmark methodology.** Compare reproducible tasks with
   and without broke, separating observed input reduction, provider usage
   and modeled monetary estimates.

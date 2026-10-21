@@ -136,10 +136,10 @@
   };
   const overlayCache = overlayCfg?.cache ?? {};
   // Commands that change state or spend money from a single click.
-  // `reset` destroys this task's stats, `summarize now` triggers a real
-  // summarizer call, `selftest` runs the whole pipeline on a temp project.
+  // `reset` destroys this task's stats and `summarize now` triggers a real
+  // summarizer call. The synthetic setup check is safe to run directly.
   // The read-only ones (status/stats/why/estimate/measure/help) run directly.
-  const MUTATING_QUICK_COMMANDS = ['summarize now', 'reset', 'selftest'];
+  const MUTATING_QUICK_COMMANDS = ['summarize now', 'reset'];
   const runQuickCommand = async (cmd) => {
     if (saving || previewing) return;
     if (MUTATING_QUICK_COMMANDS.includes(cmd) && pendingCommand !== cmd) {
@@ -188,20 +188,11 @@
 
   // Always render: until the first data fetch arrives the badge shows 0
   // instead of disappearing entirely.
-  const s = data?.savedTokens ?? { structural: 0, error: 0, truncate: 0, summarize: 0 };
   const total = data?.totalSavedTokens ?? 0;
   const level = data?.level ?? 'off';
   const configured = data?.summarizerConfigured ?? 'none';
-  const used = data?.summarizerUsed ?? 'none';
-  const failed = data?.summarizeFailures ?? 0;
   const ollama = data?.ollama ?? null;
   const cost = data?.cost ?? { savedUsd: null, modelLabel: null };
-  const disabled = data?.summarizeDisabled ?? false;
-  // Counterfactual/one-shot estimates (E5 honesty, BRK-022): slice, flush
-  // and search are MODELED figures that never enter totalSavedTokens.
-  const est = data?.estimates ?? null;
-  const showEstimates =
-    !!est && ((est.slice ?? 0) > 0 || (est.flush ?? 0) > 0 || (est.search ?? 0) > 0);
   // Idle transparency (XF17): when nothing was ever compressed for this
   // task, show WHY instead of a bare suspicious 0 - the last optimize run's
   // input size vs the configured threshold.
@@ -211,47 +202,50 @@
   const neverSaved = total === 0 && passes === 0;
   const k = (n) => `${Math.round(n / 1000)}k`;
 
-  const backendLabel = configured === 'local' ? 'local (Ollama)' : configured === 'cloud' ? 'cloud' : 'off';
-  const usedLabel = used === 'local' ? 'local (Ollama)' : used === 'cloud' ? 'cloud' : 'never yet';
-  const usedNote =
-    used === 'none' && configured !== 'none'
-      ? ' - only fires when the input exceeds the maxchars threshold AND the region is older than summarize.afterTurns'
-      : '';
-  const ollamaNote = configured === 'local'
-    ? ollama
-      ? ollama.reachable
-        ? `ollama: reachable (${ollama.models} models)`
-        : `ollama: NOT reachable (${ollama.error || 'unknown'}) - local summaries inactive (ollama serve)`
-      : 'ollama: status unknown'
-    : '';
-
   const money =
     cost.savedUsd != null && cost.savedUsd > 0
       ? ` ≈ $${cost.savedUsd < 0.01 ? cost.savedUsd.toFixed(4) : cost.savedUsd.toFixed(2)}`
       : '';
-  const title = [
-    `broke - level: ${level}`,
-    `scope: conversation messages only (system prompt & tool schemas are never compressed)`,
-    `saved ≈ ${total.toLocaleString('en-US')} input tokens${money} (chars/4 estimate)`,
-    neverSaved && obs && obs.inputChars > 0 && maxCtx > 0
-      ? `idle: last optimize run saw ${obs.inputChars.toLocaleString('en-US')} of ${maxCtx.toLocaleString('en-US')} chars - below threshold, nothing to compress yet (/broke why for details)`
-      : '',
-    cost.modelLabel ? `  at current task model: ${cost.modelLabel}` : '',
-    `  structural: ${(s.structural ?? 0).toLocaleString('en-US')} | error: ${(s.error ?? 0).toLocaleString('en-US')} | truncate: ${(s.truncate ?? 0).toLocaleString('en-US')} | summarize: ${(s.summarize ?? 0).toLocaleString('en-US')}`,
-    showEstimates
-      ? `  estimates: slice ${(est.slice ?? 0).toLocaleString('en-US')} (modeled) · flush ${(est.flush ?? 0).toLocaleString('en-US')} / search ${(est.search ?? 0).toLocaleString('en-US')} - counterfactual, NOT counted above (/broke estimate)`
-      : '',
-    `summarizer: configured ${backendLabel} · used ${usedLabel}${usedNote}${failed > 0 ? ` - ${failed} failure(s)` : ''}${disabled ? ' - auto-disabled after repeated failures (/broke reset re-enables)' : ''}`,
-    ollamaNote ? `  ${ollamaNote}` : '',
-    'click the task input for /broke stats',
-  ]
-    .filter(Boolean)
-    .join('\n');
-
   const ollamaDown = configured === 'local' && ollama && !ollama.reachable;
-  const mode = data?.mode ?? 'custom';
-  const autonomy = data?.autonomy ?? 'autonomous';
-  const statusLabel = `Broke: mode ${mode}, Broke automation ${autonomy}`;
+  const dialogEnabled = overlayOpen ? overlayCfg?.enabled ?? level !== 'off' : level !== 'off';
+  const dialogLevel = overlayOpen ? overlayCfg?.level ?? level : level;
+  const dialogBackend = overlayOpen ? overlayCfg?.summarize?.via ?? configured : configured;
+  const localSummaryNeedsSetup = dialogEnabled && dialogLevel === 'summarize' && dialogBackend === 'local' && !!ollamaDown;
+  const status = !dialogEnabled
+    ? {
+        heading: 'Broke is off',
+        detail: 'Turn it on to shorten older technical context automatically.',
+        color: '#8a2d24',
+        background: '#fff4f2',
+        border: '#efc6c0',
+      }
+    : localSummaryNeedsSetup
+      ? {
+          heading: 'Local summaries need setup',
+          detail: 'Basic compression still works. Start Ollama to enable the maximum-savings approach.',
+          color: '#7a5512',
+          background: '#fff8e8',
+          border: '#ead39b',
+        }
+      : total > 0
+        ? {
+            heading: 'Broke is saving context',
+            detail: `About ${total.toLocaleString('en-US')} input tokens removed so far${money}. Your saved task history is unchanged.`,
+            color: '#19633b',
+            background: '#eef8f1',
+            border: '#b9ddc5',
+          }
+        : {
+            heading: 'Broke is ready',
+            detail: neverSaved && obs?.inputChars > 0 && obs?.belowThreshold
+              ? 'This conversation is still short, so there is nothing to compress yet. There is nothing else to set up.'
+              : 'It will shorten older technical context automatically. There is nothing else to set up.',
+            color: '#185d82',
+            background: '#eef7fb',
+            border: '#b8d8e8',
+          };
+  const title = `${status.heading}. ${status.detail}`;
+  const statusLabel = `${status.heading}. ${total.toLocaleString('en-US')} estimated input tokens saved.`;
   return (
     <div
       role="status"
@@ -351,18 +345,22 @@
               fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(0,0,0,0.08)', paddingBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 18, color: '#111' }}>
-                broke settings
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid rgba(0,0,0,0.08)', paddingBottom: 16 }}>
+              <div>
+                <div style={{ fontWeight: 750, fontSize: 19, color: '#111', letterSpacing: '-0.01em' }}>Broke</div>
+                <div style={{ marginTop: 3, color: '#666', fontSize: 12 }}>Context savings for every task</div>
               </div>
-              <button onClick={closeOverlay} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 20, color: '#999', padding: 4 }} title="Close">×</button>
+              <button aria-label="Close settings" onClick={closeOverlay} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 20, color: '#777', padding: 4 }} title="Close settings">×</button>
             </div>
             
             {overlayError ? <div role="alert" style={{ color: '#d32f2f', background: '#ffebee', border: '1px solid #ffcdd2', borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 500 }}>{overlayError}</div> : null}
             
-            <div style={{ fontSize: 13, color: '#444', lineHeight: 1.6, background: '#f8f9fa', padding: 12, borderRadius: 8, borderLeft: '4px solid #0066cc' }}>
-              <p style={{ margin: '0 0 6px 0', fontWeight: 600, color: '#0066cc' }}>Extension-wide configuration</p>
-              <p style={{ margin: 0 }}>Long mode requires a running <code style={{ background: '#e9ecef', padding: '1px 4px', borderRadius: 3 }}>Ollama</code> server for local or provider keys for cloud summaries; <code style={{ background: '#e9ecef', padding: '1px 4px', borderRadius: 3 }}>cloud</code> use may incur costs. <code style={{ background: '#e9ecef', padding: '1px 4px', borderRadius: 3 }}>/broke off</code> is the master switch.</p>
+            <div role="status" style={{ fontSize: 13, color: status.color, lineHeight: 1.55, background: status.background, padding: '13px 14px', borderRadius: 8, border: `1px solid ${status.border}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 14 }}>
+                <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: '50%', background: status.color, flex: '0 0 auto' }} />
+                {status.heading}
+              </div>
+              <p style={{ margin: '6px 0 0 17px', color: '#34424a' }}>{status.detail}</p>
             </div>
             
             {previewing ? <div role="status" style={{ color: '#856404', fontSize: 13, padding: '10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -377,93 +375,146 @@
             ) : (
               <>
                 <fieldset disabled={saving} onChangeCapture={invalidatePreview} style={{ border: 0, padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontWeight: 500, fontSize: 12, color: '#222' }}>Task length
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', fontWeight: 650, fontSize: 13, color: '#222' }}>
+                    <input
+                      type="checkbox"
+                      checked={overlayCfg.enabled ?? true}
+                      onChange={(e) => patchOverlay({ enabled: e.target.checked })}
+                      style={{ width: 17, height: 17, accentColor: '#0066cc', cursor: 'pointer' }}
+                    />
+                    Use Broke automatically
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontWeight: 650, fontSize: 12, color: '#222' }}>Savings approach
                   <select value={overlayCfg.mode ?? 'custom'} onChange={(e) => void selectMode(e.target.value)} style={{ ...selectStyle, marginTop: 4 }}>
-                    <option value="short">Short - fidelity first</option>
-                    <option value="normal">Normal - truncate old outputs</option>
-                    <option value="long">Long - summarization (needs backend)</option>
-                    <option value="custom">Custom - keep current values</option>
+                    <option value="short">Safe - tidy repeated content only</option>
+                    <option value="normal">Balanced - shorten old technical output (recommended)</option>
+                    <option value="long">Maximum savings - summarize older work (setup required)</option>
+                    <option value="custom">Custom - expert settings</option>
                   </select>
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontWeight: 500, fontSize: 12, color: '#222' }}>Broke automation
-                  <select value={overlayCfg.autonomy ?? 'autonomous'} onChange={(e) => patchOverlay({ autonomy: e.target.value })} style={{ ...selectStyle, marginTop: 4 }}>
-                    <option value="autonomous">Autonomous - follow feature switches</option>
-                    <option value="manual">Manual - no automatic LLM calls or stored-history rewrites</option>
-                  </select>
-                </label>
-                <p style={{ fontSize: 11, color: '#666', margin: 0, lineHeight: 1.5 }}>Host agent permissions are unchanged. Manual also pauses automatic snapshots and index refreshes; explicit commands still work.</p>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={overlayCfg.enabled ?? true}
-                    onChange={(e) => patchOverlay({ enabled: e.target.checked })}
-                    style={{ width: 16, height: 16, accentColor: '#0066cc', cursor: 'pointer' }}
-                  />
-                  <span style={{ fontSize: 13, color: '#222' }}>Enable broke</span>
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontWeight: 500, fontSize: 12, color: '#222' }}>Compression level
-                  <select value={overlayCfg.level ?? 'truncate'} onChange={(e) => patchOverlay({ level: e.target.value })} style={{ ...selectStyle, marginTop: 4 }}>
-                    <option value="structural">Structural - content-preserving only</option>
-                    <option value="truncate">Truncate - + truncation of old tool outputs</option>
-                    <option value="summarize">Summarize - + LLM summary (needs backend)</option>
-                  </select>
-                </label>
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, fontWeight: 500, fontSize: 12, color: '#222' }}>Max context chars
-                    <input key={overlayCfg.maxContextChars} type="number" min="1" defaultValue={String(overlayCfg.maxContextChars ?? 60000)} onBlur={numberCommit('maxContextChars', 60000)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} style={{ ...inputStyle, marginTop: 4 }} />
                   </label>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, fontWeight: 500, fontSize: 12, color: '#222' }}>Protected turns
-                    <input key={overlayCfg.protectedTurns} type="number" min="1" max="50" defaultValue={String(overlayCfg.protectedTurns ?? 2)} onBlur={numberCommit('protectedTurns', 2, 50)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} style={{ ...inputStyle, marginTop: 4 }} />
-                  </label>
-                </div>
-                <label
-                  style={{ display: 'flex', flexDirection: 'column', gap: 4, fontWeight: 500, fontSize: 12, color: '#222' }}
-                  title="Auto detects the rules from the task model: Claude → Anthropic rules (writes 1.25x, hits 0.1x), GPT/o-models → OpenAI rules (cached input 0.5x)."
-                >
-                  Cache profile (prompt-cache friendly mode)
-                  <select
-                    value={overlayCache.profile ?? 'off'}
-                    onChange={(e) => patchOverlay({ cache: { ...overlayCache, profile: e.target.value } })}
-                    style={{ ...selectStyle, marginTop: 4 }}
-                  >
-                    <option value="off">Off - plain behavior</option>
-                    <option value="auto">Auto - detect from task model (recommended)</option>
-                    <option value="anthropic">Anthropic - Claude models</option>
-                    <option value="openai">OpenAI - GPT/o-models</option>
-                  </select>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
-                  title="On a real budget overrun, ONE deliberate rewrite of sent history (cache lost once) instead of shipping an over-budget context."
-                >
-                  <input
-                    type="checkbox"
-                    checked={overlayCache.escapeHatch ?? true}
-                    onChange={(e) => patchOverlay({ cache: { ...overlayCache, escapeHatch: e.target.checked } })}
-                    style={{ width: 16, height: 16, accentColor: '#0066cc', cursor: 'pointer' }}
-                  />
-                  <span style={{ fontSize: 13, color: '#222' }}>Escape hatch on budget overruns</span>
-                </label>
-                <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>Full config: AiderDesk settings → Extensions → broke, or <code style={{ background: '#f5f5f5', padding: '1px 4px', borderRadius: 3 }}>/broke help</code></div>
-              </fieldset>
-              <div style={{ borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 16, marginTop: 8 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12, color: '#111', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span>⚡</span> Quick Commands
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 8 }}>
+                  <p style={{ fontSize: 11, color: '#666', margin: 0, lineHeight: 1.5 }}>
+                    This choice applies to every task. Balanced is the recommended default and does not require extra software.
+                  </p>
+                  {overlayCfg.mode === 'long' ? (
+                    <div style={{ fontSize: 11, color: '#6d4d13', lineHeight: 1.5, background: '#fff8e8', border: '1px solid #ead39b', borderRadius: 6, padding: '8px 10px' }}>
+                      Maximum savings needs local Ollama or a configured cloud model. Cloud summaries can cost money and send older conversation content to that provider.
+                    </div>
+                  ) : null}
+                </fieldset>
+
+                <div aria-label="Common actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
                   {[
-                    { label: 'status', cmd: 'status', desc: 'Show config + stats' },
-                    { label: 'stats', cmd: 'stats', desc: 'Per-pass token savings' },
-                    { label: 'why', cmd: 'why', desc: 'Why 0 saved?' },
-                    { label: 'estimate', cmd: 'estimate', desc: 'Slice/flush/search avoided' },
-                    { label: 'measure', cmd: 'measure', desc: 'Per-run measurement ledger' },
-                    { label: 'summarize now', cmd: 'summarize now', desc: 'Pre-warm summary cache' },
-                    { label: 'reset', cmd: 'reset', desc: 'Clear task stats' },
-                    { label: 'selftest', cmd: 'selftest', desc: 'Run pipeline self-test' },
-                    { label: 'help', cmd: 'help', desc: 'Show all commands' },
-                  ].map((item) => {
-                    const armed = pendingCommand === item.cmd;
-                    const mutating = MUTATING_QUICK_COMMANDS.includes(item.cmd);
-                    return (
+                    { label: 'Check setup', cmd: 'selftest', desc: 'Run a safe check with synthetic content' },
+                    { label: 'View savings', cmd: 'stats', desc: 'Show what Broke has removed in this task' },
+                    { label: 'Why no savings yet?', cmd: 'why', desc: 'Explain what Broke is waiting for' },
+                  ].map((item) => (
+                    <button
+                      key={item.cmd}
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); void runQuickCommand(item.cmd); }}
+                      disabled={saving || previewing}
+                      title={item.desc}
+                      style={{
+                        padding: '9px 8px',
+                        minHeight: 44,
+                        fontSize: 12,
+                        lineHeight: 1.25,
+                        background: '#ffffff',
+                        border: '1px solid #b8c7d1',
+                        borderRadius: 7,
+                        cursor: saving || previewing ? 'not-allowed' : 'pointer',
+                        color: '#164d6a',
+                        fontWeight: 650,
+                        opacity: saving || previewing ? 0.5 : 1,
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                {commandResult ? (
+                  <div
+                    role="status"
+                    style={{
+                      padding: '9px 11px',
+                      fontSize: 12,
+                      lineHeight: 1.45,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: 160,
+                      overflowY: 'auto',
+                      background: commandResult.ok ? '#f1f8f1' : '#fdf1f1',
+                      border: `1px solid ${commandResult.ok ? '#b7dfb7' : '#e6b7b7'}`,
+                      borderRadius: 6,
+                      color: commandResult.ok ? '#1e4620' : '#7a1f1f',
+                    }}
+                  >
+                    {commandResult.text}
+                  </div>
+                ) : null}
+
+                <details style={{ borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 14 }}>
+                  <summary style={{ cursor: 'pointer', color: '#34424a', fontSize: 12, fontWeight: 700, padding: '4px 0' }}>
+                    Advanced settings and diagnostics
+                  </summary>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 14 }}>
+                    <fieldset disabled={saving} onChangeCapture={invalidatePreview} style={{ border: 0, padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontWeight: 500, fontSize: 12, color: '#222' }}>Broke automation
+                        <select value={overlayCfg.autonomy ?? 'autonomous'} onChange={(e) => patchOverlay({ autonomy: e.target.value })} style={{ ...selectStyle, marginTop: 4 }}>
+                          <option value="autonomous">Autonomous - follow feature switches</option>
+                          <option value="manual">Manual - no automatic LLM calls or stored-history rewrites</option>
+                        </select>
+                      </label>
+                      <p style={{ fontSize: 11, color: '#666', margin: 0, lineHeight: 1.5 }}>Host agent permissions are unchanged. Manual also pauses automatic snapshots and index refreshes; explicit commands still work.</p>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontWeight: 500, fontSize: 12, color: '#222' }}>Compression level
+                        <select value={overlayCfg.level ?? 'truncate'} onChange={(e) => patchOverlay({ level: e.target.value })} style={{ ...selectStyle, marginTop: 4 }}>
+                          <option value="structural">Structural - content-preserving only</option>
+                          <option value="truncate">Truncate - + truncation of old tool outputs</option>
+                          <option value="summarize">Summarize - + LLM summary (needs backend)</option>
+                        </select>
+                      </label>
+                      <div style={{ display: 'flex', gap: 12 }}>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, fontWeight: 500, fontSize: 12, color: '#222' }}>Max context chars
+                          <input key={overlayCfg.maxContextChars} type="number" min="1" defaultValue={String(overlayCfg.maxContextChars ?? 60000)} onBlur={numberCommit('maxContextChars', 60000)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} style={{ ...inputStyle, marginTop: 4 }} />
+                        </label>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, fontWeight: 500, fontSize: 12, color: '#222' }}>Protected turns
+                          <input key={overlayCfg.protectedTurns} type="number" min="1" max="50" defaultValue={String(overlayCfg.protectedTurns ?? 2)} onBlur={numberCommit('protectedTurns', 2, 50)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} style={{ ...inputStyle, marginTop: 4 }} />
+                        </label>
+                      </div>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontWeight: 500, fontSize: 12, color: '#222' }} title="Auto detects the cache rules from the task model.">
+                        Cache profile (prompt-cache friendly mode)
+                        <select value={overlayCache.profile ?? 'off'} onChange={(e) => patchOverlay({ cache: { ...overlayCache, profile: e.target.value } })} style={{ ...selectStyle, marginTop: 4 }}>
+                          <option value="off">Off - plain behavior</option>
+                          <option value="auto">Auto - detect from task model (recommended)</option>
+                          <option value="anthropic">Anthropic - Claude models</option>
+                          <option value="openai">OpenAI - GPT/o-models</option>
+                        </select>
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} title="Allows one cache-invalidating rewrite on a real budget overrun.">
+                        <input type="checkbox" checked={overlayCache.escapeHatch ?? true} onChange={(e) => patchOverlay({ cache: { ...overlayCache, escapeHatch: e.target.checked } })} style={{ width: 16, height: 16, accentColor: '#0066cc', cursor: 'pointer' }} />
+                        <span style={{ fontSize: 13, color: '#222' }}>Escape hatch on budget overruns</span>
+                      </label>
+                      <div style={{ fontSize: 11, color: '#777' }}>Full configuration: AiderDesk settings → Extensions → Broke.</div>
+                    </fieldset>
+
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 9, color: '#34424a' }}>Command tools</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 8 }}>
+                        {[
+                          { label: 'status', cmd: 'status', desc: 'Show config + stats' },
+                          { label: 'stats', cmd: 'stats', desc: 'Per-pass token savings' },
+                          { label: 'why', cmd: 'why', desc: 'Why 0 saved?' },
+                          { label: 'estimate', cmd: 'estimate', desc: 'Slice/flush/search avoided' },
+                          { label: 'measure', cmd: 'measure', desc: 'Per-run measurement ledger' },
+                          { label: 'summarize now', cmd: 'summarize now', desc: 'Pre-warm summary cache' },
+                          { label: 'reset', cmd: 'reset', desc: 'Clear task stats' },
+                          { label: 'selftest', cmd: 'selftest', desc: 'Run pipeline self-test' },
+                          { label: 'help', cmd: 'help', desc: 'Show all commands' },
+                        ].map((item) => {
+                          const armed = pendingCommand === item.cmd;
+                          const mutating = MUTATING_QUICK_COMMANDS.includes(item.cmd);
+                          return (
                     <button
                       key={item.cmd}
                       type="button"
@@ -496,31 +547,12 @@
                         <>/broke <span style={{ fontWeight: 700 }}>{item.label}</span></>
                       )}
                     </button>
-                    );
-                  })}
-                </div>
-                {commandResult ? (
-                  <div
-                    role="status"
-                    style={{
-                      marginTop: 10,
-                      padding: '8px 10px',
-                      fontSize: 12,
-                      lineHeight: 1.4,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      maxHeight: 160,
-                      overflowY: 'auto',
-                      background: commandResult.ok ? '#f1f8f1' : '#fdf1f1',
-                      border: `1px solid ${commandResult.ok ? '#b7dfb7' : '#e6b7b7'}`,
-                      borderRadius: 6,
-                      color: commandResult.ok ? '#1e4620' : '#7a1f1f',
-                    }}
-                  >
-                    {commandResult.text}
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
-                ) : null}
-              </div>
+                </details>
               </>
             )}
             <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 16, marginTop: 4 }}>

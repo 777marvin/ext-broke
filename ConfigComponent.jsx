@@ -101,16 +101,16 @@
 
       <section className="flex flex-col gap-2" aria-label="Mode settings">
         <p style={{ fontSize: '12px', color: '#333' }}>Extension-wide settings: apply to every task using Broke.</p>
-        <p style={{ fontSize: '12px', color: '#333' }}>Before selecting Long: local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are not changed. Manual automation only reuses existing summaries.</p>
+        <p style={{ fontSize: '12px', color: '#333' }}>Before selecting Maximum savings: local summaries need a running Ollama server and the configured model installed; cloud summaries send conversation content to your selected provider and may incur costs. Backend and consent settings are not changed. Manual automation only reuses existing summaries.</p>
         <Select
-          label="Task length"
+          label="Savings approach"
           value={cfg.mode ?? 'custom'}
           onChange={(value) => void selectMode(value)}
           options={[
-            { value: 'short', label: 'Short - fidelity first, lossless structural pass' },
-            { value: 'normal', label: 'Normal - truncation of old tool outputs (recommended)' },
-            { value: 'long', label: 'Long - summarization, tighter limits (needs backend)' },
-            { value: 'custom', label: 'Custom - keeps the current values' },
+            { value: 'short', label: 'Safe - tidy repeated content only' },
+            { value: 'normal', label: 'Balanced - shorten old technical output (recommended)' },
+            { value: 'long', label: 'Maximum savings - summarize older work (setup required)' },
+            { value: 'custom', label: 'Custom - expert settings' },
           ]}
         />
         <Select

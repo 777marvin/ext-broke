@@ -33,7 +33,7 @@ let draft: any;
 let persisted: any;
 let calls: string[];
 let action: (name: string, ...args: any[]) => Promise<any>;
-async function mount(badge = false, initial = applyPreset(DEFAULT_CONFIG, 'long')) {
+async function mount(badge = false, initial = applyPreset(DEFAULT_CONFIG, 'long'), badgeData: Record<string, unknown> = {}) {
   draft = structuredClone(initial);
   persisted = structuredClone(initial);
   calls = [];
@@ -51,7 +51,7 @@ async function mount(badge = false, initial = applyPreset(DEFAULT_CONFIG, 'long'
   const Component = component(badge ? 'StatusBadge.jsx' : 'ConfigComponent.jsx');
   const App = () => {
     const [config, setConfig] = React.useState(draft);
-    return h(Component, { config, data: { mode: initial.mode, autonomy: initial.autonomy }, ui,
+    return h(Component, { config, data: { mode: initial.mode, autonomy: initial.autonomy, ...badgeData }, ui,
       updateConfig: (next: any) => { draft = next; setConfig(next); },
       executeExtensionAction: (name: string, ...args: any[]) => action(name, ...args) });
   };
@@ -100,18 +100,18 @@ describe('F5 rendered settings interactions', () => {
     assert.match(container.textContent!, /Ollama.*cloud.*cost/i);
     assert.equal(container.querySelectorAll('button[aria-pressed]').length, 0);
     await number('Max context chars', '72000');
-    assert.equal(input('Task length').value, 'custom');
-    await change('Task length', 'long');
+    assert.equal(input('Savings approach').value, 'custom');
+    await change('Savings approach', 'long');
     assert.equal(input('Max context chars').value, '60000');
     await change('Cache profile', 'auto');
-    assert.equal(input('Task length').value, 'long');
+    assert.equal(input('Savings approach').value, 'long');
     for (const label of ['Protected turns', 'Max lines', 'Max KB', 'Summarize only turns older']) {
       await number(label, label === 'Protected turns' ? '3' : '10');
-      assert.equal(input('Task length').value, 'custom', label);
-      await change('Task length', 'long');
+      assert.equal(input('Savings approach').value, 'custom', label);
+      await change('Savings approach', 'long');
     }
     await change('Compression level', 'truncate');
-    assert.equal(input('Task length').value, 'custom');
+    assert.equal(input('Savings approach').value, 'custom');
     assert.equal(calls.includes('setConfig'), false, 'full settings edits remain host-owned drafts');
   });
 
@@ -148,17 +148,17 @@ describe('F5 rendered settings interactions', () => {
     const first = deferred();
     let old: any;
     action = (name, ...args) => { if (name === 'previewMode' && args[1] === 'short') { old = applyPreset(args[0], 'short'); return first.promise; } return base(name, ...args); };
-    await change('Task length', 'short');
-    await change('Task length', 'normal');
+    await change('Savings approach', 'short');
+    await change('Savings approach', 'normal');
     await React.act(async () => first.resolve(old));
-    assert.equal(input('Task length').value, 'normal');
+    assert.equal(input('Savings approach').value, 'normal');
     const second = deferred();
     action = (name, ...args) => name === 'previewMode' ? second.promise : base(name, ...args);
-    await change('Task length', 'long');
+    await change('Savings approach', 'long');
     await change('Broke automation', 'manual');
     await React.act(async () => second.resolve(applyPreset(DEFAULT_CONFIG, 'long')));
     assert.equal(input('Broke automation').value, 'manual');
-    assert.equal(input('Task length').value, 'normal');
+    assert.equal(input('Savings approach').value, 'normal');
   });
 });
 
@@ -167,11 +167,11 @@ describe('F5 rendered badge dialog interactions', () => {
     await mount(true);
     await open();
     assert.ok(container.querySelector('dialog[open]'));
-    assert.match(container.textContent!, /extension-wide/i);
+    assert.match(container.textContent!, /applies to every task/i);
     assert.match(container.textContent!, /Ollama.*cloud.*cost/i);
     await number('Max context chars', '70000');
-    assert.equal(input('Task length').value, 'custom');
-    await change('Task length', 'normal');
+    assert.equal(input('Savings approach').value, 'custom');
+    await change('Savings approach', 'normal');
     assert.equal(input('Max context chars').value, '60000');
     await change('Broke automation', 'manual');
     await click(button('Cancel'));
@@ -179,7 +179,7 @@ describe('F5 rendered badge dialog interactions', () => {
     assert.equal(persisted.autonomy, 'autonomous');
     assert.equal(calls.includes('setConfig'), false);
     await open();
-    await change('Task length', 'short');
+    await change('Savings approach', 'short');
     await change('Broke automation', 'manual');
     await click(button('Save'));
     assert.equal(persisted.mode, 'short');
@@ -214,11 +214,11 @@ describe('F5 rendered badge dialog interactions', () => {
     const base = action;
     const pending = deferred();
     action = (name, ...args) => name === 'previewMode' ? pending.promise : base(name, ...args);
-    await change('Task length', 'short');
+    await change('Savings approach', 'short');
     await click(button('Cancel'));
     await open();
     await React.act(async () => pending.resolve(applyPreset(DEFAULT_CONFIG, 'short')));
-    assert.equal(input('Task length').value, 'long');
+    assert.equal(input('Savings approach').value, 'long');
     action = async (name, ...args) => name === 'setConfig' ? { ok: false, config: persisted } : base(name, ...args);
     await click(button('Save'));
     assert.ok(container.querySelector('dialog[open]'));
@@ -227,6 +227,76 @@ describe('F5 rendered badge dialog interactions', () => {
     await click(button('Save'));
     assert.match(container.textContent!, /could not save/i);
     await click(button('Cancel'));
+  });
+});
+
+describe('F7 everyday badge experience', () => {
+  it('opens with a plain-language status and keeps technical controls collapsed', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {
+      level: 'truncate',
+      totalSavedTokens: 0,
+      passes: 0,
+      maxContextChars: 60000,
+      observation: { inputChars: 31000, belowThreshold: true },
+    });
+    await open();
+
+    assert.match(container.textContent!, /Broke is ready/i);
+    assert.match(container.textContent!, /nothing else to set up/i);
+    assert.equal(input('Savings approach').value, 'normal');
+    assert.match(container.textContent!, /Balanced.*recommended/i);
+
+    const advanced = [...container.querySelectorAll('details')].find((node) =>
+      /Advanced settings and diagnostics/i.test(node.querySelector('summary')?.textContent ?? ''),
+    );
+    assert.ok(advanced, 'advanced disclosure exists');
+    assert.equal(advanced.open, false, 'expert controls start collapsed');
+    assert.ok(advanced.querySelector('label select'), 'existing expert controls remain available');
+  });
+
+  it('uses task-focused action labels and runs setup checks without exposing command syntax', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'));
+    await open();
+
+    const setup = button('Check setup');
+    const savings = button('View savings');
+    const explanation = button('Why no savings yet?');
+    assert.doesNotMatch(setup.textContent ?? '', /\/broke/);
+    assert.doesNotMatch(savings.textContent ?? '', /\/broke/);
+    assert.doesNotMatch(explanation.textContent ?? '', /\/broke/);
+
+    await click(setup);
+    assert.deepEqual(calls.slice(-1), ['runCommand']);
+    assert.match(container.textContent!, /ran broke selftest/);
+  });
+
+  it('explains when local summaries need attention without implying all compression stopped', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'long'), {
+      level: 'summarize',
+      summarizerConfigured: 'local',
+      ollama: { reachable: false, models: 0, error: 'offline' },
+      totalSavedTokens: 0,
+      passes: 0,
+    });
+    await open();
+
+    assert.match(container.textContent!, /Local summaries need setup/i);
+    assert.match(container.textContent!, /Basic compression still works/i);
+  });
+
+  it('does not leave the badge in an unsaved draft state after Cancel', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {
+      level: 'truncate',
+      totalSavedTokens: 0,
+      passes: 0,
+    });
+    await open();
+    await click(input('Use Broke automatically'));
+    assert.match(container.textContent!, /Broke is off/i, 'the dialog previews the draft state');
+    await click(button('Cancel'));
+
+    const badge = container.querySelector('[role="status"]');
+    assert.match(badge?.getAttribute('title') ?? '', /Broke is ready/i, 'Cancel restores the persisted badge state');
   });
 });
 
@@ -288,7 +358,7 @@ describe('H1 quick commands in the badge overlay', () => {
   it('requires a second click for state-changing or spending commands', async () => {
     await mount(true);
     await open();
-    for (const label of ['reset', 'summarize now', 'selftest']) {
+    for (const label of ['reset', 'summarize now']) {
       calls.length = 0;
       await click(quick(label));
       assert.equal(calls.length, 0, `${label} must not run on the first click`);
