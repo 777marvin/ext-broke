@@ -27,7 +27,8 @@ npx @aiderdesk/extensions install -g https://github.com/777marvin/ext-broke
 
 Open any AiderDesk task. broke is active by default: the **💸 badge** shows
 its current state, the activation note says whether it is ready, and
-**Check setup** in the badge dialog exercises the pipeline on synthetic input. See
+The first opening of the badge offers a short, skippable introduction.
+**Check setup** checks readiness for the settings shown in the dialog. See
 [Install](#install) for requirements, Windows notes, manual setup and updates.
 
 ## Why I built this
@@ -257,6 +258,19 @@ The badge dialog also offers **Check setup**, **View savings** and
 **Why no savings yet?**. Technical thresholds and command tools stay under
 **Advanced settings and diagnostics**.
 
+**Setup guide** reopens the introduction. Got it and Skip introduction remember
+your choice across tasks and reloads without changing your settings. Cancel
+discards settings edits without completing the introduction.
+
+**Check setup** checks the displayed settings without saving them. It separates
+basic compression, the optional summary backend, the configured model and
+automatic summaries. For selected local summaries it checks Ollama reachability
+and installed-model metadata; blocked remote hosts are not contacted. Cloud
+configuration is reported without testing provider access or issuing a paid
+request. These checks do not measure summary quality, speed or billing savings.
+The synthetic `/broke selftest` remains under advanced diagnostics and uses a
+stub summarizer. `/broke status` shares the readiness rules for saved settings.
+
 Power users can still control everything from the chat (`/broke help` lists
 all commands) or from the advanced section of the badge dialog:
 
@@ -387,7 +401,7 @@ The per-pass rules, gates and failure handling are in
 
 | Feature | What it does | Page |
 |---|---|---|
-| Cache-friendly mode | keeps already-sent bytes byte-stable so the provider prompt cache keeps hitting; one sanctioned full rewrite as escape hatch | [docs/features.md](docs/features.md#cache-friendly-mode-provider-prompt-cache) |
+| Cache-friendly mode | preserves already-sent bytes to help provider prompt-cache reuse, without guaranteeing hits; one sanctioned full rewrite as escape hatch | [docs/features.md](docs/features.md#cache-friendly-mode-provider-prompt-cache) |
 | ST-slicing | interface views instead of full file bodies for large reads (opt-in, and the rewrite is irreversible) | [docs/features.md](docs/features.md#st-slicing-tool-level-opt-in) |
 | Snapshots & flush | milestone records per commit, plus the one destructive operation in broke (manual, confirmed, undoable) | [docs/features.md](docs/features.md#snapshots--flush-f3) |
 | broke-search | offline keyword index serving budgeted `path:line` snippets to the agent | [docs/features.md](docs/features.md#local-project-search-broke-search-tool) |
@@ -458,10 +472,14 @@ broke is in active development. The roadmap
 implementation specs; Feature 5 (mode presets short/normal/long/custom with
 a Broke automation selector, reachable from the badge settings and the
 settings panel) first shipped in 1.2.2 after an unpublished 1.2.1 attempt;
-see the preset table in [docs/feats.md](docs/feats.md). Still on the
-candidate backlog: an expanded live UI, a smaller default control surface
-and user-run benchmarking -
-all unscheduled.
+see the preset table in [docs/feats.md](docs/feats.md). F6's live status dot
+and three-tier savings breakdown, plus F7.1's everyday badge view, are
+implemented under Unreleased. This also includes
+[F7.2: Guided setup & readiness check](docs/feats.md#f72-guided-setup--readiness-check),
+with live AiderDesk smoke and non-expert usability checks still open.
+F8's internal benchmark methodology and
+F9's user-run measurement flow remain proposed, with F8 preceding F9.
+No delivery dates or release versions are assigned to this remaining work.
 
 broke targets AiderDesk's extension API. The compression logic itself is
 plain TypeScript, so porting it to other agent platforms is possible in
@@ -475,7 +493,7 @@ principle, it is simply not planned right now.
 - [docs/token-saving.md](docs/token-saving.md): all levers that save tokens
 - [docs/aiderdesk-builtin.md](docs/aiderdesk-builtin.md): what AiderDesk already saves on its own (verified from source)
 - [docs/local-models.md](docs/local-models.md): local Ollama setup and measurement limits
-- [docs/feats.md](docs/feats.md): historical feature designs and implementation notes
+- [docs/feats.md](docs/feats.md): current feature status, the next slice and historical designs
 - [docs/review-backlog.md](docs/review-backlog.md): historical findings, accepted limitations and tracked residual work
 
 ## Support, contributing and development

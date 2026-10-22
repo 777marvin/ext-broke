@@ -126,17 +126,46 @@ controls and command tools. It is progressive disclosure, not removal.
 ### Feedback and safety
 
 Action results remain inline in the dialog and use an accessible status region.
-State-changing or paid actions retain two-step confirmation. The synthetic
-setup check is safe and runs directly. Modal focus containment, Escape, Cancel,
+State-changing or paid commands retain two-step confirmation. Check setup
+runs a metadata-only readiness check for the current draft without saving it;
+the synthetic selftest stays under advanced diagnostics and uses a stub
+summarizer. Introduction completion is a reversible presentation preference
+and needs one click.
+Modal focus containment, Escape, Cancel,
 save failure recovery, and focus restoration remain mandatory.
+
+### Guided setup and readiness (F7.2)
+
+The first badge-dialog opening includes a short introduction within the same
+modal, not a second overlay. Got it and Skip introduction persist only a
+versioned dismissal flag in runtime `setup.json`; Cancel changes neither this
+flag nor configuration. Setup guide reopens the introduction. A delayed initial
+state response cannot override an explicit reopen. After completion, focus
+returns to the enabled Setup guide button.
+
+Check setup shows basic compression, summary backend, configured model and
+automatic-summary readiness as separate text results. The check uses the
+displayed draft, sends no conversation content and never generates a summary.
+Local metadata checks respect remote-host consent. Cloud configuration remains
+explicitly unchecked for provider access. Pending, unavailable, blocked and
+unknown states offer a clear next action; manual automation and Off stay honest.
+Known results remain visible for the matching saved settings until an edit
+invalidates them. Stale checks cannot replace results after edits or reopening.
+Failures preserve the draft and allow retry. The readonly check restores focus
+when disabling its button would otherwise lose it, without stealing another
+control's focus. Modal content scrolls internally; focus rings remain visible,
+closed advanced controls stay out of the focus loop, and reduced-motion users
+receive a static activity dot.
 
 ### Honest savings breakdown (F6)
 
 When inspecting savings (via "View savings" or diagnostics), the UI strictly separates:
-1. Observed conversation reduction (measured character/token delta from the message pipeline).
+
+1. Observed conversation reduction (measured character delta from the message pipeline; tokens estimated via chars / 4).
 2. Provider-reported usage (actual sent, cache-read, and cache-written tokens from the model API).
 3. Modeled monetary estimates (dollar savings calculated from task model input rates).
 4. Avoided context (counterfactuals like slicing, flushing, and search snippets, labeled outside measured totals).
+
 A mandatory honest notice states that a measurement ledger does not prove a billed saving.
 
 ## Accessibility

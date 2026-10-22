@@ -9,6 +9,17 @@
   const [overlayError, setOverlayError] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
   const [previewing, setPreviewing] = React.useState(false);
+  const [guideVisible, setGuideVisible] = React.useState(false);
+  const [setupReadiness, setSetupReadiness] = React.useState(null);
+  const [checkingSetup, setCheckingSetup] = React.useState(false);
+  const setupRequest = React.useRef(0);
+  const overlaySession = React.useRef(0);
+  const guideButtonRef = React.useRef(null);
+  const checkButtonRef = React.useRef(null);
+  const restoreCheckFocus = React.useRef(false);
+  const guideRevision = React.useRef(0);
+  const restoreGuideFocus = React.useRef(false);
+  const [readinessMatchesSaved, setReadinessMatchesSaved] = React.useState(false);
   // Quick Commands (H1): a command that mutates state or spends an LLM
   // call is two-step - `pendingCommand` holds the armed button, the
   // second click runs it. `commandResult` shows what came back instead of
@@ -22,7 +33,14 @@
   const draftRef = React.useRef(null);
   const savingRef = React.useRef(false);
   const setDraft = (next) => { draftRef.current = next; setOverlayCfg(next); };
-  const invalidatePreview = () => { revision.current++; setPreviewing(false); };
+  const invalidatePreview = () => {
+    revision.current++;
+    setPreviewing(false);
+    setupRequest.current++;
+    setCheckingSetup(false);
+    setSetupReadiness(null);
+    setReadinessMatchesSaved(false);
+  };
 
   // Shared input/select styles for the overlay
   const inputStyle = {
@@ -55,6 +73,7 @@
   const closeOverlay = () => {
     if (savingRef.current) return;
     invalidatePreview();
+    overlaySession.current++;
     setPendingCommand(null);
     setCommandResult(null);
     setOverlayOpen(false);
@@ -70,9 +89,29 @@
       gearRef.current?.focus();
     };
   }, [overlayOpen]);
+  React.useEffect(() => {
+    if (restoreGuideFocus.current && !saving && !guideVisible && overlayOpen) {
+      restoreGuideFocus.current = false;
+      guideButtonRef.current?.focus();
+    }
+  }, [saving, guideVisible, overlayOpen]);
+  React.useEffect(() => {
+    if (!checkingSetup && restoreCheckFocus.current) {
+      restoreCheckFocus.current = false;
+      if (overlayOpen && (document.activeElement === document.body || document.activeElement === dialogRef.current)) checkButtonRef.current?.focus();
+    }
+  }, [checkingSetup, overlayOpen]);
 
   const openOverlay = async () => {
     const request = ++revision.current;
+    const session = ++overlaySession.current;
+    const guideRequest = ++guideRevision.current;
+    setupRequest.current++;
+    setCheckingSetup(false);
+    setSetupReadiness(null);
+    setGuideVisible(false);
+    restoreGuideFocus.current = false;
+    setReadinessMatchesSaved(true);
     setOverlayOpen(true);
     setDraft(null);
     setOverlayError(null);
@@ -82,8 +121,45 @@
       const c = await executeExtensionAction?.('getConfig');
       if (!c || typeof c !== 'object') throw new Error('Missing config');
       if (revision.current === request) setDraft(c);
+      const setup = (await executeExtensionAction?.('getSetupState')) as { dismissed?: boolean } | undefined;
+      if (overlaySession.current === session && guideRevision.current === guideRequest) setGuideVisible(setup?.dismissed === false);
     } catch {
       if (revision.current === request) setOverlayError('could not load the config');
+    }
+  };
+  const finishGuide = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setOverlayError(null);
+    guideRevision.current++;
+    try {
+      const state = (await executeExtensionAction?.('dismissSetup')) as { dismissed?: boolean } | undefined;
+      if (state?.dismissed !== true) throw new Error('Missing setup state');
+      setGuideVisible(false);
+      restoreGuideFocus.current = true;
+    } catch {
+      setOverlayError('could not save the introduction status; please try again');
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+  const checkSetup = async () => {
+    if (!draftRef.current || savingRef.current || checkingSetup) return;
+    const request = ++setupRequest.current;
+    restoreCheckFocus.current = document.activeElement === checkButtonRef.current;
+    setCheckingSetup(true);
+    setSetupReadiness(null);
+    setOverlayError(null);
+    try {
+      const result = (await executeExtensionAction?.('getSetupReadiness', draftRef.current)) as Record<string, { state: string; heading: string; detail: string }> | undefined;
+      if (!result?.basic || !result?.backend || !result?.model || !result?.automatic) throw new Error('Missing setup result');
+      if (setupRequest.current === request) setSetupReadiness(result);
+    } catch {
+      if (setupRequest.current === request) setOverlayError('could not check the setup; please try again');
+    } finally {
+      if (setupRequest.current === request) setCheckingSetup(false);
     }
   };
   const selectMode = async (mode) => {
@@ -161,7 +237,8 @@
   const dialogKeyDown = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeOverlay(); }
     if (e.key === 'Tab') {
-      const controls = Array.from(dialogRef.current.querySelectorAll('button:not(:disabled),select:not(:disabled),input:not(:disabled)')) as HTMLElement[];
+      const controls = (Array.from(dialogRef.current.querySelectorAll('button:not(:disabled),select:not(:disabled),input:not(:disabled),summary')) as HTMLElement[])
+        .filter((el) => !el.closest('details:not([open])') || el.tagName === 'SUMMARY');
       const first = controls[0];
       const last = controls[controls.length - 1];
       if (!first) { e.preventDefault(); return; }
@@ -215,7 +292,13 @@
   const dialogEnabled = overlayOpen ? overlayCfg?.enabled ?? level !== 'off' : level !== 'off';
   const dialogLevel = overlayOpen ? overlayCfg?.level ?? level : level;
   const dialogBackend = overlayOpen ? overlayCfg?.summarize?.via ?? configured : configured;
-  const localSummaryNeedsSetup = dialogEnabled && dialogLevel === 'summarize' && dialogBackend === 'local' && !!ollamaDown;
+  const currentReadiness = overlayOpen ? setupReadiness ?? (readinessMatchesSaved ? data?.setupReadiness : null) : data?.setupReadiness;
+  const summaryIssue = currentReadiness?.backend?.state === 'blocked' || currentReadiness?.backend?.state === 'unavailable'
+    ? currentReadiness.backend
+    : currentReadiness?.model?.state === 'unavailable' ? currentReadiness.model : null;
+  const localSummaryNeedsSetup = dialogEnabled && dialogLevel === 'summarize' && dialogBackend === 'local' && (!!ollamaDown || !!summaryIssue);
+  const localSummaryUnconfirmed = dialogEnabled && dialogLevel === 'summarize' && dialogBackend === 'local'
+    && !localSummaryNeedsSetup && (!currentReadiness || ['unknown', 'checking', 'unchecked'].includes(currentReadiness.model?.state));
   const status = isOptimizing
     ? {
         heading: 'Broke is compressing',
@@ -234,12 +317,18 @@
       }
     : localSummaryNeedsSetup
       ? {
-          heading: 'Local summaries need setup',
-          detail: 'Basic compression still works. Start Ollama to enable the maximum-savings approach.',
+          heading: summaryIssue?.heading ?? 'Local summaries need setup',
+          detail: summaryIssue ? `Basic compression still works. ${summaryIssue.detail}` : 'Basic compression still works. Start Ollama to enable the maximum-savings approach.',
           color: '#7a5512',
           background: '#fff8e8',
           border: '#ead39b',
         }
+      : localSummaryUnconfirmed
+        ? {
+            heading: 'Basic compression is ready',
+            detail: 'Local summaries have not been confirmed. Choose Check setup to check the backend and configured model.',
+            color: '#185d82', background: '#eef7fb', border: '#b8d8e8',
+          }
       : total > 0
         ? {
             heading: 'Broke is saving context',
@@ -282,12 +371,15 @@
       }}
     >
       <style>{`
+        .broke-settings :focus-visible { outline: 2px solid #0066cc; outline-offset: 2px; }
+        @media (prefers-reduced-motion: reduce) { .broke-status-dot { animation: none !important; } }
         @keyframes broke-pulse {
           0%, 100% { transform: scale(1); opacity: 1; }
           50% { transform: scale(1.35); opacity: 0.55; }
         }
       `}</style>
       <span
+        className="broke-status-dot"
         aria-hidden="true"
         style={{
           width: 7,
@@ -337,6 +429,7 @@
       </button>
       {overlayOpen ? (
         <dialog
+          className="broke-settings"
           ref={dialogRef}
           tabIndex={-1}
           aria-label="Broke settings"
@@ -366,6 +459,7 @@
               border: '1px solid rgba(0,0,0,0.12)',
               borderRadius: 12,
               padding: '24px',
+              boxSizing: 'border-box',
               width: 460,
               maxWidth: '94vw',
               maxHeight: '88vh',
@@ -406,6 +500,20 @@
               </div>
             ) : (
               <>
+                <button ref={guideButtonRef} type="button" onClick={() => { guideRevision.current++; setGuideVisible(true); }} disabled={saving}
+                  style={{ ...selectStyle, width: 'auto', alignSelf: 'flex-start', minHeight: 36 }}>Setup guide</button>
+                {guideVisible ? (
+                  <section aria-label="Getting started" style={{ padding: 14, border: '1px solid #b8d8e8', borderRadius: 8, background: '#eef7fb', color: '#34424a', fontSize: 13, lineHeight: 1.55 }}>
+                    <h2 style={{ margin: '0 0 8px', fontSize: 16, color: '#111' }}>Welcome to Broke</h2>
+                    <p style={{ margin: '0 0 8px' }}>Balanced is recommended: shorten older technical output without extra software. Your first request and recent turns stay protected.</p>
+                    <p style={{ margin: '0 0 8px' }}>Your approach applies to every task. This guide keeps your current settings; changes take effect only when you Save.</p>
+                    <p style={{ margin: '0 0 12px' }}>A short conversation may show zero savings. Maximum savings optionally uses a local or cloud summarizer; checking setup does not generate a summary or measure its quality.</p>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button type="button" onClick={finishGuide} disabled={saving} style={{ ...selectStyle, width: 'auto', minHeight: 40 }}>Got it</button>
+                      <button type="button" onClick={finishGuide} disabled={saving} style={{ ...selectStyle, width: 'auto', minHeight: 40 }}>Skip introduction</button>
+                    </div>
+                  </section>
+                ) : null}
                 <fieldset disabled={saving} onChangeCapture={invalidatePreview} style={{ border: 0, padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', fontWeight: 650, fontSize: 13, color: '#222' }}>
                     <input
@@ -436,15 +544,16 @@
 
                 <div aria-label="Common actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
                   {[
-                    { label: 'Check setup', cmd: 'selftest', desc: 'Run a safe check with synthetic content' },
+                    { label: 'Check setup', cmd: 'setup', desc: 'Check readiness for your current settings without generating a summary' },
                     { label: 'View savings', cmd: 'stats', desc: 'Show what Broke has removed in this task' },
                     { label: 'Why no savings yet?', cmd: 'why', desc: 'Explain what Broke is waiting for' },
                   ].map((item) => (
                     <button
                       key={item.cmd}
+                      ref={item.cmd === 'setup' ? checkButtonRef : undefined}
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); void runQuickCommand(item.cmd); }}
-                      disabled={saving || previewing}
+                      onClick={(e) => { e.stopPropagation(); if (item.cmd === 'setup') void checkSetup(); else void runQuickCommand(item.cmd); }}
+                      disabled={saving || previewing || (item.cmd === 'setup' && checkingSetup)}
                       title={item.desc}
                       style={{
                         padding: '9px 8px',
@@ -464,6 +573,26 @@
                     </button>
                   ))}
                 </div>
+
+                {checkingSetup || setupReadiness ? (
+                  <section role="status" aria-label="Setup readiness" aria-live="polite" aria-busy={checkingSetup}
+                    style={{ padding: 14, border: '1px solid #b8d8e8', borderRadius: 8, background: '#eef7fb', color: '#34424a', fontSize: 12, lineHeight: 1.5 }}>
+                    <h2 style={{ margin: '0 0 10px', fontSize: 14 }}>{checkingSetup ? 'Checking setup...' : 'Setup readiness'}</h2>
+                    {checkingSetup ? <p style={{ margin: 0 }}>Checking the current settings. No summary will be generated.</p> : (
+                      <>
+                        <dl style={{ margin: 0 }}>
+                          {['basic', 'backend', 'model', 'automatic'].map((key) => (
+                            <div key={key} style={{ marginBottom: 10 }}>
+                              <dt style={{ fontWeight: 700 }}>{setupReadiness[key].heading}</dt>
+                              <dd style={{ margin: '3px 0 0' }}>{setupReadiness[key].detail}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                        <p style={{ margin: 0 }}>These checks do not prove summary quality, speed or billing savings. Results describe the settings shown here; Save applies changes.</p>
+                      </>
+                    )}
+                  </section>
+                ) : null}
 
                 {commandResult ? (
                   <div
@@ -604,6 +733,7 @@
                     Advanced settings and diagnostics
                   </summary>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 14 }}>
+                    <p style={{ margin: 0, color: '#666', fontSize: 12 }}>The selftest below exercises synthetic input with a stub summarizer. It does not check the configured backend or model.</p>
                     <fieldset disabled={saving} onChangeCapture={invalidatePreview} style={{ border: 0, padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
                       <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontWeight: 500, fontSize: 12, color: '#222' }}>Broke automation
                         <select value={overlayCfg.autonomy ?? 'autonomous'} onChange={(e) => patchOverlay({ autonomy: e.target.value })} style={{ ...selectStyle, marginTop: 4 }}>

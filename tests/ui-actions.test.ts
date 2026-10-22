@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const tmp = mkdtempSync(join(tmpdir(), 'broke-ui-actions-'));
+process.env.BROKE_DATA_DIR = join(tmp, 'data');
 process.env.BROKE_CONFIG_PATH = join(tmp, 'config.json');
 process.env.BROKE_STATS_PATH = join(tmp, 'stats.jsonl');
 process.env.BROKE_MEASURE_PATH = join(tmp, 'measure.jsonl');
@@ -39,6 +40,29 @@ const makeHost = (): import('@aiderdesk/extensions').ExtensionContext => {
     triggerUIComponentsReload: () => undefined,
   } as unknown as import('@aiderdesk/extensions').ExtensionContext;
 };
+
+describe('F7.2 setup actions', () => {
+  it('persists introduction dismissal across extension instances without changing configuration', async () => {
+    const host = makeHost();
+    const ext = new Broke();
+    const before = await ext.executeUIExtensionAction('broke-status', 'getConfig', [], host);
+    assert.deepEqual(await ext.executeUIExtensionAction('broke-status', 'getSetupState', [], host), { version: 1, dismissed: false });
+    assert.deepEqual(await ext.executeUIExtensionAction('broke-status', 'dismissSetup', [], host), { version: 1, dismissed: true });
+    const reloaded = new Broke();
+    assert.deepEqual(await reloaded.executeUIExtensionAction('broke-status', 'getSetupState', [], host), { version: 1, dismissed: true });
+    assert.deepEqual(await reloaded.executeUIExtensionAction('broke-status', 'getConfig', [], host), before);
+  });
+
+  it('validates a readiness draft and never saves its values', async () => {
+    const ext = new Broke();
+    const host = makeHost();
+    const before = await ext.executeUIExtensionAction('broke-status', 'getConfig', [], host) as Record<string, any>;
+    const result = await ext.executeUIExtensionAction('broke-status', 'getSetupReadiness', [{ ...before, enabled: false }], host) as any;
+    assert.equal(result?.basic.state, 'off');
+    await assert.rejects(() => ext.executeUIExtensionAction('broke-status', 'getSetupReadiness', [{ level: 'invalid' }], host));
+    assert.deepEqual(await ext.executeUIExtensionAction('broke-status', 'getConfig', [], host), before);
+  });
+});
 
 describe('badge overlay UI actions (task 7)', () => {
   it('getConfig returns the full validated config incl. the cache section', async () => {

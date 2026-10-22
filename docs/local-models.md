@@ -24,7 +24,12 @@ ollama list
 ```
 
 Start the Ollama service if it is not running, then check `/broke status` in
-AiderDesk. `/broke selftest` uses synthetic input and does not measure the
+AiderDesk to check reachability and whether the configured model is
+installed when local summarization is selected. The badge's Check setup action
+checks the displayed settings and installed-model metadata without saving
+configuration or generating a summary. A remote Ollama address needs explicit
+consent before checking. The separate `/broke selftest` uses synthetic input and
+a stub summarizer; it does not contact Ollama. Neither check verifies generation,
 quality or speed of the configured local model. To assess a local model,
 try it on a representative long task and inspect the summary, latency,
 `/broke measure` character counts and provider-reported usage.

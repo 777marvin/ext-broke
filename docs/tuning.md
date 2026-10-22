@@ -111,6 +111,15 @@ extra software. The technical controls and command grid start closed under
 **Advanced settings and diagnostics**; the full settings panel remains the
 expert surface.
 
+Check setup evaluates the displayed settings without saving them. For local
+Maximum savings it reads Ollama metadata and distinguishes an unreachable
+backend from a missing configured model. Cloud provider access is left
+unchecked; no generation request is issued. Setup guide reopens the skippable
+introduction, whose completion is independent of presets. The synthetic
+selftest remains in advanced diagnostics. `/broke status` uses the same readiness
+rules for saved settings. Assess actual summary quality and latency on
+representative tasks; metadata readiness does not measure either.
+
 The saved values remain `short / normal / long / custom` for backward
 compatibility. Both the badge and full settings panel also retain **Broke
 automation** (`autonomous / manual`). These settings are extension-wide;

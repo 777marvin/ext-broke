@@ -1,6 +1,8 @@
 import type { Config } from './config';
 import { DEFAULT_CONFIG, updateConfigPath, updateConfigPaths } from './config';
-import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaStatus } from './local';
+import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaStatus, type OllamaStatus } from './local';
+import { checkSetupReadiness, hasOllamaModel } from './setup';
+export { hasOllamaModel } from './setup';
 import { normalizeTag } from './update';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from './pricing';
 import { estimateTokens, type LastCallUsage, type MeasureSummary, type TaskStats, totalSavedChars } from './tokens';
@@ -552,18 +554,6 @@ function fmtChars(chars: number): string {
 }
 
 /**
- * True when the configured local model is actually installed. Exact tag
- * match wins; a base-name (no tag) config matches any tag of that model.
- * A TAG config never matches other tags: `qwen2.5-coder:3b` configured
- * with only `:7b` installed must report NOT found, not a false positive.
- */
-export function hasOllamaModel(models: string[], configured: string): boolean {
-  if (models.includes(configured)) return true;
-  if (configured.includes(':')) return false;
-  return models.some((m) => m.startsWith(`${configured}:`));
-}
-
-/**
  * Human-readable stats block. `price` is the current task model price -
  * the money line is computed from it, so the saved $ is always the price
  * of the model the task is using right now.
@@ -703,7 +693,12 @@ export function formatMeasure(summary: MeasureSummary | null): string {
 
 /** Status output incl. Ollama reachability. */
 export async function formatStatus(config: Config, stats: TaskStats | null, price?: TaskModelPrice | null): Promise<string> {
-  const ollama = config.summarize.via === 'local' ? await ollamaStatus(config.summarize.ollamaUrl) : null;
+  const observation: { status: OllamaStatus | null } = { status: null };
+  const readiness = await checkSetupReadiness(config, async (url) => {
+    observation.status = await ollamaStatus(url);
+    return observation.status;
+  });
+  const ollama = observation.status;
   const lines = [
     `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level}, mode: ${config.mode}, automation: ${config.autonomy})`,
     `  maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} chars | protectedTurns: ${config.protectedTurns}`,
@@ -726,6 +721,7 @@ export async function formatStatus(config: Config, stats: TaskStats | null, pric
       lines.push('  ⛔ remote summarizer host is BLOCKED - conversation content never leaves this machine until you run /broke summarize allow-remote on.');
     }
   }
+  lines.push(...Object.values(readiness).map((check) => `  setup: ${check.heading} - ${check.detail}`));
   const statsBlock = formatStats(config, stats, price, stats?.lastUsage);
   if (statsBlock !== 'No stats recorded for this task yet - send a message first.') {
     lines.push('', statsBlock);
