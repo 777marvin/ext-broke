@@ -15,6 +15,13 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Added
 
+- **Live status-dot and activity indicator on the collapsed badge (F6 slice).**
+  The status bar badge now displays a colored status dot directly beside the
+  `💸` icon that reflects the current operating state at a glance without opening
+  the settings dialog: green (`#19633b`) when saving context, blue (`#185d82`)
+  when ready on a short conversation, amber (`#7a5512`) when local setup is
+  needed, red (`#8a2d24`) when turned off, and a gently pulsing violet dot
+  (`#7030a0`) while active message optimization or summarization is underway.
 - **A plain-language everyday view for the 💸 badge (first F7 slice).** The
   dialog now leads with one understandable state, an outcome-focused savings
   approach and three normal actions: Check setup, View savings and Why no

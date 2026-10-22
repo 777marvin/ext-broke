@@ -55,7 +55,7 @@ idea-level, unscheduled candidates recorded
 | # | Candidate | Type | Effort | Status |
 |---|-----------|------|--------|--------|
 | F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (since v1.2.2) |
-| F6 | Live-UI expansion: observed input reduction and estimates, activity dot | feat | M | proposed |
+| F6 | Live-UI expansion: observed input reduction and estimates, activity dot | feat | M | in progress (activity dot slice in Unreleased) |
 | F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | in progress (everyday-view slice in Unreleased) |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
 | F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
