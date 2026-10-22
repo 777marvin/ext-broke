@@ -516,6 +516,7 @@ export default class Broke implements Extension {
     const deps = this.buildSummarizeDeps(config, task, context);
 
     this.optimizingTasks.add(taskId);
+    if (config.ui.showStatusBadge) this.refreshUI();
     try {
       // Cache-friendly mode: resolve the provider cache profile from config
       // (explicit) and task metadata (auto), then freeze every message whose
@@ -597,6 +598,7 @@ export default class Broke implements Extension {
       context.log(`Broke: compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
     } finally {
       this.optimizingTasks.delete(taskId);
+      if (config.ui.showStatusBadge) this.refreshUI();
     }
   }
 
@@ -1931,6 +1933,7 @@ export default class Broke implements Extension {
     const taskId = context.getTaskContext()?.data.id ?? '';
     const stats = this.statsFor(context);
     const observation = this.lastObservation.get(taskId) ?? null;
+    const isOptimizing = taskId ? this.optimizingTasks.has(taskId) : false;
     // BRK-022: the badge headline is the MEASURED reduction (per-run input
     // before - after, summed) - same definition as /broke stats. Legacy
     // records without size data fall back to the measured pass sum; the
@@ -1947,6 +1950,7 @@ export default class Broke implements Extension {
       level: config.enabled ? config.level : 'off',
       mode: config.mode,
       autonomy: config.autonomy,
+      isOptimizing,
       // What the user configured (the badge must show this even when the
       // summarizer never fired yet) vs. what was actually used.
       summarizerConfigured: config.enabled && config.level === 'summarize' ? config.summarize.via : 'none',

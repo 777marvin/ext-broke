@@ -199,6 +199,7 @@
   const maxCtx = data?.maxContextChars ?? 0;
   const passes = data?.passes ?? 0;
   const obs = data?.observation ?? null;
+  const isOptimizing = data?.isOptimizing === true;
   const neverSaved = total === 0 && passes === 0;
   const k = (n) => `${Math.round(n / 1000)}k`;
 
@@ -211,7 +212,15 @@
   const dialogLevel = overlayOpen ? overlayCfg?.level ?? level : level;
   const dialogBackend = overlayOpen ? overlayCfg?.summarize?.via ?? configured : configured;
   const localSummaryNeedsSetup = dialogEnabled && dialogLevel === 'summarize' && dialogBackend === 'local' && !!ollamaDown;
-  const status = !dialogEnabled
+  const status = isOptimizing
+    ? {
+        heading: 'Broke is compressing',
+        detail: 'Shortening older context for the next turn.',
+        color: '#7030a0',
+        background: '#f7f0fa',
+        border: '#d8bfe8',
+      }
+    : !dialogEnabled
     ? {
         heading: 'Broke is off',
         detail: 'Turn it on to shorten older technical context automatically.',
@@ -244,8 +253,10 @@
             background: '#eef7fb',
             border: '#b8d8e8',
           };
-  const title = `${status.heading}. ${status.detail}`;
-  const statusLabel = `${status.heading}. ${total.toLocaleString('en-US')} estimated input tokens saved.`;
+  const title = isOptimizing ? 'Broke is compressing context...' : `${status.heading}. ${status.detail}`;
+  const statusLabel = isOptimizing
+    ? 'Broke is compressing context...'
+    : `${status.heading}. ${total.toLocaleString('en-US')} estimated input tokens saved.`;
   return (
     <div
       role="status"
@@ -266,6 +277,23 @@
         boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
       }}
     >
+      <style>{`
+        @keyframes broke-pulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.35); opacity: 0.55; }
+        }
+      `}</style>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          background: status.color,
+          flex: '0 0 auto',
+          ...(isOptimizing ? { animation: 'broke-pulse 1.4s ease-in-out infinite' } : {}),
+        }}
+      />
       <span style={{ fontSize: 14 }}>💸</span>
       <span style={{ fontWeight: 600, fontSize: 13 }}>{total.toLocaleString('en-US')}</span>
       {neverSaved && obs && obs.inputChars > 0 && maxCtx > 0 ? (

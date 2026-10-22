@@ -12,6 +12,7 @@ colors:
   success: "#19633B"
   warning: "#7A5512"
   danger: "#8A2D24"
+  optimizing: "#7030A0"
 typography:
   sans:
     fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
@@ -100,13 +101,15 @@ out of scope.
 
 ### Badge
 
-Shows the existing savings number and opens the settings dialog. Its accessible
-name states the current condition in words.
+Shows the status dot indicating the current condition (ready, saving, compressing,
+needs setup, off), the existing savings number, and opens the settings dialog.
+Its accessible name states the current condition in words. During active
+compression, the violet status dot gently pulses.
 
 ### Status card
 
 Contains a dot, a short heading, and one corrective or reassuring sentence.
-Supported everyday states are ready, saving, optional local setup needed, off,
+Supported everyday states are ready, saving, compressing, optional local setup needed, off,
 and action failure.
 
 ### Savings approach

@@ -34,6 +34,8 @@ let persisted: any;
 let calls: string[];
 let action: (name: string, ...args: any[]) => Promise<any>;
 async function mount(badge = false, initial = applyPreset(DEFAULT_CONFIG, 'long'), badgeData: Record<string, unknown> = {}) {
+  if (root) await React.act(async () => root.unmount());
+  container?.remove();
   draft = structuredClone(initial);
   persisted = structuredClone(initial);
   calls = [];
@@ -297,6 +299,68 @@ describe('F7 everyday badge experience', () => {
 
     const badge = container.querySelector('[role="status"]');
     assert.match(badge?.getAttribute('title') ?? '', /Broke is ready/i, 'Cancel restores the persisted badge state');
+  });
+
+  it('renders the status dot on the collapsed badge with color matching the state (F6)', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {
+      level: 'truncate',
+      totalSavedTokens: 1200,
+      passes: 2,
+    });
+
+    const badge = container.querySelector('[role="status"]');
+    const dot = badge?.querySelector('span[aria-hidden="true"]') as HTMLElement;
+    assert.ok(dot, 'status dot exists in collapsed badge');
+    assert.ok(dot.style.background === 'rgb(25, 99, 59)' || dot.style.background === '#19633b', 'green saving dot');
+    assert.match(badge?.getAttribute('title') ?? '', /Broke is saving context/i);
+    assert.match(badge?.getAttribute('aria-label') ?? '', /1,200 estimated input tokens saved/);
+  });
+
+  it('animates the violet status dot when optimization is actively running (F6)', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {
+      level: 'truncate',
+      isOptimizing: true,
+      totalSavedTokens: 500,
+      passes: 1,
+    });
+
+    const badge = container.querySelector('[role="status"]');
+    const dot = badge?.querySelector('span[aria-hidden="true"]') as HTMLElement;
+    assert.ok(dot, 'status dot exists');
+    assert.ok(dot.style.background === 'rgb(112, 48, 160)' || dot.style.background === '#7030a0', 'violet compressing dot');
+    assert.match(dot.style.animation, /broke-pulse/i, 'pulse animation active');
+    assert.equal(badge?.getAttribute('title'), 'Broke is compressing context...');
+    assert.equal(badge?.getAttribute('aria-label'), 'Broke is compressing context...');
+
+    await open();
+    assert.match(container.textContent!, /Broke is compressing/i, 'dialog reflects active compression');
+  });
+
+  it('shows the amber dot when local summaries need setup (F6)', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'long'), {
+      level: 'summarize',
+      summarizerConfigured: 'local',
+      ollama: { reachable: false, models: 0, error: 'offline' },
+      totalSavedTokens: 0,
+      passes: 0,
+    });
+
+    const badge = container.querySelector('[role="status"]');
+    const dot = badge?.querySelector('span[aria-hidden="true"]') as HTMLElement;
+    assert.ok(dot.style.background === 'rgb(122, 85, 18)' || dot.style.background === '#7a5512', 'amber setup dot');
+    assert.match(badge?.getAttribute('title') ?? '', /Local summaries need setup/i);
+  });
+
+  it('shows the red dot when off (F6)', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {
+      level: 'off',
+      totalSavedTokens: 0,
+      passes: 0,
+    });
+    const badge = container.querySelector('[role="status"]');
+    const dot = badge?.querySelector('span[aria-hidden="true"]') as HTMLElement;
+    assert.ok(dot.style.background === 'rgb(138, 45, 36)' || dot.style.background === '#8a2d24', 'red off dot');
+    assert.match(badge?.getAttribute('title') ?? '', /Broke is off/i);
   });
 });
 
