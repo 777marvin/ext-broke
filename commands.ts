@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG, updateConfigPath, updateConfigPaths } from './config';
 import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaStatus } from './local';
 import { normalizeTag } from './update';
 import { formatUsd, priceLabel, savedCostUsd, type TaskModelPrice } from './pricing';
-import { estimateTokens, type MeasureSummary, type TaskStats, totalSavedChars } from './tokens';
+import { estimateTokens, type LastCallUsage, type MeasureSummary, type TaskStats, totalSavedChars } from './tokens';
 import { DEFAULT_DIFF_BUDGET_CHARS, MAX_DIFF_BUDGET_CHARS, MAX_DIFF_FILES_READ, MIN_DIFF_BUDGET_CHARS } from './diff';
 
 /**
@@ -568,7 +568,7 @@ export function hasOllamaModel(models: string[], configured: string): boolean {
  * the money line is computed from it, so the saved $ is always the price
  * of the model the task is using right now.
  */
-export function formatStats(config: Config, stats: TaskStats | null, price: TaskModelPrice | null | undefined = null): string {
+export function formatStats(config: Config, stats: TaskStats | null, price: TaskModelPrice | null | undefined = null, usage?: LastCallUsage | null): string {
   if (!stats) return 'No stats recorded for this task yet - send a message first.';
   // XF14: the headline is the MEASURED reduction (per-run input before
   // minus after, summed). The per-pass sum can diverge from it (passes
@@ -582,6 +582,7 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
   // local or unregistered model would read as "free" when the truth is
   // "unknown". Same policy as the compression log line and the badge.
   const money = price?.inputPerMToken ? formatUsd(savedCostUsd(totalTokens, price.inputPerMToken)) : null;
+  const activeUsage = usage ?? stats.lastUsage;
   const lines = [
     `broke stats - ${stats.passes} compression run(s)`,
     measured !== null
@@ -597,6 +598,12 @@ export function formatStats(config: Config, stats: TaskStats | null, price: Task
       : []),
     `  summarizer LLM calls: ${stats.summarizeCalls} (cache reuse not counted - true cost side)`,
     `  last summarizer: ${stats.lastSummarizer}`,
+    ...(activeUsage
+      ? [
+          `  provider usage (last call): ${activeUsage.sentTokens.toLocaleString('en-US')} tok sent${activeUsage.cacheReadTokens ? ` | ${activeUsage.cacheReadTokens.toLocaleString('en-US')} cache read` : ''}${activeUsage.cacheWriteTokens ? ` | ${activeUsage.cacheWriteTokens.toLocaleString('en-US')} cache write` : ''}${activeUsage.messageCost != null ? ` | ${formatUsd(activeUsage.messageCost)} billed` : ''}`,
+          '  (note: a measurement ledger does not prove a billed saving - provider cache & billing determine actual invoice)',
+        ]
+      : []),
     `  level: ${config.level} | maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} | protectedTurns: ${config.protectedTurns}`,
   ];
   return lines.join('\n');
@@ -719,7 +726,7 @@ export async function formatStatus(config: Config, stats: TaskStats | null, pric
       lines.push('  ⛔ remote summarizer host is BLOCKED - conversation content never leaves this machine until you run /broke summarize allow-remote on.');
     }
   }
-  const statsBlock = formatStats(config, stats, price);
+  const statsBlock = formatStats(config, stats, price, stats?.lastUsage);
   if (statsBlock !== 'No stats recorded for this task yet - send a message first.') {
     lines.push('', statsBlock);
   }

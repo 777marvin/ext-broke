@@ -287,6 +287,11 @@ export default class Broke implements Extension {
    */
   private readonly baselineCharsByTask = new Map<string, number>();
   /**
+   * Provider-reported usage of the most recent completed model call per task.
+   * Captured at `onOptimizeMessages` and used for honest Live-UI and /broke stats reporting (F6).
+   */
+  private readonly lastUsageByTask = new Map<string, LastCallUsage>();
+  /**
    * Reentry guard (per task): the cloud summarizer calls task.generateText,
    * and that call can fire onOptimizeMessages again on the same extension
    * instance. Without the guard the summarizer's own input would be
@@ -579,7 +584,11 @@ export default class Broke implements Extension {
       // Provider-reported usage of the last completed call: real cache
       // write/read tokens flow into the measure ledger (task 6) instead of a
       // chars/4 guess.
-      this.recordReport(taskId, report, price, lastCallUsage(event.originalMessages), anchored, anchored ? anchorIndex : undefined);
+      const usage = lastCallUsage(event.originalMessages);
+      if (usage) {
+        boundedMapSet(this.lastUsageByTask, taskId, usage);
+      }
+      this.recordReport(taskId, report, price, usage, anchored, anchored ? anchorIndex : undefined);
       // Observe every real pipeline run - touched or not. No-op runs are
       // still facts the UI needs: they are how a zero badge explains itself.
       boundedMapSet(this.lastObservation, taskId, { at: Date.now(), inputChars: report.totalCharsBefore });
@@ -1048,6 +1057,10 @@ export default class Broke implements Extension {
     // EVERY model call.
     if (!report.touched) return;
     const stats = this.statsByTask.get(taskId) ?? this.statsLoader.get(taskId) ?? emptyStats(taskId);
+    if (lastUsage) {
+      stats.lastUsage = lastUsage;
+      boundedMapSet(this.lastUsageByTask, taskId, lastUsage);
+    }
     stats.passes += 1;
     stats.savedChars.structural += report.structuralChars;
     stats.savedChars.error += report.errorChars;
@@ -1270,7 +1283,10 @@ export default class Broke implements Extension {
       }
       case 'stats': {
         const price = await resolveTaskModelPrice(context);
-        return log(formatStats(config, ext.statsFor(context), price));
+        const taskId = context.getTaskContext()?.data.id;
+        const stats = ext.statsFor(context);
+        const usage = stats?.lastUsage ?? (taskId ? ext.lastUsageByTask.get(taskId) : null);
+        return log(formatStats(config, stats, price, usage));
       }
       case 'estimate':
         return log(formatEstimate(ext.statsFor(context)));
@@ -1292,6 +1308,7 @@ export default class Broke implements Extension {
           ext.state.cachedSummaryByTask.delete(taskId);
           ext.summarizeFailures.delete(taskId);
           ext.summarizeDisabled.delete(taskId);
+          ext.lastUsageByTask.delete(taskId);
           // Cache-friendly state: forget which bytes were sent and
           // unlock the escape hatch - a reset task starts fresh.
           clearTask(taskId);
@@ -1946,6 +1963,18 @@ export default class Broke implements Extension {
     // Money is always computed from the price of the task's CURRENT model.
     const price = await resolveTaskModelPrice(context);
     const savedUsd = price ? savedCostUsd(totalTokens, price.inputPerMToken) : null;
+    let usage = (taskId ? this.lastUsageByTask.get(taskId) : null) ?? stats?.lastUsage ?? null;
+    if (!usage && context.getTaskContext()) {
+      try {
+        const msgs = await context.getTaskContext()?.getContextMessages?.();
+        if (msgs && Array.isArray(msgs)) {
+          usage = lastCallUsage(msgs) ?? null;
+          if (usage && taskId) boundedMapSet(this.lastUsageByTask, taskId, usage);
+        }
+      } catch {
+        // best effort
+      }
+    }
     return {
       level: config.enabled ? config.level : 'off',
       mode: config.mode,
@@ -1995,6 +2024,30 @@ export default class Broke implements Extension {
       summarizeDisabled: this.summarizeDisabled.get(taskId) === true,
       inTask: !!context.getTaskContext(),
       now: Date.now(),
+      providerUsage: usage
+        ? {
+            sentTokens: usage.sentTokens,
+            cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+            cacheReadTokens: usage.cacheReadTokens ?? 0,
+            messageCost: usage.messageCost ?? null,
+          }
+        : null,
+      observedReduction: {
+        measuredChars: measuredChars ?? (stats ? totalSavedChars(stats) : 0),
+        totalCharsBefore: stats?.totalCharsBefore ?? 0,
+        totalCharsAfter: stats?.totalCharsAfter ?? 0,
+        savedChars: {
+          structural: stats?.savedChars.structural ?? 0,
+          error: stats?.savedChars.error ?? 0,
+          truncate: stats?.savedChars.truncate ?? 0,
+          summarize: stats?.savedChars.summarize ?? 0,
+        },
+      },
+      modeledCost: {
+        savedUsd,
+        modelLabel: price ? priceLabel(price) : null,
+        inputPricePerMToken: price?.inputPerMToken ?? null,
+      },
     };
   }
 

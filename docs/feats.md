@@ -55,7 +55,7 @@ idea-level, unscheduled candidates recorded
 | # | Candidate | Type | Effort | Status |
 |---|-----------|------|--------|--------|
 | F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (since v1.2.2) |
-| F6 | Live-UI expansion: observed input reduction and estimates, activity dot | feat | M | in progress (activity dot slice in Unreleased) |
+| F6 | Live-UI expansion: observed input reduction and estimates, activity dot | feat | M | completed (in Unreleased) |
 | F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | in progress (everyday-view slice in Unreleased) |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
 | F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
@@ -102,12 +102,20 @@ idea-level, unscheduled candidates recorded
   | truncate.maxLines | 200 | 200 | 120 |
   | truncate.maxKB | 20 | 20 | 12 |
   | summarize.afterTurns | 8 | 8 | 4 |
-- **F6 - Live-UI expansion.** Separate observed conversation-character
-  reduction, provider-reported usage and modeled monetary estimates. A
-  measurement ledger does not prove a billed saving. Animated status dot with
-  color semantics: green = broke on and active, blue = benchmark/measure
-  run, purple = summarizer currently running, yellow = error / needs
-  attention, red = broke off.
+- **F6 - Live-UI expansion (completed in Unreleased).** Separate observed
+  conversation-character reduction, provider-reported usage and modeled
+  monetary estimates. A measurement ledger does not prove a billed saving.
+  Slice 1 delivered the accessible animated status dot and active compression
+  pulsing feedback on the collapsed badge (`StatusBadge.jsx`) and real-time
+  `isOptimizing` signalling (`index.ts`). Slice 2 completed the honest
+  three-tier savings breakdown in the Live-UI dialog ("View savings" action)
+  and CLI stats, cleanly distinguishing measured context reduction from
+  provider-reported prompt-cache reads/writes and modeled dollar estimates,
+  with avoided context (slicing, flushes, search snippets) clearly kept
+  outside measured totals. Animated status dot with color semantics:
+  green = broke on and active, blue = benchmark/measure run,
+  purple = summarizer currently running, yellow = error / needs attention,
+  red = broke off.
 - **F7 - Minimalist operation.** Reduce the daily-driver surface to the
   essentials for non-power users (sane presets, one toggle, honest numbers
   at a glance); the current developer-facing surface stays as an explicit,

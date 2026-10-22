@@ -151,11 +151,11 @@
     setCommandResult(null);
     try {
       const res = (await executeExtensionAction?.('runCommand', `broke ${cmd}`)) as { ok?: boolean; message?: string; error?: string } | undefined;
-      if (res?.ok === true) setCommandResult({ ok: true, text: res.message ?? '' });
-      else setCommandResult({ ok: false, text: res?.error ?? 'the command returned no result' });
+      if (res?.ok === true) setCommandResult({ ok: true, text: res.message ?? '', cmd });
+      else setCommandResult({ ok: false, text: res?.error ?? 'the command returned no result', cmd });
     } catch {
       // A dead click must be visible, not swallowed.
-      setCommandResult({ ok: false, text: 'the command could not be run' });
+      setCommandResult({ ok: false, text: 'the command could not be run', cmd });
     }
   };
   const dialogKeyDown = (e) => {
@@ -201,6 +201,10 @@
   const obs = data?.observation ?? null;
   const isOptimizing = data?.isOptimizing === true;
   const neverSaved = total === 0 && passes === 0;
+  const savedTokens = data?.savedTokens ?? { structural: 0, error: 0, truncate: 0, summarize: 0 };
+  const estimates = data?.estimates ?? null;
+  const providerUsage = data?.providerUsage ?? null;
+  const observedReduction = data?.observedReduction ?? null;
   const k = (n) => `${Math.round(n / 1000)}k`;
 
   const money =
@@ -465,20 +469,133 @@
                   <div
                     role="status"
                     style={{
-                      padding: '9px 11px',
+                      padding: commandResult.cmd === 'stats' && commandResult.ok ? '12px 14px' : '9px 11px',
                       fontSize: 12,
                       lineHeight: 1.45,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      maxHeight: 160,
-                      overflowY: 'auto',
-                      background: commandResult.ok ? '#f1f8f1' : '#fdf1f1',
-                      border: `1px solid ${commandResult.ok ? '#b7dfb7' : '#e6b7b7'}`,
-                      borderRadius: 6,
+                      background: commandResult.ok ? '#f4fbf5' : '#fdf1f1',
+                      border: `1px solid ${commandResult.ok ? '#b9ddc5' : '#e6b7b7'}`,
+                      borderRadius: 8,
                       color: commandResult.ok ? '#1e4620' : '#7a1f1f',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 10,
                     }}
                   >
-                    {commandResult.text}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 700, fontSize: 13, color: commandResult.ok ? '#19633b' : '#8a2d24' }}>
+                        {commandResult.cmd === 'stats' && commandResult.ok ? 'Savings & Usage Breakdown' : 'Result'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setCommandResult(null); }}
+                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16, color: '#666', padding: '0 4px', lineHeight: 1 }}
+                        title="Dismiss result"
+                        aria-label="Dismiss result"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    {commandResult.cmd === 'stats' && commandResult.ok ? (
+                      <>
+                        <div style={{ borderBottom: '1px solid rgba(25,99,59,0.15)', paddingBottom: 8 }}>
+                          <div style={{ fontWeight: 700, fontSize: 12, color: '#19633b', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>📉</span> Observed Context Reduction
+                          </div>
+                          <div style={{ marginTop: 4, color: '#2a3a30' }}>
+                            <strong>{total.toLocaleString('en-US')}</strong> estimated tokens (
+                            {observedReduction?.measuredChars != null
+                              ? `${observedReduction.measuredChars.toLocaleString('en-US')} chars`
+                              : `${(total * 4).toLocaleString('en-US')} chars`}
+                            ) removed across {passes} compression run{passes === 1 ? '' : 's'}.
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '4px 8px', marginTop: 6, fontSize: 11, color: '#3f5245' }}>
+                            <div>Structural: {savedTokens.structural.toLocaleString('en-US')} tok</div>
+                            <div>Errors/logs: {savedTokens.error.toLocaleString('en-US')} tok</div>
+                            <div>Truncate: {savedTokens.truncate.toLocaleString('en-US')} tok</div>
+                            <div>Summarize: {savedTokens.summarize.toLocaleString('en-US')} tok</div>
+                          </div>
+                          {obs && obs.inputChars > 0 ? (
+                            <div style={{ marginTop: 6, fontSize: 11, color: '#556b5d' }}>
+                              Current context: {obs.inputChars.toLocaleString('en-US')} / {maxCtx.toLocaleString('en-US')} chars ({obs.belowThreshold ? 'below threshold' : 'over threshold'})
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div style={{ borderBottom: '1px solid rgba(25,99,59,0.15)', paddingBottom: 8 }}>
+                          <div style={{ fontWeight: 700, fontSize: 12, color: '#185d82', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>🔌</span> Provider-Reported Usage (Last Call)
+                          </div>
+                          {providerUsage ? (
+                            <div style={{ marginTop: 4, color: '#163f54' }}>
+                              <div>Sent tokens: {providerUsage.sentTokens.toLocaleString('en-US')}</div>
+                              {providerUsage.cacheReadTokens > 0 || providerUsage.cacheWriteTokens > 0 ? (
+                                <div style={{ fontSize: 11, marginTop: 2, color: '#185d82' }}>
+                                  Prompt Cache: {providerUsage.cacheReadTokens.toLocaleString('en-US')} read | {providerUsage.cacheWriteTokens.toLocaleString('en-US')} written
+                                </div>
+                              ) : null}
+                              {providerUsage.messageCost != null ? (
+                                <div style={{ fontSize: 11, marginTop: 2, color: '#185d82' }}>
+                                  Billed message cost: ${providerUsage.messageCost < 0.01 ? providerUsage.messageCost.toFixed(4) : providerUsage.messageCost.toFixed(2)}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: 4, fontSize: 11, color: '#556677' }}>
+                              Awaiting next API call or not reported by current provider.
+                            </div>
+                          )}
+                          <div style={{ marginTop: 5, fontSize: 11, color: '#556b5d', fontStyle: 'italic' }}>
+                            A measurement ledger does not prove a billed saving. Provider caching and tier rates determine real costs.
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 12, color: '#7a5512', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>💵</span> Modeled Monetary Estimate
+                          </div>
+                          {cost.savedUsd != null && cost.savedUsd > 0 ? (
+                            <div style={{ marginTop: 4, color: '#4a3608' }}>
+                              <strong>≈ ${cost.savedUsd < 0.01 ? cost.savedUsd.toFixed(4) : cost.savedUsd.toFixed(2)}</strong> estimated savings at current {cost.modelLabel ?? 'model'} pricing.
+                              <div style={{ marginTop: 2, fontSize: 11, color: '#66776c' }}>
+                                Modeled estimate (removed tokens × input rate). Not a guaranteed billing reduction.
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: 4, fontSize: 11, color: '#66776c' }}>
+                              No input rate registered for current model (no artificial dollar amount shown).
+                            </div>
+                          )}
+                        </div>
+
+                        {estimates && (estimates.slice > 0 || estimates.flush > 0 || estimates.search > 0) ? (
+                          <div style={{ borderTop: '1px solid rgba(25,99,59,0.15)', paddingTop: 8, fontSize: 11, color: '#44554a' }}>
+                            <div style={{ fontWeight: 650, color: '#33443a', marginBottom: 2 }}>📦 Avoided Context (Counterfactuals)</div>
+                            <div>
+                              {estimates.slice > 0 ? `Slicing: ~${estimates.slice.toLocaleString('en-US')} tok · ` : ''}
+                              {estimates.flush > 0 ? `Flush: ~${estimates.flush.toLocaleString('en-US')} tok · ` : ''}
+                              {estimates.search > 0 ? `Search: ~${estimates.search.toLocaleString('en-US')} tok` : ''}
+                            </div>
+                            <div style={{ marginTop: 2, color: '#77887d' }}>
+                              Avoided by tool choices; not part of measured prompt reduction totals.
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <details style={{ marginTop: 4, borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 6 }}>
+                          <summary style={{ cursor: 'pointer', fontSize: 11, color: '#556655', fontWeight: 600 }}>
+                            Raw terminal output
+                          </summary>
+                          <pre style={{ margin: '6px 0 0', fontSize: 11, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#222' }}>
+                            {commandResult.text}
+                          </pre>
+                        </details>
+                      </>
+                    ) : (
+                      <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflowY: 'auto' }}>
+                        {commandResult.text}
+                      </div>
+                    )}
                   </div>
                 ) : null}
 

@@ -362,6 +362,55 @@ describe('F7 everyday badge experience', () => {
     assert.ok(dot.style.background === 'rgb(138, 45, 36)' || dot.style.background === '#8a2d24', 'red off dot');
     assert.match(badge?.getAttribute('title') ?? '', /Broke is off/i);
   });
+
+  it('separates observed reduction, provider usage, and modeled estimates when viewing savings (F6 Slice 2)', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {
+      level: 'truncate',
+      totalSavedTokens: 3113,
+      passes: 3,
+      savedTokens: { structural: 300, error: 2000, truncate: 813, summarize: 0 },
+      observedReduction: { measuredChars: 12450, totalCharsBefore: 50000, totalCharsAfter: 37550 },
+      cost: { savedUsd: 0.012, modelLabel: 'Claude 3.5 Sonnet' },
+      providerUsage: { sentTokens: 4200, cacheReadTokens: 3500, cacheWriteTokens: 700, messageCost: 0.0045 },
+      estimates: { slice: 500, flush: 1000, search: 200 },
+    });
+    await open();
+    await click(button('View savings'));
+
+    assert.ok(calls.includes('runCommand'), 'View savings executes stats');
+    assert.match(container.textContent, /Observed Context Reduction/i);
+    assert.match(container.textContent, /3,113/);
+    assert.match(container.textContent, /12,450 chars/);
+    assert.match(container.textContent, /Provider-Reported Usage/i);
+    assert.match(container.textContent, /3,500.*read/i);
+    assert.match(container.textContent, /A measurement ledger does not prove a billed saving/i);
+    assert.match(container.textContent, /Modeled Monetary Estimate/i);
+    assert.match(container.textContent, /Claude 3\.5 Sonnet/i);
+    assert.match(container.textContent, /Avoided Context \(Counterfactuals\)/i);
+    assert.match(container.textContent, /ran broke stats/);
+
+    const dismiss = container.querySelector('button[aria-label="Dismiss result"]') as HTMLElement;
+    assert.ok(dismiss, 'dismiss button exists');
+    await click(dismiss);
+    assert.doesNotMatch(container.textContent, /Savings & Usage Breakdown/);
+  });
+
+  it('handles missing provider usage and unpriced models honestly in the savings view (F6 Slice 2)', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {
+      level: 'truncate',
+      totalSavedTokens: 0,
+      passes: 0,
+      cost: { savedUsd: null, modelLabel: null },
+      providerUsage: null,
+      estimates: null,
+    });
+    await open();
+    await click(button('View savings'));
+
+    assert.match(container.textContent, /Awaiting next API call or not reported by current provider/i);
+    assert.match(container.textContent, /No input rate registered for current model/i);
+    assert.match(container.textContent, /A measurement ledger does not prove a billed saving/i);
+  });
 });
 
 describe('L2 search fields mirror the schema bounds', () => {

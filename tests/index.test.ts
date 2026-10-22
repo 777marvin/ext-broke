@@ -285,6 +285,34 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.equal(data.estimates?.slice, 2250, 'slice stays available as a labeled counterfactual (9000/4)');
   });
 
+  it('supplies providerUsage, observedReduction, and modeledCost to the Live-UI (F6 Slice 2)', async () => {
+    writeConfig({ level: 'truncate' });
+    const stats = emptyStats('task-f6-live');
+    stats.passes = 2;
+    stats.totalCharsBefore = 20000;
+    stats.totalCharsAfter = 16000;
+    stats.savedChars.structural = 1000;
+    stats.savedChars.error = 3000;
+    stats.lastUsage = { sentTokens: 2500, cacheReadTokens: 1800, cacheWriteTokens: 700, messageCost: 0.003 };
+    persistStats(stats, join(tmp, 'stats.jsonl'));
+    const ext = new Broke();
+    const { context } = makeHost('task-f6-live', () => 'stub');
+
+    const data = (await ext.getUIExtensionData('broke-status', context)) as {
+      totalSavedTokens: number;
+      observedReduction: { measuredChars: number; totalCharsBefore: number; totalCharsAfter: number } | null;
+      providerUsage: { sentTokens: number; cacheReadTokens: number; cacheWriteTokens: number; messageCost?: number } | null;
+      modeledCost: { savedUsd: number | null } | null;
+    };
+    assert.equal(data.totalSavedTokens, 1000, '4000 measured chars / 4');
+    assert.equal(data.observedReduction?.measuredChars, 4000);
+    assert.equal(data.observedReduction?.totalCharsBefore, 20000);
+    assert.equal(data.providerUsage?.sentTokens, 2500);
+    assert.equal(data.providerUsage?.cacheReadTokens, 1800);
+    assert.equal(data.providerUsage?.cacheWriteTokens, 700);
+    assert.ok(data.modeledCost, 'modeledCost structure exists');
+  });
+
   it('refreshes the status badge when the renderer polls via the UI action', async () => {
     writeConfig();
     const ext = new Broke();

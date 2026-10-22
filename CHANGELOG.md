@@ -15,7 +15,17 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Added
 
-- **Live status-dot and activity indicator on the collapsed badge (F6 slice).**
+- **Three-tier honest savings breakdown in the Live-UI and CLI stats (F6 Slice 2).**
+  The "View savings" action in the badge dialog (`StatusBadge.jsx`) and `/broke stats`
+  (`commands.ts`) now cleanly separate: (1) observed conversation-character and token
+  reduction from the message pipeline, (2) provider-reported usage and prompt-cache
+  reads/writes from the model API (`usageReport`), and (3) modeled monetary estimates
+  based on the task model's input rate, accompanied by an explicit notice that a
+  measurement ledger does not prove a billed saving. Avoided context (slicing, flushes,
+  search snippets) remains clearly distinguished outside measured prompt reduction totals,
+  and the inline result card can be dismissed with one click while preserving accessible
+  raw terminal output disclosure.
+- **Live status-dot and activity indicator on the collapsed badge (first F6 slice).**
   The status bar badge now displays a colored status dot directly beside the
   `💸` icon that reflects the current operating state at a glance without opening
   the settings dialog: green (`#19633b`) when saving context, blue (`#185d82`)
