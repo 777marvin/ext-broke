@@ -15,6 +15,16 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Added
 
+- **Guided setup and readiness checks (F7.2).** The badge introduces new users
+  with a skippable, reopenable guide, remembers dismissal independently of
+  configuration, and checks the displayed settings without saving them.
+  Separate basic/backend/model/automation results share decisions with
+  `/broke status`; local checks use model metadata and respect remote consent,
+  while cloud access and generation remain explicitly unchecked. Missing-model
+  warnings, retry, stale-response handling and keyboard focus are covered by
+  targeted tests. The synthetic selftest remains in advanced diagnostics.
+  Local automated and browser-fixture verification is recorded separately from
+  the outstanding live AiderDesk smoke and non-expert usability checks.
 - **Three-tier honest savings breakdown in the Live-UI and CLI stats (F6 Slice 2).**
   The "View savings" action in the badge dialog (`StatusBadge.jsx`) and `/broke stats`
   (`commands.ts`) now cleanly separate: (1) observed conversation-character and token
@@ -68,6 +78,15 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Changed
 
+- Updated the feature roadmap to distinguish implemented Unreleased F6 and
+  F7.1 work from proposed candidates, corrected the documented status-dot
+  meanings, and recorded F7.2 (Guided setup & readiness check) as the selected
+  next slice with scope and acceptance criteria before its implementation above.
+  Aligned the README, overview, tuning, local-model and design notes; clarified
+  that Check setup uses a synthetic test with a stub summarizer and cannot
+  establish backend readiness or model quality. Replaced the stale overview
+  release snapshot and cache-hit guarantee with the current development
+  status and the documented unpublished-tag history.
 - **Visually aligned documentation with the Hyperframes pipeline animation.**
   `docs/overview.md` and `docs/token-saving.md` now feature the pipeline
   animation and consistently present the Clean, Trim, Summarize stages,

@@ -66,6 +66,7 @@ import {
   slicePathKey,
 } from './slice';
 import { runSelfTest } from './selftest';
+import { checkSetupReadiness, deriveSetupReadiness, dismissSetup, loadSetupState } from './setup';
 import {
   buildFlushPlan,
   buildStateMessage,
@@ -1164,6 +1165,7 @@ export default class Broke implements Extension {
    */
   private async cachedOllamaStatus(config: Config): Promise<OllamaStatus | null> {
     if (!this.localSummarizerActive(config)) return null;
+    if (isRemoteOllamaHost(config.summarize.ollamaUrl) && !config.summarize.allowRemoteHost) return null;
     if (this.ollamaStatusCache && Date.now() - this.ollamaStatusCache.at < OLLAMA_STATUS_TTL_MS) {
       return this.ollamaStatusCache.status;
     }
@@ -1210,7 +1212,7 @@ export default class Broke implements Extension {
       ? ''
       : fresh
         ? fresh.reachable
-          ? ` Ollama reachable (${fresh.models.length} models); local summaries are ready.`
+          ? ` Ollama reachable (${fresh.models.length} models); ${deriveSetupReadiness(config, fresh).model.heading}. ${deriveSetupReadiness(config, fresh).automatic.detail}`
           : ' Local summaries need setup; basic compression still works. Start Ollama when you want maximum savings.'
         : ' Local summary setup is being checked in the background; basic compression still works.';
     const remotePlaintext = config.summarize.via === 'local' && isPlaintextRemoteUrl(config.summarize.ollamaUrl);
@@ -1979,6 +1981,7 @@ export default class Broke implements Extension {
       level: config.enabled ? config.level : 'off',
       mode: config.mode,
       autonomy: config.autonomy,
+      setupReadiness: deriveSetupReadiness(config, ollama ?? undefined),
       isOptimizing,
       // What the user configured (the badge must show this even when the
       // summarizer never fired yet) vs. what was actually used.
@@ -2067,6 +2070,9 @@ export default class Broke implements Extension {
   async executeUIExtensionAction(_componentId: string, action: string, args: unknown[], context: ExtensionContext): Promise<unknown> {
     if (action === 'refresh') this.refreshUI();
     if (action === 'getConfig') return getConfig();
+    if (action === 'getSetupState') return loadSetupState();
+    if (action === 'dismissSetup') return dismissSetup();
+    if (action === 'getSetupReadiness') return checkSetupReadiness(ConfigSchema.parse(args[0]));
     if (action === 'previewMode') {
       const mode = args[1];
       if (typeof mode !== 'string' || !['short', 'normal', 'long', 'custom'].includes(mode)) throw new Error('Invalid mode');

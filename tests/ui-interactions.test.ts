@@ -32,16 +32,26 @@ let container: HTMLDivElement;
 let draft: any;
 let persisted: any;
 let calls: string[];
+let setupDismissed: boolean;
 let action: (name: string, ...args: any[]) => Promise<any>;
-async function mount(badge = false, initial = applyPreset(DEFAULT_CONFIG, 'long'), badgeData: Record<string, unknown> = {}) {
+async function mount(badge = false, initial = applyPreset(DEFAULT_CONFIG, 'long'), badgeData: Record<string, unknown> = {}, dismissed = true) {
   if (root) await React.act(async () => root.unmount());
   container?.remove();
   draft = structuredClone(initial);
   persisted = structuredClone(initial);
   calls = [];
+  setupDismissed = dismissed;
   action = async (name, ...args) => {
     calls.push(name);
     if (name === 'getConfig') return structuredClone(persisted);
+    if (name === 'getSetupState') return { version: 1, dismissed: setupDismissed };
+    if (name === 'dismissSetup') { setupDismissed = true; return { version: 1, dismissed: true }; }
+    if (name === 'getSetupReadiness') return {
+      basic: { state: 'ready', heading: 'Basic compression is ready', detail: 'Balanced needs no extra software.' },
+      backend: { state: 'not-needed', heading: 'No summary backend needed', detail: 'Basic compression works without Ollama.' },
+      model: { state: 'not-needed', heading: 'No summary model needed', detail: 'No model is used for basic compression.' },
+      automatic: { state: 'not-needed', heading: 'Automatic summaries are not selected', detail: 'Your current approach does not generate summaries.' },
+    };
     if (name === 'previewMode') return ConfigSchema.parse(applyPreset(ConfigSchema.parse(args[0]), args[1]));
     if (name === 'setConfig') { persisted = ConfigSchema.parse(args[0]); return { ok: true, config: persisted }; }
     if (name === 'runCommand') return { ok: true, message: `ran ${args[0]}` };
@@ -268,8 +278,8 @@ describe('F7 everyday badge experience', () => {
     assert.doesNotMatch(explanation.textContent ?? '', /\/broke/);
 
     await click(setup);
-    assert.deepEqual(calls.slice(-1), ['runCommand']);
-    assert.match(container.textContent!, /ran broke selftest/);
+    assert.deepEqual(calls.slice(-1), ['getSetupReadiness']);
+    assert.match(container.textContent!, /Basic compression is ready/);
   });
 
   it('explains when local summaries need attention without implying all compression stopped', async () => {
@@ -410,6 +420,161 @@ describe('F7 everyday badge experience', () => {
     assert.match(container.textContent, /Awaiting next API call or not reported by current provider/i);
     assert.match(container.textContent, /No input rate registered for current model/i);
     assert.match(container.textContent, /A measurement ledger does not prove a billed saving/i);
+  });
+});
+
+describe('F7.2 guided setup', () => {
+  it('does not call an installed backend ready when its configured model is missing', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'long'), {
+      level: 'summarize', summarizerConfigured: 'local', ollama: { reachable: true, models: 1 },
+      setupReadiness: {
+        backend: { state: 'ready', heading: 'Ollama is reachable', detail: 'Metadata only.' },
+        model: { state: 'unavailable', heading: 'Configured model is not installed', detail: 'Install the configured model, then check again.' },
+        automatic: { state: 'unavailable', heading: 'Automatic summaries need setup', detail: 'The configured model is missing.' },
+      },
+    });
+    assert.match(container.querySelector('[role=status]')!.getAttribute('aria-label')!, /model.*not installed/i);
+    await open();
+    assert.match(container.querySelector('dialog [role=status]')!.textContent!, /model.*not installed/i);
+    assert.doesNotMatch(container.querySelector('dialog [role=status]')!.textContent!, /nothing else to set up/i);
+  });
+
+  it('keeps a manually reopened guide visible when its initial state arrives late', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'));
+    const pending = deferred();
+    const base = action;
+    action = (name, ...args) => name === 'getSetupState' ? pending.promise : base(name, ...args);
+    await open();
+    await click(button('Setup guide'));
+    await React.act(async () => pending.resolve({ version: 1, dismissed: true }));
+    assert.match(container.textContent!, /Welcome to Broke/);
+  });
+
+  it('restores focus after an asynchronous introduction dismissal has enabled the target', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {}, false);
+    await open();
+    const pending = deferred();
+    const base = action;
+    action = (name, ...args) => name === 'dismissSetup' ? pending.promise : base(name, ...args);
+    button('Got it').focus();
+    await click(button('Got it'));
+    assert.equal(button('Setup guide').disabled, true);
+    await React.act(async () => pending.resolve({ version: 1, dismissed: true }));
+    assert.equal(document.activeElement === button('Setup guide'), true, 'focus returns to the enabled Setup guide button');
+  });
+
+  it('introduces a fresh user without changing settings or probing a backend, and remembers Skip', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {}, false);
+    await open();
+    assert.match(container.textContent!, /Welcome to Broke/);
+    assert.match(container.textContent!, /Balanced.*recommended/i);
+    assert.match(container.textContent!, /every task/i);
+    assert.equal(calls.includes('getSetupReadiness'), false, 'opening alone never contacts a backend');
+    await click(button('Skip introduction'));
+    assert.equal(setupDismissed, true);
+    assert.equal(calls.includes('setConfig'), false);
+    await click(button('Cancel'));
+    await open();
+    assert.doesNotMatch(container.textContent!, /Welcome to Broke/);
+    await click(button('Setup guide'));
+    assert.match(container.textContent!, /Welcome to Broke/);
+    await click(button('Got it'));
+    assert.doesNotMatch(container.textContent!, /Welcome to Broke/);
+  });
+
+  it('preserves Off, Custom and manual settings when cancelling the introduction', async () => {
+    const initial = { ...DEFAULT_CONFIG, enabled: false, mode: 'custom' as const, autonomy: 'manual' as const };
+    await mount(true, initial, {}, false);
+    await open();
+    assert.match(container.textContent!, /Broke is off/);
+    await click(button('Cancel'));
+    assert.equal(setupDismissed, false, 'Cancel must not mark the introduction as finished');
+    assert.deepEqual(persisted, initial);
+    assert.equal(calls.includes('dismissSetup'), false);
+    assert.equal(document.activeElement, container.querySelector('button'));
+  });
+
+  it('shows a recoverable dismissal error without losing the settings draft', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {}, false);
+    await open();
+    await number('Max context chars', '72000');
+    const base = action;
+    action = (name, ...args) => name === 'dismissSetup' ? Promise.reject(new Error('disk full')) : base(name, ...args);
+    await click(button('Got it'));
+    assert.match(container.querySelector('[role=alert]')!.textContent!, /could not save.*introduction/i);
+    assert.equal(input('Max context chars').value, '72000');
+    action = base;
+    await click(button('Got it'));
+    assert.equal(setupDismissed, true);
+    assert.equal(calls.includes('setConfig'), false);
+  });
+
+  it('announces pending checks and ignores results after a draft edit or Cancel/reopen', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'));
+    await open();
+    const pending = deferred();
+    const base = action;
+    action = (name, ...args) => name === 'getSetupReadiness' ? pending.promise : base(name, ...args);
+    await click(button('Check setup'));
+    assert.match(container.textContent!, /Checking setup/);
+    assert.equal(button('Check setup').disabled, true);
+    await number('Max context chars', '72000');
+    await click(button('Cancel'));
+    await open();
+    await React.act(async () => pending.resolve({ basic: { heading: 'STALE RESULT', detail: 'wrong draft' } }));
+    assert.doesNotMatch(container.textContent!, /STALE RESULT|Checking setup/);
+  });
+
+  it('checks the unsaved draft without persisting it and keeps the synthetic test in diagnostics', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'));
+    await open();
+    await change('Savings approach', 'long');
+    let checked: any;
+    const base = action;
+    action = (name, ...args) => {
+      if (name === 'getSetupReadiness') checked = args[0];
+      return base(name, ...args);
+    };
+    await click(button('Check setup'));
+    assert.equal(checked.mode, 'long');
+    assert.equal(persisted.mode, 'normal');
+    assert.equal(calls.includes('setConfig'), false);
+    const advanced = [...container.querySelectorAll('details')].find(n => /Advanced settings/.test(n.querySelector('summary')?.textContent ?? ''))!;
+    assert.match(advanced.textContent!, /synthetic.*stub summarizer/i);
+    assert.match(advanced.textContent!, /\/broke.*selftest/);
+  });
+
+  it('keeps failed checks visible and allows retry', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'));
+    await open();
+    const base = action;
+    action = (name, ...args) => name === 'getSetupReadiness' ? Promise.reject(new Error('offline')) : base(name, ...args);
+    await click(button('Check setup'));
+    assert.match(container.querySelector('[role=alert]')!.textContent!, /could not check.*setup/i);
+    assert.equal(button('Check setup').disabled, false);
+    action = base;
+    await click(button('Check setup'));
+    assert.match(container.textContent!, /Basic compression is ready/);
+  });
+
+  it('restores focus after a pending check blurs its disabled button without stealing a field focus', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'));
+    await open();
+    const base = action;
+    const pending = deferred();
+    action = (name, ...args) => name === 'getSetupReadiness' ? pending.promise : base(name, ...args);
+    button('Check setup').focus();
+    await click(button('Check setup'));
+    button('Check setup').blur(); // Browser engines blur a disabled, focused button.
+    await React.act(async () => pending.resolve(await base('getSetupReadiness')));
+    assert.equal(document.activeElement === button('Check setup'), true);
+
+    const next = deferred();
+    action = (name, ...args) => name === 'getSetupReadiness' ? next.promise : base(name, ...args);
+    await click(button('Check setup'));
+    input('Savings approach').focus();
+    await React.act(async () => next.resolve(await base('getSetupReadiness')));
+    assert.equal(document.activeElement === input('Savings approach'), true);
   });
 });
 

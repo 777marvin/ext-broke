@@ -12,6 +12,7 @@
  *
  * Layout under runtimeDir():
  *   config.json            - settings
+ *   setup.json             - versioned introduction dismissal, separate from settings
  *   ledgers/stats.jsonl    - per-task stats ledger
  *   ledgers/measure.jsonl  - per-run measurement ledger
  *   snapshots/<task>/      - milestone snapshots + undo files

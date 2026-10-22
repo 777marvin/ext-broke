@@ -1,23 +1,16 @@
 # Project Overview
 
-*Snapshot: release v1.3.2 (2026-09-28) - the documentation truth pass and its
-three gates, shipped after 1.3.1 failed its own gate: the documentation
-checks had assumed a checkout carrying git tags, and most CI jobs do not,
-so the release was never published and 1.3.2 carries both the work and the
-fix. Prior snapshot: release v1.3.0 (2026-09-28) - AiderDesk 0.83-0.85
-compatibility: the host floor moved to 0.84 (`/broke diff` via
-`TaskContext.getUpdatedFileDiff`), plus the opt-in per-message `broke: why`
-menu row (0.85) and the `cache.openaiStateless` assertion. Prior snapshot:
-release v1.2.3 (2026-09-26) - remediation of the external senior-level
-review of v1.2.2: the badge Quick Commands are actually wired, the updater
-post-commit safety net is reachable, the cache-friendly frozen gate is
-enforced on every path that can rewrite sent bytes, and the indexer has
-real scan and merge budgets. Prior snapshot: release v1.2.2
-(2026-09-18) - cache-friendly mode (sent-ledger freeze, escape hatch with
-hysteresis, provider-cache pricing, badge settings overlay) plus the
-v1.2.1/1.2.2 UI rework. Before that: v1.1.0 (2026-08-29), review rounds
-F1-F24, XF1-XF16, R1-R15 and remediation F-01..F-16 closed, external-review
-findings BRK-001..030 fixed.*
+*Snapshot: release v1.3.3 (2026-09-28), the published documentation-gate
+baseline. Development additions reviewed at 1.3.4-dev on 2026-10-22 include
+Unreleased AiderDesk 0.88 message-preparation support, F6's live status and
+savings breakdown, and F7.1's everyday badge view. F7.2 guided setup and
+readiness is also implemented under Unreleased, with live-host smoke and
+non-expert usability checks still open. The changelog records
+v1.3.3 as the first published release containing the documentation-gate work
+of v1.3.1 and v1.3.2; neither of those earlier tags was published. See
+[CHANGELOG](../CHANGELOG.md) for release history and
+[feature status](feats.md#current-feature-status-and-candidate-backlog) for
+remaining work.*
 
 *This file deliberately carries no per-module line counts and no test-count
 prose: hand-maintained numbers drift silently and were already two releases
@@ -30,8 +23,8 @@ conversation messages on model calls, in three depth levels, and can run the
 summarization pass on local Ollama without an extra cloud summarizer request.
 The stored task history is not rewritten by the input
 pipeline, compression applies to the input of each model call only. Since
-1.2.0 the optional cache-friendly mode keeps already-sent bytes byte-stable
-so the provider's prompt cache keeps hitting (sent-ledger, escape hatch
+1.2.0 the optional cache-friendly mode preserves already-sent bytes to help
+provider prompt-cache reuse, without guaranteeing hits (sent-ledger, escape hatch
 with hysteresis, provider-reported cache tokens in the measure ledger).
 It targets AiderDesk 0.88 and newer (the message-preparation hooks) and adds
 `/broke diff` (a budgeted digest of the uncommitted changes) to the command
@@ -67,7 +60,8 @@ surface.
 | `.github/workflows/release.yml` | Tag-push release pipeline (BRK-007/008): full CI gate runs on the exact tagged commit (reusable workflow_call), then `release-sign-and-publish.yml` is called PINNED TO `@main` - the signing code always comes from protected main, never from the tag; ancestor check against origin/main, `environment: release` approval gate, assets built by `git archive` of the tag (the ONLY supported release path since 0.8.0) |
 | `.github/workflows/release-sign-and-publish.yml` | BRK-008 callee: signs the tag-built archive and publishes release assets + SHA256SUMS + signature; requires the `release` environment approval |
 | `pricing.ts` | Cost estimates from the task model's registered input price; cache multipliers are modeled assumptions, including a fixed OpenAI 0.5x read rate that varies by model in actual provider pricing |
-| `selftest.ts` | `/broke selftest`: synthetic conversation with real tool-call ids, forced-low thresholds, per-pass savings |
+| `selftest.ts` | `/broke selftest` (advanced diagnostics): synthetic conversation with real tool-call ids, forced-low thresholds, stub summarizer and per-pass savings; separate from the badge's metadata readiness check |
+| `setup.ts` | Shared configuration/metadata readiness for badge and CLI, consent-gated Ollama model checks, and bounded atomic introduction-dismissal persistence under runtime `setup.json`; never generates summaries |
 | `scripts/bench.ts` | Deterministic reference benchmark (npm run bench): a 351,403-char synthetic session through the real pipeline with a stub summarizer, byte-reproducible; F4 keyword-index scenario for the counterfactual estimate model |
 | `scripts/measure.ts` | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
 | `ConfigComponent.jsx` | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
@@ -202,5 +196,6 @@ conversation-message character counts in real runs, not provider billing data.
 - `docs/token-saving.md`: full lever list
 - `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
 - `docs/local-models.md`: local Ollama setup and measurement limits
-- `docs/feats.md`: historical designs and implementation notes for F1-F5, plus unscheduled candidates
+- `docs/feats.md`: current feature status and historical designs for F1-F5; F6, F7.1 and F7.2 are implemented under Unreleased, F8-F9 remain proposed
+- `docs/f72-verification.md`: F7.2 local verification and outstanding live-host/usability checks
 - `docs/review-backlog.md`: the complete review ledger - self-review F1-F24, external XF1-XF16, external R1-R15, remediation F-01..F-16 - all dispositioned with severity, location, fix approach, commit mapping

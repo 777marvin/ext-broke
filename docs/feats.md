@@ -1,7 +1,8 @@
 # Context Features: Design & Specs
 
-This is a historical design record for F1-F5 plus proposed later work.
-Its design sections, sample schemas and original target versions are not a
+This file tracks current feature status and the next implementation slice,
+alongside historical designs for F1-F5. The historical design sections,
+sample schemas and original target versions are not a
 current API reference. Use [README configuration](../README.md#configuration),
 `config.ts` and the current code for shipped behavior. Earlier checks used
 the maintainer's local AiderDesk installation and private project notes;
@@ -45,18 +46,21 @@ operation of the whole roadmap (flush) and must land after F1's stats/config
 mechanics exist. F4 is the largest and benefits from the patterns established
 by F1–F3.
 
-## Feature 5 and candidate backlog
+## Current feature status and candidate backlog
 
 F5 was introduced in v1.2.1 (2026-09-18) and first published in v1.2.2;
-v1.2.1 itself was never released. F6-F9 remain
-idea-level, unscheduled candidates recorded
-2026-08-28.
+v1.2.1 itself was never released. Status reviewed on 2026-10-22 against
+the current code and Unreleased changelog: F6 is implemented, F7's everyday
+view and F7.2 guided setup/readiness are implemented under Unreleased.
+Unreleased work is not claimed as a published release. F8-F9 remain proposed;
+no release version or delivery date is assigned to this remaining work.
 
 | # | Candidate | Type | Effort | Status |
 |---|-----------|------|--------|--------|
 | F5 | Mode presets (short / normal / long / custom) + autonomy selector + badge icon | feat | M | released (since v1.2.2) |
 | F6 | Live-UI expansion: observed input reduction and estimates, activity dot | feat | M | completed (in Unreleased) |
-| F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | in progress (everyday-view slice in Unreleased) |
+| F7 | Minimalist user-facing operation (dev mode stays, optional) | feat | M | partial (F7.1/F7.2 in Unreleased; live-host/usability checks open) |
+| F7.2 | Guided setup & readiness check | feat | M | implemented in Unreleased; live AiderDesk smoke pending |
 | F8 | Internal benchmark methodology "that tells the truth" | docs/tooling | L | proposed |
 | F9 | User-facing benchmark "that tells the truth" | docs/tooling | L | proposed |
 
@@ -112,25 +116,29 @@ idea-level, unscheduled candidates recorded
   and CLI stats, cleanly distinguishing measured context reduction from
   provider-reported prompt-cache reads/writes and modeled dollar estimates,
   with avoided context (slicing, flushes, search snippets) clearly kept
-  outside measured totals. Animated status dot with color semantics:
-  green = broke on and active, blue = benchmark/measure run,
-  purple = summarizer currently running, yellow = error / needs attention,
-  red = broke off.
+  outside measured totals. The implemented status-dot semantics are:
+  green = context savings recorded, blue = ready with no savings yet,
+  violet = message optimization in progress, amber = local summaries need
+  setup, red = broke off. Blue does not indicate a benchmark or measurement run.
 - **F7 - Minimalist operation.** Reduce the daily-driver surface to the
   essentials for non-power users (sane presets, one toggle, honest numbers
   at a glance); the current developer-facing surface stays as an explicit,
-  optional dev mode. The first Unreleased slice makes the badge dialog the
-  everyday surface: plain-language state, Safe/Balanced/Maximum-savings
+  optional advanced surface. F7.1, the first Unreleased slice, makes the
+  badge dialog the everyday surface: plain-language state, Safe/Balanced/Maximum-savings
   choices, three task-focused actions, and a closed advanced disclosure that
-  preserves every technical control and command tool. Remaining F7 work is a
-  broader first-run/install flow and usability validation with non-experts.
+  preserves every technical control and command tool. F7.2 below adds guided setup;
+  usability validation with non-experts remains required before calling F7
+  complete. The current advanced disclosure is not a separate developer-mode switch.
 - **F8 - Internal benchmark methodology.** Compare reproducible tasks with
   and without broke, separating observed input reduction, provider usage
-  and modeled monetary estimates.
+  and modeled monetary estimates. The existing deterministic synthetic
+  benchmark uses a stub summarizer; it is not this broader evaluation.
+  Include task-result quality and summarizer overhead in the comparison.
 - **F9 - User-run measurement.** Provide a reproducible path beyond
   `npm run bench` / `npm run measure`: users
   should be able to verify savings claims on their own sessions, with a
-  clear methodology and documented caveats.
+  clear methodology and documented caveats. Build this on F8's methodology
+  after the F7 setup work; the existing ledger alone is not an on/off billing comparison.
 - **S5 - Agent-facing skill/rule (investigation).** Should broke ship an
   AiderDesk skill or rule that teaches agents to use broke on their own
   (tools + `/broke` commands) during autonomous tasks? Evaluate
@@ -150,6 +158,76 @@ idea-level, unscheduled candidates recorded
   `truncateToolResult` feature-detection pattern is already referenced in
   the cross-cutting principles).
 
+### F7.2: Guided setup & readiness check
+
+**Status:** implemented under Unreleased on 2026-10-22. Live AiderDesk smoke
+and non-expert usability validation remain open; see [verification record](f72-verification.md).
+**Effort:** M. **Release:** unassigned.
+
+**Goal:** a new user can tell whether basic compression is ready, whether
+optional summaries need setup, and why a short task may show zero savings,
+without learning commands or compression thresholds.
+
+**Gap addressed:** Check setup formerly ran `/broke selftest` on synthetic
+input with a stub summarizer. It now checks the displayed settings and, when
+local summaries are selected and permitted, reads Ollama's installed-model
+metadata. The synthetic selftest remains in advanced diagnostics. Both the
+badge and `/broke status` use the shared readiness decisions in `setup.ts`;
+none of these checks proves that a model can generate a useful summary.
+
+**Implemented scope:**
+
+- Add a short introduction on the first opening of the badge dialog, with
+  a way to skip it and reopen it later. Remember completion/dismissal across
+  tasks and extension reloads; keep this state separate from preset values.
+- Recommend Balanced for basic compression, explain that the selection
+  applies to every task, and preserve existing settings until an explicit
+  save. Off, Custom and manual automation must remain accurately described.
+- Present separate results for basic compression, local-backend
+  reachability and the exact configured local model's installation. Use the
+  existing `hasOllamaModel` matching rules, including tag handling.
+- Show checking, ready, unavailable, blocked and unknown states honestly,
+  with a concrete next step when action is needed. A reachable Ollama with
+  a missing configured model must not be called ready for local summaries.
+- For a cloud backend, report configuration readiness only. Explain cost
+  and content transfer before saving Maximum savings; do not imply that
+  configuration proves provider access or summary quality.
+- Keep the synthetic pipeline test available with a clear explanation of
+  what it exercises. Explain zero savings on short conversations and keep
+  advanced controls accessible.
+
+**Boundaries:** checks must respect remote-host consent and existing timeout
+and failure-isolation rules. Opening the introduction must not install
+software, download models, send conversation content, issue a paid generation
+request, alter host permissions or change stored task history. A metadata
+check does not establish generation quality, speed or billing savings.
+
+**Implementation seams:** reuse `presets.ts`, the badge's configuration
+preview/save actions, Ollama status probing and `commands.ts` model matching.
+Readiness decisions live separately from JSX in `setup.ts` and are shared
+with the status surface. Introduction dismissal is stored atomically in
+`setup.json` under the runtime data root, independently of configuration.
+`DESIGN.md` records the implemented interaction contract.
+
+**Acceptance criteria:**
+
+1. A fresh user can finish or skip the introduction, reopen it, and avoid
+   being prompted again in each task. Existing configurations survive
+   dismissal and Cancel without changes.
+2. Balanced works without Ollama. Disabling Broke or choosing manual
+   automation never produces a misleading automatic-summary readiness claim.
+3. Tests distinguish an unreachable server, a reachable server with the wrong
+   model/tag, an installed model, a blocked remote host, a pending check and
+   a failed/timed-out check. Basic compression remains usable independently.
+4. A cloud configuration is labeled as unchecked for generation; viewing or
+   checking setup triggers no summarizer request or conversation transfer.
+5. Keyboard navigation, focus restoration, status announcements, Cancel and
+   save-error recovery work in the introduction and everyday dialog.
+6. Targeted readiness, persistence and rendered-interaction tests, typecheck
+   and UI validation pass. A live AiderDesk smoke run verifies first-open,
+   reopen, persistence and local-model states; evidence is recorded separately
+   from synthetic tests. Non-expert usability validation remains an F7 exit check.
+
 ---
 
 ## Cross-cutting principles
@@ -161,10 +239,12 @@ idea-level, unscheduled candidates recorded
 2. **Opt-in for behavior-changing features.** F2 (slicing) and F3 (flush)
    change what the agent or the user sees; their config defaults are `off`.
    F1 and F4 are purely additive and default `on`.
-3. **Feature-detect the runtime API.** Published `@aiderdesk/extensions`
-   types (~0.31) lag the runtime. Any hook/TaskContext method used here is
-   checked at runtime before use and degrades gracefully (pattern established
-   by savemytoken's `truncateToolResult` detection).
+3. **Feature-detect optional runtime APIs.** The current declared SDK is
+   `@aiderdesk/extensions` ^0.38.0 and the host floor is AiderDesk 0.88.
+   Keep runtime checks for optional TaskContext methods and degrade
+   gracefully when unavailable (pattern established by savemytoken's
+   `truncateToolResult` detection). Historical compatibility notes below
+   refer to the versions used at the time, not the current host floor.
 4. **Failure isolation.** No hook handler may ever throw into the agent loop.
    New passes are wrapped the same way `summarizePass` is (catch → report →
    keep previous savings).

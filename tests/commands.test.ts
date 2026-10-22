@@ -741,6 +741,20 @@ describe('config get/set/list (BRK-028)', () => {
 
 
 describe('F5 status visibility', () => {
+  it('reports blocked local setup without contacting an unapproved remote host', async () => {
+    const { formatStatus } = await import('../commands');
+    const fetchBefore = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = async () => { requests++; throw new Error('must not contact this host'); };
+    try {
+      const text = await formatStatus({ ...DEFAULT_CONFIG, level: 'summarize', summarize: { ...DEFAULT_CONFIG.summarize, ollamaUrl: 'https://unapproved.invalid', allowRemoteHost: false } }, null);
+      assert.equal(requests, 0);
+      assert.match(text, /blocked/i);
+      assert.match(text, /Basic compression.*ready/i);
+    } finally {
+      globalThis.fetch = fetchBefore;
+    }
+  });
   it('reports mode and automation without probing a local backend', async () => {
     const { formatStatus } = await import('../commands');
     const { applyPreset } = await import('../presets');

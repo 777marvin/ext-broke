@@ -47,6 +47,7 @@ export const LINK_CHECKED = [
   'SECURITY.md',
   'docs/overview.md',
   'docs/feats.md',
+  'docs/f72-verification.md',
   'docs/features.md',
   'docs/token-saving.md',
   'docs/tuning.md',
