@@ -130,6 +130,15 @@ State-changing or paid actions retain two-step confirmation. The synthetic
 setup check is safe and runs directly. Modal focus containment, Escape, Cancel,
 save failure recovery, and focus restoration remain mandatory.
 
+### Honest savings breakdown (F6)
+
+When inspecting savings (via "View savings" or diagnostics), the UI strictly separates:
+1. Observed conversation reduction (measured character/token delta from the message pipeline).
+2. Provider-reported usage (actual sent, cache-read, and cache-written tokens from the model API).
+3. Modeled monetary estimates (dollar savings calculated from task model input rates).
+4. Avoided context (counterfactuals like slicing, flushing, and search snippets, labeled outside measured totals).
+A mandatory honest notice states that a measurement ledger does not prove a billed saving.
+
 ## Accessibility
 
 Target WCAG 2.2 AA. Interactive elements use native semantics, visible text,

@@ -98,6 +98,11 @@ export interface TaskStats {
    * normalization fills missing keys when the object exists.
    */
   estimates?: EstimateExtras;
+  /**
+   * Optional provider-reported usage of the most recent completed call BEFORE or
+   * DURING this task (UsageReportData). Ground truth from the model API response (F6).
+   */
+  lastUsage?: LastCallUsage;
 }
 
 export function emptyStats(taskId: string): TaskStats {
@@ -255,6 +260,15 @@ export function loadTaskStats(taskId: string, filePath: string = STATS_PATH): Ta
                   ? {
                       flush: typeof parsed.estimates.flush === 'number' ? parsed.estimates.flush : 0,
                       search: typeof parsed.estimates.search === 'number' ? parsed.estimates.search : 0,
+                    }
+                  : undefined,
+              lastUsage:
+                parsed.lastUsage && typeof parsed.lastUsage === 'object' && typeof parsed.lastUsage.sentTokens === 'number'
+                  ? {
+                      sentTokens: parsed.lastUsage.sentTokens,
+                      cacheWriteTokens: typeof parsed.lastUsage.cacheWriteTokens === 'number' ? parsed.lastUsage.cacheWriteTokens : undefined,
+                      cacheReadTokens: typeof parsed.lastUsage.cacheReadTokens === 'number' ? parsed.lastUsage.cacheReadTokens : undefined,
+                      messageCost: typeof parsed.lastUsage.messageCost === 'number' ? parsed.lastUsage.messageCost : undefined,
                     }
                   : undefined,
             };

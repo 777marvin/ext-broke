@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -380,6 +380,18 @@ describe('formatStats', () => {
     const out = formatStats(DEFAULT_CONFIG, stats, null);
     assert.ok(out.includes('saved total'), 'legacy headline expected');
     assert.ok(out.includes('predate'), 'legacy records must be labeled');
+  });
+
+  it('includes provider-reported usage and honest disclaimer when usage is present (F6 Slice 2)', () => {
+    const stats = {
+      ...emptyStats('t'),
+      passes: 2,
+      savedChars: { structural: 100, error: 200, truncate: 300, summarize: 0, slice: 0 },
+      lastUsage: { sentTokens: 1200, cacheReadTokens: 800, cacheWriteTokens: 400, messageCost: 0.002 },
+    };
+    const out = formatStats(DEFAULT_CONFIG, stats, { modelId: 'm', providerId: 'p', inputPerMToken: 3 });
+    assert.ok(out.includes('provider usage (last call): 1,200 tok sent | 800 cache read | 400 cache write | $0.0020 billed'));
+    assert.ok(out.includes('note: a measurement ledger does not prove a billed saving'));
   });
 });
 
