@@ -42,6 +42,31 @@ let loadRunRecords: (typeof import('../tokens'))['loadRunRecords'];
 type Config = import('../config').Config;
 type SummarizeDeps = import('../compress').SummarizeDeps;
 
+describe('AUD-06 candidate budget', () => {
+  for (const after of [59000, 60000]) {
+    it(`does not escape when 61000 input characters become ${after} without rewriting frozen content`, async () => {
+      const payload = 'x'.repeat(61000 - after - 2);
+      const tail = { id: 'tail', role: 'user', content: 'y'.repeat(61000 - 5 - 2 * payload.length) } as ContextMessage;
+      const messages = [
+        { id: 'brief', role: 'user', content: 'b' },
+        { id: 'calls', role: 'assistant', content: ['one', 'two'].map((id) => ({ type: 'tool-call', toolCallId: id, toolName: 'test', input: {} })) },
+        ...['one', 'two'].map((id) => ({ id: `result-${id}`, role: 'tool', content: [{ type: 'tool-result', toolCallId: id, toolName: 'test', output: { type: 'text', value: payload } }] })),
+        tail,
+      ] as unknown as ContextMessage[];
+      const cfg: Config = { ...DEFAULT_CONFIG, level: 'structural', maxContextChars: 60000, protectedTurns: 1, cache: { ...DEFAULT_CONFIG.cache, profile: 'anthropic' } };
+      let resets = 0;
+      const result = await compressMessages(messages, cfg, { generateLocal: async () => undefined, generateCloud: async () => undefined }, createCompressState(), 'candidate', {
+        cache: { profile: 'anthropic', frozen: (message) => message.id === 'tail', escape: { locked: false, onEscape: () => { resets++; } } },
+      });
+      assert.equal(result.report.totalCharsBefore, 61000);
+      assert.equal(result.report.totalCharsAfter, after);
+      assert.equal(result.report.escaped, undefined);
+      assert.equal(resets, 0);
+      assert.deepEqual(result.messages[result.messages.length - 1], tail);
+    });
+  }
+});
+
 before(async () => {
   ({ default: Broke } = await import('../index'));
   ({ DEFAULT_CONFIG, saveConfig } = await import('../config'));
@@ -423,7 +448,8 @@ describe('escape hatch state machine (pipeline)', () => {
       cache: { frozen: frozenFn, escape, profile: 'anthropic' as const },
     };
 
-    // Run 1: starts over budget -> escapes down to ~250 chars.
+    // The first oversized region was already sent: only escape may rewrite it.
+    for (const message of msgs()) sentSet.add(message.id);
     const r1 = await compressMessages(msgs(), cfg(), deps, state, 'esc-mono', opts);
     assert.equal(r1.report.escaped, true, 'run 1 escapes');
     assert.equal(escape.locked, true, 'locked after run 1');
@@ -447,14 +473,15 @@ describe('escape hatch state machine (pipeline)', () => {
       if ((m as { id?: string }).id) sentSet.add((m as { id?: string }).id!);
     }
 
-    // Run 3: Monotonic growth! Add ANOTHER large tool output (800 chars). Total now ~1150 chars (> 500).
-    // Since hatch was re-armed, it can escape again!
+    // A previously sent oversized tool result has now left the protected tail.
     const turn3 = [
       ...r2.messages,
+      { id: 'call2', role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'tc2', toolName: 'power---bash', input: {} }] },
       { id: 't2', role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc2', toolName: 'power---bash', output: { type: 'text', value: big } }] },
       { id: 'u3', role: 'user', content: 'tail' },
     ] as unknown as ContextMessage[];
 
+    sentSet.add('t2');
     const r3 = await compressMessages(turn3, cfg(), deps, state, 'esc-mono', opts);
     assert.equal(r3.report.escaped, true, 'run 3 escapes again on second budget crossing!');
     assert.equal(escape.locked, true, 'locked again after second escape');

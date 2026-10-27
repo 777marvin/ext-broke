@@ -1444,10 +1444,9 @@ export async function compressMessages(
 
   let didEscape = false;
   // Escape hatch (option B):
-  // When cache mode is active and the cache-preserving candidate output is over budget
-  // (or if input was over budget and candidate could not reduce below budget):
+  // Only the remaining size can justify sacrificing the stable sent prefix.
   if (isCacheMode && gate.escape) {
-    const candidateOver = runResult.report.totalCharsAfter > config.maxContextChars || totalCharsBefore > config.maxContextChars;
+    const candidateOver = runResult.report.totalCharsAfter > config.maxContextChars;
     const canEscape = (config.cache?.escapeHatch ?? true) && !gate.escape.locked;
 
     if (candidateOver && canEscape) {

@@ -15,6 +15,9 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Escape provider-cache preservation only when the compressed candidate still
+  exceeds its budget, avoiding unnecessary rewrites and ledger resets (AUD-06).
+
 - Resume partial legacy-data migrations, verify staged file contents before
   exclusive publication, preserve conflicting sources and serialize migration
   across instances; historical completion markers no longer hide missing files
