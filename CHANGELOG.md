@@ -15,6 +15,9 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Keep update ownership outside the swappable installation, serialize lock
+  reclamation/release and refuse unknown or inaccessible owners (AUD-02).
+
 - Reject Ollama HTTP redirects before any prompt or status request can be
   forwarded to a different endpoint (AUD-03).
 

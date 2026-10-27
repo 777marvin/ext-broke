@@ -25,6 +25,7 @@
  *   validated before it may appear in a URL.
  */
 import { exec, execFile } from 'node:child_process';
+import { acquireUpdateLock, releaseUpdateLock, type UpdateLockClaim } from './update-lock';
 import {
   closeSync,
   cpSync,
@@ -970,59 +971,6 @@ export interface UpdateResult {
 /** Module-level mutex: two concurrent self-updates would corrupt the swap. */
 let updateInFlight = false;
 
-/**
- * BRK-010 (external review 2026-08-29): the in-process mutex does not protect
- * against a SECOND AiderDesk instance updating the same installation. The
- * lock file carries the owning PID; a lock is stale when its PID is dead AND
- * its age exceeds a grace window, in which case it is taken over.
- */
-const UPDATE_LOCK_FILE = '.update.lock';
-const UPDATE_LOCK_STALE_MS = 15 * 60_000;
-
-function acquireUpdateLock(installDir: string): { ok: boolean; reason?: string } {
-  const lockPath = join(installDir, UPDATE_LOCK_FILE);
-  try {
-    writeFileSync(lockPath, `${process.pid}\n`, { encoding: 'utf-8', flag: 'wx' });
-    return { ok: true };
-  } catch {
-    // Lock exists - evaluate staleness.
-  }
-  try {
-    const raw = readFileSync(lockPath, 'utf-8').trim();
-    const pid = Number.parseInt(raw, 10);
-    const ageMs = Date.now() - statSync(lockPath).mtimeMs;
-    if (Number.isInteger(pid) && pid > 0) {
-      let alive = false;
-      try {
-        process.kill(pid, 0);
-        alive = true;
-      } catch {
-        alive = false; // ESRCH: dead. EPERM would also land here - conservative is fine.
-      }
-      if (alive) {
-        return { ok: false, reason: `held by live pid ${raw}` };
-      }
-      // Dead pid: stale regardless of age - a dead process will never clean up.
-    } else if (ageMs < UPDATE_LOCK_STALE_MS) {
-      // Unparseable owner: conservative grace window before taking over.
-      return { ok: false, reason: `unparseable lock owner '${raw}' (age: ${Math.round(ageMs / 1000)}s)` };
-    }
-    rmSync(lockPath, { force: true });
-    writeFileSync(lockPath, `${process.pid}\n`, { encoding: 'utf-8', flag: 'wx' });
-    return { ok: true };
-  } catch {
-    return { ok: false, reason: 'the lock file exists but cannot be evaluated' };
-  }
-}
-
-function releaseUpdateLock(installDir: string): void {
-  try {
-    rmSync(join(installDir, UPDATE_LOCK_FILE), { force: true });
-  } catch {
-    // best effort - a lingering lock becomes stale via the PID/age check
-  }
-}
-
 function fail(message: string, currentVersion?: string): UpdateResult {
   return { ok: false, updated: false, message, currentVersion };
 }
@@ -1083,7 +1031,7 @@ export async function runUpdate(
   }
 
   updateInFlight = true;
-  let lockHeld = false;
+  let lockClaim: UpdateLockClaim | undefined;
   let targetTag = '';
   try {
     const io: UpdateDeps = {
@@ -1139,9 +1087,9 @@ export async function runUpdate(
     // update the same installation concurrently with this one.
     const lock = acquireUpdateLock(installDir);
     if (!lock.ok) {
-      return fail(`broke update refused: another broke update appears to be running (${lock.reason}). Close the other instance or remove ${join(installDir, UPDATE_LOCK_FILE)} if you are sure it is stale.`, currentVersion);
+      return fail(`broke update refused: another broke update appears to be running (${lock.reason}). Close other instances; inspect unresolved ownership before retrying.`, currentVersion);
     }
-    lockHeld = true;
+    lockClaim = lock.claim;
     // Release fetch (above) reads the release OBJECT: the signed artifacts
     // live as release assets. Strict trust model (R1): releases without the
     // full signed-asset set are refused - installing unsigned code is
@@ -1239,7 +1187,7 @@ export async function runUpdate(
     // of a false "unchanged".
     return mapUpdateFailure(err, installDir, currentVersion, targetTag);
   } finally {
-    if (lockHeld) releaseUpdateLock(installDir);
+    if (lockClaim) releaseUpdateLock(lockClaim);
     updateInFlight = false;
   }
 }

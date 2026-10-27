@@ -915,6 +915,21 @@ describe('post-commit failure honesty (BRK-005)', () => {
 // ---------------------------------------------------------------------------
 
 describe('update lock (BRK-010)', () => {
+  it('AUD-02: holds its owner lock outside the installation throughout staging', async () => {
+    const install = fakeInstall('0.5.1');
+    const deps = makeDeps('v0.6.0', '0.6.0', V06_PAYLOAD);
+    const stage = deps.runNpmCi;
+    deps.runNpmCi = async (dir) => {
+      assert.ok(existsSync(`${install}.update.lock`), 'stable sibling lock must already exist');
+      const owner = JSON.parse(readFileSync(`${install}.update.lock`, 'utf-8'));
+      assert.equal(owner.pid, process.pid);
+      assert.equal(typeof owner.token, 'string');
+      await stage(dir);
+    };
+    const result = await runUpdate({ mode: 'install' }, {}, deps, install);
+    assert.ok(result.ok, result.message);
+    assert.equal(existsSync(`${install}.update.lock`), false);
+  });
   it('fails when another live process holds the lock', async () => {
     const install = fakeInstall('0.5.1');
     writeFileSync(join(install, '.update.lock'), `${process.pid}\n`, 'utf-8');
