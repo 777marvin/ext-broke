@@ -343,7 +343,7 @@ export default class Broke implements Extension {
     // out of the installation tree into the versioned runtime root (once,
     // best-effort, marker-guarded).
     try {
-      migrateLegacyRuntimeData();
+      migrateLegacyRuntimeData(undefined, undefined, { onIssue: (message) => context.log(`Broke migration: ${message}`, 'warn') });
     } catch {
       // never block loading - the modules fall back to defaults
     }

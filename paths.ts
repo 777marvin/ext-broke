@@ -20,8 +20,10 @@
  *   errors/                - error archive
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, closeSync, copyFileSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { dirname, join, resolve } from 'node:path';
+import { acquireFileLock, releaseUpdateLock } from './update-lock';
 
 /** Where the extension code is installed (the swappable directory). */
 const INSTALL_DIR = __dirname;
@@ -39,46 +41,64 @@ export function runtimeDir(): string {
   return process.env.BROKE_DATA_DIR ?? join(INSTALL_DIR, '..', '.broke-data', 'v1');
 }
 
-/**
- * Best-effort move of one legacy artifact into the new layout. Moves only
- * when the source exists AND the destination does not - newer data at the
- * target always wins, so a partially-applied migration can never destroy
- * anything. Returns true if the move succeeded or was safely unnecessary,
- * false if an error left the legacy copy in place for a later retry.
- */
-function moveIfPossible(from: string, to: string): boolean {
-  try {
-    if (!existsSync(from)) return true;
-    if (existsSync(to)) return true;
-    mkdirSync(dirname(to), { recursive: true });
-    try {
-      renameSync(from, to);
-      return true;
-    } catch {
-      // Cross-device renames (EXDEV) and pinned files: fall back to
-      // copy-then-remove for both files and directories.
-      if (!existsSync(to)) {
-        if (statIsDirectory(from)) {
-          cpSync(from, to, { recursive: true });
-          rmSync(from, { recursive: true, force: true });
-          return existsSync(to);
-        } else {
-          copyFileSync(from, to);
-          rmSync(from, { force: true });
-          return existsSync(to);
-        }
-      }
-      return false;
-    }
-  } catch {
-    return false;
-  }
+export interface MigrationOptions {
+  copyFile?: (from: string, to: string) => void;
+  onIssue?: (message: string) => void;
 }
 
-function statIsDirectory(path: string): boolean {
+function fileDigest(path: string): string {
+  const fd = openSync(path, 'r');
+  const hash = createHash('sha256');
+  const buffer = Buffer.alloc(64 * 1024);
   try {
-    return statSync(path).isDirectory();
-  } catch {
+    for (;;) {
+      const read = readSync(fd, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      hash.update(buffer.subarray(0, read));
+    }
+    return hash.digest('hex');
+  } finally { closeSync(fd); }
+}
+
+/** Publish files exclusively: a race can never overwrite an existing target. */
+function migrateArtifact(from: string, to: string, staging: string, options: MigrationOptions): boolean {
+  if (!existsSync(from)) return true;
+  try {
+    const source = lstatSync(from);
+    if (source.isSymbolicLink()) throw new Error(`source symlink retained: ${from}`);
+    if (source.isDirectory()) {
+      if (!existsSync(to)) mkdirSync(to, { mode: 0o700 });
+      const target = lstatSync(to);
+      if (!target.isDirectory() || target.isSymbolicLink()) throw new Error(`destination conflict: ${to}`);
+      let complete = true;
+      for (const name of readdirSync(from)) {
+        if (!migrateArtifact(join(from, name), join(to, name), staging, options)) complete = false;
+      }
+      if (complete) rmdirSync(from);
+      return complete;
+    }
+    if (!source.isFile()) throw new Error(`unsupported source retained: ${from}`);
+    const expected = fileDigest(from);
+    if (!existsSync(to)) {
+      const temporary = join(staging, randomUUID());
+      (options.copyFile ?? copyFileSync)(from, temporary);
+      if (fileDigest(temporary) !== expected) throw new Error(`copy verification failed: ${from}`);
+      chmodSync(temporary, 0o600);
+      const fd = openSync(temporary, 'r+');
+      try { fsyncSync(fd); } finally { closeSync(fd); }
+      // A hard link publishes a complete same-filesystem file without clobber.
+      // If another writer created the destination, verify it below instead.
+      try { linkSync(temporary, to); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    }
+    const target = lstatSync(to);
+    if (!target.isFile() || target.isSymbolicLink() || fileDigest(to) !== expected) throw new Error(`destination conflict: ${to}; legacy source retained`);
+    const current = lstatSync(from);
+    if (current.size !== source.size || current.mtimeMs !== source.mtimeMs || fileDigest(from) !== expected) throw new Error(`source changed during migration: ${from}`);
+    unlinkSync(from);
+    return true;
+  } catch (error) {
+    options.onIssue?.(error instanceof Error ? error.message : String(error));
     return false;
   }
 }
@@ -90,31 +110,46 @@ function statIsDirectory(path: string): boolean {
  * ONLY when all migrations succeeded, ensuring failed directories or files
  * can be retried on subsequent starts. Injectable paths for hermetic tests.
  */
-export function migrateLegacyRuntimeData(legacyDir: string = INSTALL_DIR, targetDir: string = runtimeDir()): boolean {
+export function migrateLegacyRuntimeData(legacyDir: string = INSTALL_DIR, targetDir: string = runtimeDir(), options: MigrationOptions = {}): boolean {
+  const target = resolve(targetDir);
+  let claim;
+  let staging: string | undefined;
   try {
-    const marker = join(targetDir, MIGRATION_MARKER);
-    if (existsSync(marker)) return true;
-
-    // Move only what exists at the legacy default locations. Env overrides
-    // (tests, host isolation) redirect the live modules elsewhere - the
-    // legacy location is always the installation directory.
-    const results = [
-      moveIfPossible(join(legacyDir, 'config.json'), join(targetDir, 'config.json')),
-      moveIfPossible(join(legacyDir, 'stats.jsonl'), join(targetDir, 'ledgers', 'stats.jsonl')),
-      moveIfPossible(join(legacyDir, 'measure.jsonl'), join(targetDir, 'ledgers', 'measure.jsonl')),
-      moveIfPossible(join(legacyDir, 'snapshots'), join(targetDir, 'snapshots')),
-      moveIfPossible(join(legacyDir, 'index'), join(targetDir, 'index')),
-      moveIfPossible(join(legacyDir, 'errors'), join(targetDir, 'errors')),
+    mkdirSync(dirname(target), { recursive: true });
+    const lock = acquireFileLock(`${target}.migration.lock`);
+    if (!lock.ok) { options.onIssue?.(lock.reason); return false; }
+    claim = lock.claim;
+    const mappings = [
+      ['config.json', 'config.json'], ['stats.jsonl', 'ledgers/stats.jsonl'],
+      ['measure.jsonl', 'ledgers/measure.jsonl'], ['snapshots', 'snapshots'],
+      ['index', 'index'], ['errors', 'errors'],
     ];
-
+    const marker = join(target, MIGRATION_MARKER);
+    const legacyExists = mappings.some(([from]) => existsSync(join(legacyDir, from)));
+    if (existsSync(marker) && !legacyExists) return true;
+    if (existsSync(marker)) unlinkSync(marker);
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    mkdirSync(join(target, 'ledgers'), { recursive: true, mode: 0o700 });
+    if (lstatSync(join(target, 'ledgers')).isSymbolicLink()) throw new Error('destination ledger directory is a link; migration refused');
+    staging = join(target, `.migration-${randomUUID()}`);
+    mkdirSync(staging, { mode: 0o700 });
+    const results = mappings.map(([from, to]) => migrateArtifact(join(legacyDir, from), join(target, to), staging!, options));
     const allSucceeded = results.every(Boolean);
     if (allSucceeded) {
-      mkdirSync(targetDir, { recursive: true });
-      writeFileSync(marker, new Date().toISOString(), { encoding: 'utf-8', mode: 0o600 });
+      const markerStage = join(staging, 'complete');
+      writeFileSync(markerStage, new Date().toISOString(), { encoding: 'utf-8', mode: 0o600 });
+      linkSync(markerStage, marker);
       return true;
     }
     return false;
-  } catch {
+  } catch (error) {
+    options.onIssue?.(error instanceof Error ? error.message : String(error));
     return false;
+  } finally {
+    // Only this invocation's generated staging directory is ever removed.
+    if (staging && dirname(staging) === target) {
+      try { rmSync(staging, { recursive: true, force: true }); } catch { /* retry remains safe */ }
+    }
+    if (claim) releaseUpdateLock(claim);
   }
 }

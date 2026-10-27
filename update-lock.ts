@@ -37,9 +37,15 @@ function provenDead(pid: number, probe: Probe): boolean {
 
 export function acquireUpdateLock(installDir: string, probe: Probe = (pid) => process.kill(pid, 0)): LockResult {
   try {
-    const path = updateLockPath(installDir);
+    return acquireFileLock(updateLockPath(installDir), probe, [join(installDir, '.update.lock'), join(`${installDir}.old`, '.update.lock')]);
+  } catch (error) { return { ok: false, reason: String(error) }; }
+}
+
+/** Same ownership protocol for non-swappable extension-owned data operations. */
+export function acquireFileLock(path: string, probe: Probe = (pid) => process.kill(pid, 0), legacyPaths: readonly string[] = []): LockResult {
+  try {
     return withGuard(path, () => {
-      for (const legacy of [join(installDir, '.update.lock'), join(`${installDir}.old`, '.update.lock')]) {
+      for (const legacy of legacyPaths) {
         if (!existsSync(legacy)) continue;
         const pid = Number(readFileSync(legacy, 'utf-8').trim());
         if (!provenDead(pid, probe)) return { ok: false, reason: `legacy lock has a live or unknown owner: ${legacy}` };

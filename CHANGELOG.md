@@ -15,6 +15,11 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Resume partial legacy-data migrations, verify staged file contents before
+  exclusive publication, preserve conflicting sources and serialize migration
+  across instances; historical completion markers no longer hide missing files
+  (AUD-05).
+
 - Flush only a current, fingerprint-verified summarized region, retain recent
   messages, recheck context after confirmation, and preserve full-history undo
   before replacement (AUD-04). Flush never generates a new summary implicitly.
