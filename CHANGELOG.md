@@ -15,6 +15,9 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Isolate project-index coordination from the host extension class while
+  preserving command, search-budget and estimate behavior (AUD-09).
+
 - Share one deadline across Git discovery, filesystem scanning and incremental
   merging; manual rebuilds use the same bounded path and preserve the previous
   snapshot if the rebuild is incomplete (AUD-08).

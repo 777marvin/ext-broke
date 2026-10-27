@@ -1,4 +1,4 @@
-import { readFileSync, statSync, watch, type FSWatcher } from 'node:fs';
+import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type {
   AfterCommitEvent,
@@ -41,17 +41,7 @@ import { ANTHROPIC_BREAKPOINT, anchorBreakpoint } from './cachecontrol';
 import { DEFAULT_DIFF_BUDGET_CHARS, MAX_DIFF_FILES_READ, formatDiffDigest, type DiffFileInput } from './diff';
 import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
-import {
-  ensureFresh,
-  estimateBulkReadAvoided,
-  formatSearchFooter,
-  indexDirFor,
-  loadIndex,
-  projectHash,
-  resolveSearchOptions,
-  runSearch,
-  type IndexState,
-} from './indexer';
+import { IndexCoordinator } from './index-coordinator';
 import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
 import { extractOutputText } from './output';
 import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from './pricing';
@@ -319,19 +309,7 @@ export default class Broke implements Extension {
   /** Review R12: dynamic tool names must not grow state unboundedly. */
   private static readonly MAX_UNKNOWN_READ_TOOLS = 1000;
   private static readonly UPDATED_FILES_TTL_MS = 30_000;
-  /**
-   * F4 state: one keyword index per open project (hash-keyed, bounded like
-   * every other map here). `at` also throttles the commit-signal refresh -
-   * a rebuild storm must never follow a rapid commit series.
-   */
-  private readonly indexByProject = new Map<string, { state: IndexState; at: number }>();
-  private static readonly INDEX_REFRESH_TTL_MS = 60_000;
-  /**
-   * Chars runSearch keeps free for the footer appended below (BRK-017):
-   * hits + separators + footer + truncation note must stay inside
-   * search.maxChars, so the budget is enforced as maxChars minus this reserve.
-   */
-  private static readonly SEARCH_FOOTER_RESERVE_CHARS = 256;
+  private readonly indexes = new IndexCoordinator();
 
   onLoad(context: ExtensionContext): void {
     this.context = context;
@@ -1529,118 +1507,26 @@ export default class Broke implements Extension {
     return context?.getProjectDir?.() || this.context?.getProjectDir?.() || '';
   }
 
-  /** Tool entry point: freshness sweep + budgeted search, never throwing. */
   private searchViaTool(input: { query: string; k?: number; files?: string[] }, context?: ExtensionContext): string {
-    const config = getConfig();
-    if (!config.search.enabled) return 'broke-search is disabled (/broke help for config paths)';
-    const root = this.rootFor(context);
-    if (!root) return 'broke-search: no open project - indexing is project-scoped';
     try {
-      const fresh = ensureFresh(root, {
-        maxFileKB: config.search.maxFileKB,
-        includeGitIgnored: config.search.includeGitIgnored,
-        ttlMs: Broke.INDEX_REFRESH_TTL_MS,
-        deadlineMs: config.search.scanBudgetMs,
-      });
-      boundedMapSet(this.indexByProject, projectHash(root), { state: fresh.state, at: Date.now() });
-      const resolved = resolveSearchOptions(config.search);
-      // BRK-017: ONE effective-options object feeds runSearch AND the footer -
-      // a tool-input k override used to be applied to the search but the
-      // footer still advertised the configured default.
-      const effective = { ...resolved.options, k: input.k ?? resolved.options.k, footerReserve: Broke.SEARCH_FOOTER_RESERVE_CHARS };
-      const result = runSearch(fresh.state, root, input.query, effective, input.files);
-      // "scanned" age = the last freshness check (BRK-017), falling back to
-      // builtAt for indexes persisted before scannedAt existed.
-      const stampMs = Date.parse(fresh.state.scannedAt || fresh.state.builtAt);
-      const ageMs = Number.isFinite(stampMs) ? Math.max(0, Date.now() - stampMs) : 0;
-      const footer =
-        formatSearchFooter(result.hits.length, Object.keys(fresh.state.files).length, effective, ageMs) +
-        (result.truncated ? ' | INDEX TRUNCATED at cap' : '');
-      if (result.hits.length === 0) return `no matches for "${input.query}"\n${footer}`;
-      // Counterfactual estimate only (E5 honesty): never shown to the agent
-      // and never added to savedChars - /broke estimate + badge tooltip use
-      // it with an explicit "counterfactual" label. Files that changed since
-      // indexing are skipped by the estimator itself.
+      const result = this.indexes.search(this.rootFor(context), getConfig().search, input);
       const taskId = context?.getTaskContext?.()?.data.id ?? this.context?.getTaskContext?.()?.data.id;
-      if (taskId) {
-        const avoided = estimateBulkReadAvoided(result.hits, fresh.state.files);
-        if (avoided > 0) this.bumpEstimate(taskId, 'search', avoided);
-      }
-      return `${result.hits.map((h) => h.text).join('\n\n')}\n\n${footer}`;
-    } catch (err) {
-      return `broke-search failed - ${err instanceof Error ? err.message : String(err)} - the agent loop was not affected`;
-    }
+      if (taskId && result.avoided > 0) this.bumpEstimate(taskId, 'search', result.avoided);
+      return result.text;
+    } catch (error) { return `broke-search failed - ${error instanceof Error ? error.message : String(error)} - the agent loop was not affected`; }
   }
 
-  /** /broke index|index rebuild: full re-index from scratch, persisted atomically. */
   private rebuildProjectIndex(context?: ExtensionContext): string {
-    const config = getConfig();
-    if (!config.search.enabled) return 'broke: search is disabled - nothing to build';
-    const root = this.rootFor(context);
-    if (!root) return 'broke: no open project - indexing is project-scoped';
-    try {
-      const { state, delta } = ensureFresh(root, {
-        maxFileKB: config.search.maxFileKB, includeGitIgnored: config.search.includeGitIgnored,
-        deadlineMs: config.search.scanBudgetMs, rebuild: true,
-      });
-      boundedMapSet(this.indexByProject, projectHash(root), { state, at: Date.now() });
-      return (
-        `broke: index rebuilt - ${Object.keys(state.files).length.toLocaleString('en-US')} file(s), ` +
-        `${Object.keys(state.postings).length.toLocaleString('en-US')} term(s), ` +
-        `(+${delta.added} new/0 unchanged/-${delta.removed})` +
-        (state.truncated ? ' [TRUNCATED: scan incomplete; previous entries preserved]' : '')
-      );
-    } catch (err) {
-      return `broke: index rebuild failed - ${err instanceof Error ? err.message : String(err)}`;
-    }
+    return this.indexes.rebuild(this.rootFor(context), getConfig().search);
   }
 
-  /** /broke index status: honest numbers without forcing a rescan. */
   private indexStatusText(context?: ExtensionContext): string {
-    const config = getConfig();
-    if (!config.search.enabled) return 'broke: local search disabled (search.enabled=false)';
-    const root = this.rootFor(context);
-    if (!root) return 'broke: no open project - nothing indexed';
-    let state: IndexState | null | undefined = this.indexByProject.get(projectHash(root))?.state;
-    if (!state) {
-      try {
-        state = loadIndex(indexDirFor(root));
-      } catch {
-        state = null;
-      }
-    }
-    if (!state) return 'broke: no index yet on disk - run "/broke index" to build one';
-    let bytes = 0;
-    try {
-      bytes = statSync(join(indexDirFor(root), 'index.json')).size;
-    } catch {
-      bytes = 0;
-    }
-    const builtMs = Date.parse(state.builtAt);
-    const age = Number.isFinite(builtMs) && builtMs > 0 ? Math.max(1, Math.round((Date.now() - builtMs) / 1000)) : null;
-    return [
-      `broke index status: backend ${config.search.backend} | top-k ${config.search.maxResults} | budget ${config.search.maxChars.toLocaleString('en-US')} chars/context ±${config.search.contextLines} line(s)`,
-      `files: ${Object.keys(state.files).length.toLocaleString('en-US')} | terms: ${Object.keys(state.postings).length.toLocaleString('en-US')} | index.json: ${(bytes / 1024).toFixed(1)} KB`,
-      `built: ${state.builtAt || '(unknown)'}${age !== null ? ` (${age}s ago)` : ''}${state.truncated ? ' | TRUNCATED' : ''}`,
-      `location: <extension>/index/${projectHash(root)}`,
-    ].join('\n');
+    return this.indexes.status(this.rootFor(context), getConfig().search);
   }
 
-  /** Fire-and-forget freshness sweep off the commit signal (throttled by TTL). */
   private refreshIndexFromSignal(context: ExtensionContext): void {
-    try {
-      const config = getConfig();
-      if (!config.enabled || !config.search.enabled) return;
-      const root = context.getProjectDir?.() ?? '';
-      if (!root) return;
-      const hash = projectHash(root);
-      const cached = this.indexByProject.get(hash);
-      if (cached && Date.now() - cached.at < Broke.INDEX_REFRESH_TTL_MS) return;
-      const fresh = ensureFresh(root, { maxFileKB: config.search.maxFileKB, includeGitIgnored: config.search.includeGitIgnored, deadlineMs: config.search.scanBudgetMs });
-      boundedMapSet(this.indexByProject, hash, { state: fresh.state, at: Date.now() });
-    } catch {
-      // best effort - never propagate into the commit loop
-    }
+    const config = getConfig();
+    if (config.enabled) this.indexes.refresh(context.getProjectDir?.() ?? '', config.search);
   }
 
   // -------------------------------------------------------------------------
