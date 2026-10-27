@@ -15,6 +15,9 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Reject Ollama HTTP redirects before any prompt or status request can be
+  forwarded to a different endpoint (AUD-03).
+
 - Preserve existing search-index entries after incomplete or failed scans and
   manual rebuilds; persist merge-budget exhaustion and clear it after recovery
   (AUD-01/AUD-07).

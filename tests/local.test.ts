@@ -70,6 +70,24 @@ describe('ollamaStatus', () => {
 });
 
 describe('ollamaGenerate', () => {
+  for (const code of [307, 308]) {
+    it(`AUD-03: refuses HTTP ${code} without contacting the redirect target`, async () => {
+      let received = 0;
+      const target = await start(createServer((_req, res) => {
+        received++;
+        res.end(JSON.stringify({ response: 'must not reach here' }));
+      }));
+      const source = await start(createServer((_req, res) => {
+        res.writeHead(code, { location: target + '/capture' });
+        res.end();
+      }));
+      const result = await ollamaGenerate(source, 'test', 'SYNTHETIC_PRIVATE_SENTINEL', 800);
+      assert.equal(result.ok, false);
+      assert.equal(received, 0, 'no request, including its body, crosses the redirect');
+      assert.equal((await ollamaStatus(source)).reachable, false);
+      assert.equal(received, 0);
+    });
+  }
   it('posts to /api/generate and returns the text', async () => {
     const server = createServer((req, res) => {
       let raw = '';
