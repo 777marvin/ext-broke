@@ -93,9 +93,12 @@ on), optionally on detected test-green tool results (`snapshot.onTestPass`,
 default off), and manually via `/broke snapshot [label]`.
 
 The *flush* is the only destructive operation in broke. `/broke flush`
-replaces everything after the original task brief with ONE `[broke-state]`
-message carrying that state record - so long-running tasks can restart each
-step from brief + current state instead of the full scrollback. It is manual,
+replaces only an older region proven to be covered by a current cached summary
+with ONE `[broke-state]` message. The task brief, headers and newer messages
+remain unchanged. Missing, edited or stale summary coverage causes an abort;
+`--yes` skips confirmation, never the coverage check. Flush does not generate
+a summary: use `/broke summarize now` explicitly when a valid summary can be
+created under the current backend and cache policies. It is manual,
 asks for confirmation (`flush.confirm`), writes BOTH the snapshot record and
 a raw-history undo file BEFORE touching any message (when `flush.undo` is on,
 default), aborts untouched if

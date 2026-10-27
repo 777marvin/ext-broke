@@ -887,6 +887,19 @@ function regionContentFingerprint(region: ContextMessage[], throughIndex: number
   return h.digest('hex');
 }
 
+/** Prove which current, pair-aligned region an existing summary represents. */
+export function cachedSummaryCoverage(messages: ContextMessage[], cached: CachedSummary | undefined, config: Config): { start: number; end: number } | undefined {
+  if (!cached || !assistantText(cached.message).trim() || cached.fingerprint !== summarizeConfigFingerprint(config)) return undefined;
+  const { start, end } = compressibleRange(messages, config.protectedTurns);
+  const region = messages.slice(start, end);
+  const through = region.findIndex((message) => message.id === cached.throughId);
+  if (through < 0 || cached.contentFingerprint !== regionContentFingerprint(region, through)) return undefined;
+  const coveredEnd = start + through + 1;
+  const paired = clampRegionToPairs(messages, start, coveredEnd);
+  if (paired.start !== start || paired.end !== coveredEnd) return undefined;
+  return { start, end: coveredEnd };
+}
+
 /**
  * Chunk the flattened region for hierarchical summarization (review F-07).
  * Messages stay whole within a chunk wherever possible. A single message

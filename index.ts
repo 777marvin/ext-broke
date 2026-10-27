@@ -21,6 +21,7 @@ import { applyBrokeCommand, coerceConfigValue, formatEstimate, formatMeasure, fo
 import { applyPreset, type Mode } from './presets';
 import {
   ACTIVE_TURN_TAIL,
+  cachedSummaryCoverage,
   compressibleRange,
   compressMessages,
   createCompressState,
@@ -105,6 +106,7 @@ import {
 } from './tokens';
 import { boundedMapSet } from './compress';
 import { runUpdate } from './update';
+import { validateContext } from './validate';
 import { z } from 'zod';
 
 // Load the JSX templates once at module level (official template pattern).
@@ -1749,6 +1751,9 @@ export default class Broke implements Extension {
           return 'broke: this AiderDesk build does not expose loadContextMessages - undo unavailable (feature-detect)';
         }
         await task.loadContextMessages(history as ContextMessage[]);
+        this.state.cachedSummaryByTask.delete(taskId);
+        clearTask(taskId);
+        this.escapeByTask.delete(taskId);
         // Undo takes the flush estimate back - exactly what the flushed
         // snapshot recorded, so undoing never leaves inflated numbers.
         if (record.reduction) {
@@ -1765,29 +1770,37 @@ export default class Broke implements Extension {
       if (!messages || messages.length === 0) {
         return 'broke: this AiderDesk build does not expose getContextMessages - flush unavailable (feature-detect)';
       }
-      const plan = buildFlushPlan(messages);
-      if (!plan.ok) return `broke: nothing flushed - ${plan.reason}`;
+      // Capture before any await: host arrays can also be edited in place.
+      const observedContext = JSON.stringify(messages);
+      const cached = this.state.cachedSummaryByTask.get(taskId);
+      const coverage = cachedSummaryCoverage(messages, cached, config);
+      const plan = buildFlushPlan(messages, coverage);
+      if (!plan.ok || !coverage) return `broke: nothing flushed - ${plan.reason}`;
+      if (typeof task.loadContextMessages !== 'function') return 'broke: flush unavailable - host cannot replace context';
       if (config.flush.confirm && !cmd.yes) {
         if (typeof task.askQuestion !== 'function') {
           return `broke: host confirmation is unavailable here - rerun with explicit "/broke flush --yes" to remove ${plan.removedCount} message(s)`;
         }
         const answer = await task.askQuestion(
-          `broke flush removes ${plan.removedCount} message(s) between the task brief and now and replaces them with ONE [broke-state] summary. With flush.undo on (default), a history file enables /broke flush --undo. Proceed?`,
+          `broke flush removes ${plan.removedCount} older message(s) covered by the cached summary. Recent messages stay unchanged. With flush.undo on, the original history can be restored. Proceed?`,
           { answers: [{ text: 'Flush', shortkey: 'y' }, { text: 'Cancel', shortkey: 'n' }], defaultAnswer: 'n' },
         );
         if (!/^y(es)?$/i.test(String(answer ?? '').trim())) return 'broke: flush cancelled - nothing changed';
+      }
+      if (JSON.stringify(await task.getContextMessages()) !== observedContext || !cachedSummaryCoverage(messages, cached, getConfig())) {
+        return 'broke: flush cancelled - context or summary settings changed; retry with a current summary';
       }
       let persistedName = '';
       let stateText = '';
       let recordPath = '';
       try {
-        const cachedText = summaryTextOf(this.state.cachedSummaryByTask.get(taskId));
+        const cachedText = summaryTextOf(cached);
         const record = makeSnapshotRecord({
           taskId,
           taskName: task.data.name ?? '',
           goal: extractGoal(messages),
-          achieved: extractAchieved(messages),
-          summary: cachedText || `${plan.removedCount} message(s) were flushed right after this state was recorded`,
+          achieved: extractAchieved(messages.slice(coverage.start, coverage.end)),
+          summary: cachedText,
         });
         stateText = buildStateMessage(record);
         const persisted = persistSnapshot(record, messages, { label: 'flush', keepHistory: config.flush.undo });
@@ -1807,24 +1820,31 @@ export default class Broke implements Extension {
         return 'broke: flush stopped AFTER writing the snapshot but BEFORE removing anything - this AiderDesk build does not expose loadContextMessages (feature-detect)';
       }
       const replacement: ContextMessage[] = [
-        ...plan.headerIndexes.map((i) => messages[i]),
-        messages[plan.briefIndex],
+        ...messages.slice(0, coverage.start),
         { id: `broke-state-${Date.now()}`, role: 'user', content: stateText } as unknown as ContextMessage,
+        ...messages.slice(coverage.end),
       ];
+      if (validateContext(replacement).length > 0) return 'broke: flush cancelled - replacement would break tool-call framing';
+      if (JSON.stringify(await task.getContextMessages()) !== observedContext || !cachedSummaryCoverage(messages, cached, getConfig())) {
+        return 'broke: flush cancelled - context changed before replacement; nothing removed';
+      }
       await task.loadContextMessages(replacement);
+      this.state.cachedSummaryByTask.delete(taskId);
+      clearTask(taskId);
+      this.escapeByTask.delete(taskId);
       // Estimate bookkeeping (only AFTER the replacement succeeded): the
       // measured net reduction is the chars removed from context minus the
       // replacement [broke-state] message's own chars - both real numbers,
       // but this is a one-shot freed-bytes figure, NOT a compression pass.
       // Best effort on every line below: estimates never break a flush.
       try {
-        const regionChars = messagesChars(messages.slice(plan.briefIndex + 1));
+        const regionChars = messagesChars(messages.slice(coverage.start, coverage.end));
         writeFlushReduction(recordPath, { regionChars, stateMessageChars: stateText.length });
         this.bumpEstimate(taskId, 'flush', Math.max(0, regionChars - stateText.length));
       } catch {
         // estimates are best effort
       }
-      return `broke: flushed ${plan.removedCount} message(s) - context is now the task brief plus one [broke-state] summary (snapshot ${persistedName}). Undo with /broke flush --undo <n>.`;
+      return `broke: flushed ${plan.removedCount} message(s) into one [broke-state] summary; newer messages were preserved (snapshot ${persistedName}). Undo with /broke flush --undo <n>.`;
     } catch (err) {
       return `broke: flush failed - ${err instanceof Error ? err.message : String(err)}. If a replacement already happened, restore via /broke flush --undo.`;
     }

@@ -191,21 +191,21 @@ export interface FlushPlan {
   briefIndex: number;
   /** Indices (< briefIndex excluded) of leading system/header messages kept unchanged. */
   headerIndexes: number[];
-  /** Number of messages dropped between the brief and the end of context. */
+  /** Validated half-open region replaced by the state message. */
+  replaceStart?: number;
+  replaceEnd?: number;
+  /** Number of messages in the covered region. */
   removedCount: number;
 }
 
 /**
  * Compute the flush replacement set (pure, fully testable).
  *
- * Final context = header messages + task brief + fresh `[broke-state]`
- * message. Everything between brief and end is replaced - including earlier
- * state messages from previous flushes, which collapse into the new state.
- * Execution uses loadContextMessages (documented replacement API, see S2 in
- * feats.md): removeMessagesUpTo is inclusive-of-self and therefore cannot
- * express "keep the first message, drop the rest".
+ * Only a proven covered region can be replaced. Leading messages and the
+ * recent tail remain verbatim; absence of coverage is never permission to
+ * discard history. The executor additionally validates tool framing.
  */
-export function buildFlushPlan(messages: ReadonlyArray<{ role?: unknown; id?: unknown }>): FlushPlan {
+export function buildFlushPlan(messages: ReadonlyArray<{ role?: unknown; id?: unknown }>, coverage?: { start: number; end: number }): FlushPlan {
   const briefIndex = messages.findIndex((m) => m.role === 'user');
   if (briefIndex === -1) {
     return { ok: false, reason: 'no user turn found in this task yet', briefIndex: -1, headerIndexes: [], removedCount: 0 };
@@ -213,10 +213,11 @@ export function buildFlushPlan(messages: ReadonlyArray<{ role?: unknown; id?: un
   if (briefIndex >= messages.length - 1) {
     return { ok: false, reason: 'nothing to flush - context holds nothing beyond the task brief', briefIndex, headerIndexes: [], removedCount: 0 };
   }
-  // IDs are only needed for the alternative remove/add path; a missing-id
-  // context still works via loadContextMessages, so no hard failure here.
   const headerIndexes = messages.map((m, i) => (m.role !== 'user' && i < briefIndex ? i : -1)).filter((i) => i >= 0);
-  return { ok: true, briefIndex, headerIndexes, removedCount: messages.length - (briefIndex + 1) };
+  if (!coverage || !Number.isInteger(coverage.start) || !Number.isInteger(coverage.end) || coverage.start <= briefIndex || coverage.end <= coverage.start || coverage.end > messages.length) {
+    return { ok: false, reason: 'no valid cached summary covers an older region; generate a current summary first', briefIndex, headerIndexes, removedCount: 0 };
+  }
+  return { ok: true, briefIndex, headerIndexes, replaceStart: coverage.start, replaceEnd: coverage.end, removedCount: coverage.end - coverage.start };
 }
 
 // ---------------------------------------------------------------------------

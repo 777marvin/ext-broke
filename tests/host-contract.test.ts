@@ -324,13 +324,15 @@ describe('host contract: F3 snapshots & flush', () => {
   });
 
   it('flush writes snapshot+history BEFORE replacement; --undo restores the exact history', async () => {
-    writeConfig();
+    writeConfig({ level: 'summarize', maxContextChars: 1000, cache: { ...DEFAULT_CONFIG.cache, profile: 'off' }, summarize: { ...DEFAULT_CONFIG.summarize, via: 'cloud', minChars: 100 } });
     const ext = new Broke() as unknown as {
+      summarizeNow(context: ExtensionContext): Promise<string>;
       handleFlushCommand(context: ExtensionContext, cmd: unknown): Promise<string>;
     };
-    const original = [systemHeader(), user1(), assistantMsg(), { id: 'u2', role: 'user' as const, content: 'second turn' }];
+    const original = [systemHeader(), user1(), { ...assistantMsg(), content: 'completed synthetic work '.repeat(300) }, { id: 'u2', role: 'user' as const, content: 'second turn' }];
     const { context, task } = makeHost('f3-flush', {});
     task.getContextMessages = async () => original;
+    assert.match(await ext.summarizeNow(context), /summary generated/);
     let replacement: unknown[] | null = null;
     task.loadContextMessages = async (msgs: unknown[]) => {
       replacement = msgs;
@@ -343,12 +345,13 @@ describe('host contract: F3 snapshots & flush', () => {
 
     // Confirmed through askQuestion (no --yes flag needed).
     const note = await ext.handleFlushCommand(context, parseBrokeCommand(['flush']));
-    assert.match(note, /flushed 2 message\(s\)/);
+    assert.match(note, /flushed 1 message\(s\)/);
     assert.ok(/broke flush removes/.test(asked), 'confirmation question was asked by default');
 
     assert.ok(Array.isArray(replacement));
     const rep = replacement as unknown[];
-    assert.equal(rep.length, 3, 'header + brief + state');
+    assert.equal(rep.length, 4, 'header + brief + state + recent turn');
+    assert.deepEqual(rep[3], original[3]);
     assert.deepEqual((rep[0] as { id: string }).id, 'sys0', 'header kept');
     assert.deepEqual((rep[1] as { id: string }).id, 'u1', 'task brief kept verbatim');
     const state = rep[2] as { role: string; content: string };
@@ -366,18 +369,20 @@ describe('host contract: F3 snapshots & flush', () => {
   });
 
   it('flush aborts before any removal when persistence fails', async () => {
-    writeConfig();
+    writeConfig({ level: 'summarize', maxContextChars: 1000, cache: { ...DEFAULT_CONFIG.cache, profile: 'off' }, summarize: { ...DEFAULT_CONFIG.summarize, via: 'cloud', minChars: 100 } });
     const prevSnapshotsDir = process.env.BROKE_SNAPSHOTS_DIR;
     try {
       // A FILE where the snapshots dir must live makes mkdirSync throw.
       process.env.BROKE_SNAPSHOTS_DIR = join(tmp, 'not-a-dir');
       writeFileSync(join(tmp, 'not-a-dir'), 'occupied');
       const ext = new Broke() as unknown as {
+        summarizeNow(context: ExtensionContext): Promise<string>;
         handleFlushCommand(context: ExtensionContext, cmd: unknown): Promise<string>;
       };
-      const original = [user1(), assistantMsg()];
+      const original = [user1(), { ...assistantMsg(), content: 'synthetic completed work '.repeat(300) }, { id: 'recent', role: 'user', content: 'continue' }];
       const { context, task } = makeHost('f3-abort', {});
       task.getContextMessages = async () => original;
+      assert.match(await ext.summarizeNow(context), /summary generated/);
       let replacement: unknown[] | null = null;
       task.loadContextMessages = async (msgs: unknown[]) => {
         replacement = msgs;

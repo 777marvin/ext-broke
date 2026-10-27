@@ -15,6 +15,10 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Flush only a current, fingerprint-verified summarized region, retain recent
+  messages, recheck context after confirmation, and preserve full-history undo
+  before replacement (AUD-04). Flush never generates a new summary implicitly.
+
 - Keep update ownership outside the swappable installation, serialize lock
   reclamation/release and refuse unknown or inaccessible owners (AUD-02).
 
