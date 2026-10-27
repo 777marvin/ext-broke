@@ -169,7 +169,7 @@ no release version or delivery date is assigned to this remaining work.
 ### F7.2: Guided setup & readiness check
 
 **Status:** implemented under Unreleased on 2026-10-22. Live AiderDesk smoke
-and non-expert usability validation remain open; see [verification record](f72-verification.md).
+and non-expert usability validation remain open.
 **Effort:** M. **Release:** unassigned.
 
 **Goal:** a new user can tell whether basic compression is ready, whether

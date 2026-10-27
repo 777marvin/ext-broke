@@ -240,8 +240,8 @@ Security issues: never in a public issue — follow [SECURITY.md](SECURITY.md) (
 - [docs/token-saving.md](docs/token-saving.md) — all levers that save tokens
 - [docs/aiderdesk-builtin.md](docs/aiderdesk-builtin.md) — what AiderDesk saves on its own
 - [docs/local-models.md](docs/local-models.md) — local Ollama setup and measurement limits
-- [docs/feats.md](docs/feats.md) — current feature status and candidate backlog
-- [docs/review-backlog.md](docs/review-backlog.md) — historical findings and accepted limitations
+- [docs/feats.md](docs/feats.md) — current feature status and roadmap
+- [docs/roadmap.md](docs/roadmap.md) — shipped features, current focus, proposed work
 
 ---
 
