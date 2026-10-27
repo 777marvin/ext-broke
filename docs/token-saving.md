@@ -108,7 +108,7 @@ as the emergency brake.** For the on-demand persistent variant, use
 `[broke-state]` message, is manual and confirmed by default, and is
 reversible through the history file that `/broke flush --undo <n>` reads
 back (F3 state snapshotting & memory flushing, shipped in v0.9.0, see
-docs/feats.md).
+docs/roadmap.md).
 
 ## Honest numbers
 

@@ -26,7 +26,7 @@ once the test suite grows beyond its current shape.
 - Open an issue first for non-trivial changes (bug reports and feature
   requests both welcome, templates exist).
 - Planned features with implementation specs live in
-  [docs/feats.md](docs/feats.md): check there before proposing something
+  [docs/roadmap.md](docs/roadmap.md): check there before proposing something
   new, and update the doc when you implement a spec.
 - Keep the honest-numbers culture: savings figures in docs are measured,
   not promised. If you change the pipeline, update the affected docs

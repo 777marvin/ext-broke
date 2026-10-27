@@ -186,7 +186,7 @@ Full configuration reference: see [docs/features.md](docs/features.md) and the g
 
 ## Status
 
-broke is in active development. The roadmap ([docs/feats.md](docs/feats.md)) documents shipped features F1–F7 and proposed candidates F8–F9. Current Unreleased work includes F6 (live status dot + three-tier savings breakdown) and F7.1/F7.2 (everyday badge view + guided setup). No delivery dates or release versions are assigned to remaining work.
+broke is in active development. roadmap ([docs/roadmap.md](docs/roadmap.md)) documents shipped features F1–F7 and proposed candidates F8–F9. Current Unreleased work includes F6 (live status dot + three-tier savings breakdown) and F7.1/F7.2 (everyday badge view + guided setup). No delivery dates or release versions are assigned to remaining work.
 
 ---
 
@@ -240,7 +240,6 @@ Security issues: never in a public issue — follow [SECURITY.md](SECURITY.md) (
 - [docs/token-saving.md](docs/token-saving.md) — all levers that save tokens
 - [docs/aiderdesk-builtin.md](docs/aiderdesk-builtin.md) — what AiderDesk saves on its own
 - [docs/local-models.md](docs/local-models.md) — local Ollama setup and measurement limits
-- [docs/feats.md](docs/feats.md) — current feature status and roadmap
 - [docs/roadmap.md](docs/roadmap.md) — shipped features, current focus, proposed work
 
 ---

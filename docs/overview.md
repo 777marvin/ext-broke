@@ -9,7 +9,7 @@ non-expert usability checks still open. The changelog records
 v1.3.3 as the first published release containing the documentation-gate work
 of v1.3.1 and v1.3.2; neither of those earlier tags was published. See
 [CHANGELOG](../CHANGELOG.md) for release history and
-[feature status](feats.md#current-feature-status-and-candidate-backlog) for
+[feature status](roadmap.md) for
 remaining work.*
 
 *This file deliberately carries no per-module line counts and no test-count
@@ -196,6 +196,5 @@ conversation-message character counts in real runs, not provider billing data.
 - `docs/token-saving.md`: full lever list
 - `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
 - `docs/local-models.md`: local Ollama setup and measurement limits
-- `docs/feats.md`: current feature status and historical designs for F1-F5; F6, F7.1 and F7.2 are implemented under Unreleased, F8-F9 remain proposed
-- `docs/f72-verification.md`: F7.2 local verification and outstanding live-host/usability checks
-- `docs/review-backlog.md`: the complete review ledger - self-review F1-F24, external XF1-XF16, external R1-R15, remediation F-01..F-16 - all dispositioned with severity, location, fix approach, commit mapping
+- `docs/roadmap.md`: shipped features, current focus, proposed candidates
+- `docs/roadmap.md`: shipped features, current focus, proposed candidates
