@@ -46,18 +46,15 @@ export const LINK_CHECKED = [
   'CONTRIBUTING.md',
   'SECURITY.md',
   'docs/overview.md',
-  'docs/feats.md',
-  'docs/f72-verification.md',
   'docs/features.md',
   'docs/token-saving.md',
   'docs/tuning.md',
   'docs/local-models.md',
   'docs/aiderdesk-builtin.md',
-  'docs/review-backlog.md',
 ];
 
 /** Files in which a release claim must point at a real tag. */
-export const VERSION_CHECKED = ['README.md', 'docs/overview.md', 'docs/feats.md', 'docs/features.md', 'docs/token-saving.md', 'docs/tuning.md'];
+export const VERSION_CHECKED = ['README.md', 'docs/overview.md', 'docs/features.md', 'docs/token-saving.md', 'docs/tuning.md', 'docs/roadmap.md'];
 
 /**
  * Versions the CHANGELOG records that were never tagged and never

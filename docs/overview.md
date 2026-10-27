@@ -9,7 +9,7 @@ non-expert usability checks still open. The changelog records
 v1.3.3 as the first published release containing the documentation-gate work
 of v1.3.1 and v1.3.2; neither of those earlier tags was published. See
 [CHANGELOG](../CHANGELOG.md) for release history and
-[feature status](feats.md#current-feature-status-and-candidate-backlog) for
+[feature status](roadmap.md) for
 remaining work.*
 
 *This file deliberately carries no per-module line counts and no test-count
@@ -50,7 +50,7 @@ surface.
 | `cachecontrol.ts` | 0.88 `onApplyCacheControl` helper: `anchorBreakpoint` adds an Anthropic `cache_control` breakpoint (`providerOptions.anthropic.cacheControl`) on a chosen message, merging into that message's existing `providerOptions` without mutating the input; the host's existing tail marker is not removed |
 | `paths.ts` | BRK-016 runtime-path decision: `runtimeDir()` = `BROKE_DATA_DIR` override, else the versioned `<extension>/../.broke-data/v1` sibling of the installation (outside the swap path); one-time marker-guarded best-effort migration of legacy artifacts (config.json, ledgers, snapshots, index, errors) with no-overwrite and EXDEV copy-then-remove fallback; injectable paths for hermetic tests |
 | `commands.ts` | `/broke` parser + all subcommands (status/why, stats with measured-reduction headline, estimate, measure, reset, selftest, update, snapshot/flush, index/search, level/threshold/limit tuning, help); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
-| `update.ts` | Self-update: resolves tagged GitHub release assets, verifies an Ed25519-signed SHA256SUMS manifest before extraction, rebuilds runtime dependencies from the lockfile, and keeps runtime data outside the installation tree. Uses a rename-based swap when possible; Windows file locks can require an in-place fallback with verification and attempted rollback. A crash during that fallback remains an [accepted limitation](review-backlog.md#accepted-limitations-explicit-reviewed). |
+| `update.ts` | Self-update: resolves tagged GitHub release assets, verifies an Ed25519-signed SHA256SUMS manifest before extraction, rebuilds runtime dependencies from the lockfile, and keeps runtime data outside the installation tree. Uses a rename-based swap when possible; Windows file locks can require an in-place fallback with verification and attempted rollback. A crash during that fallback remains an accepted limitation. |
 | `tokens.ts` | Token estimation (chars/4), measured vs. modeled-counterfactual savings categories (BRK-022), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
 | `local.ts` | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
 | `validate.ts` | ContextValidator (external review P0): pure provider-bound invariant checks - no duplicate tool-call/result ids, no orphaned calls or results; `compressMessages` reverts to the original input when its output violates invariants that the input did not have |
@@ -196,6 +196,5 @@ conversation-message character counts in real runs, not provider billing data.
 - `docs/token-saving.md`: full lever list
 - `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
 - `docs/local-models.md`: local Ollama setup and measurement limits
-- `docs/feats.md`: current feature status and historical designs for F1-F5; F6, F7.1 and F7.2 are implemented under Unreleased, F8-F9 remain proposed
-- `docs/f72-verification.md`: F7.2 local verification and outstanding live-host/usability checks
-- `docs/review-backlog.md`: the complete review ledger - self-review F1-F24, external XF1-XF16, external R1-R15, remediation F-01..F-16 - all dispositioned with severity, location, fix approach, commit mapping
+- `docs/roadmap.md`: shipped features, current focus, proposed candidates
+- `docs/roadmap.md`: shipped features, current focus, proposed candidates

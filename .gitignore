@@ -23,6 +23,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
 
 # AiderDesk deployment marker
 .deployed-version
