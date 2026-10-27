@@ -339,7 +339,7 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
   try {
     canonicalRoot = realpathSync(root);
   } catch {
-    return { entries: [], truncated: false, source: 'git-unavailable' };
+    return { entries: [], truncated: true, source: 'git-unavailable' };
   }
   const gitFiles = gitCandidateFiles(root, opts.includeGitIgnored === true);
   if (gitFiles !== null) {
@@ -367,7 +367,8 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
         if (!st.isFile() || st.size > maxBytes) continue;
         entries.push({ relPath, mtimeMs: st.mtimeMs, sizeBytes: st.size });
       } catch {
-        // raced file - skip
+        // An unreadable/raced candidate cannot prove a complete scan.
+        truncated = true;
       }
     }
     return { entries, truncated, source: 'git' };
@@ -375,7 +376,7 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
   if (existsSync(join(root, '.git'))) {
     // Git repo, but git could not answer. A blind walk here would index
     // exactly the files the user asked git to hide.
-    return { entries: [], truncated: false, source: 'git-unavailable' };
+    return { entries: [], truncated: true, source: 'git-unavailable' };
   }
   const stack = [root];
   try {
@@ -389,6 +390,7 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
       try {
         names = readdirSync(dir, { withFileTypes: true }) as unknown as Dirent[];
       } catch {
+        truncated = true;
         continue;
       }
       for (const e of names) {
@@ -408,12 +410,12 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
           if (st.size > maxBytes) continue;
           entries.push({ relPath: forwardSlash(join(dir, e.name).slice(root.length + 1)), mtimeMs: st.mtimeMs, sizeBytes: st.size });
         } catch {
-          // raced file - skip
+          truncated = true;
         }
       }
     }
   } catch {
-    // walking must never throw upward
+    truncated = true;
   }
   return { entries, truncated, source: 'walk' };
 }
@@ -527,7 +529,7 @@ export function mergeIntoState(
   // Pass 3: removals. Skipped entirely when the budget cut pass 2 short -
   // without the complete `seen` above this would delete valid entries.
   let removed = 0;
-  if (!budget?.exhausted) {
+  if (!truncated && !budget?.exhausted) {
     for (const relPath of Object.keys(state.files)) {
       if (!seen.has(relPath)) {
         removeDocument(state, relPath);
@@ -535,7 +537,7 @@ export function mergeIntoState(
       }
     }
   }
-  state.truncated = truncated;
+  state.truncated = truncated || budget?.exhausted === true;
   return { added, updated, removed };
 }
 
@@ -630,8 +632,8 @@ export function ensureFresh(
   // the previous post-mutation compare could never observe a flip.
   const previousTruncated = state.truncated;
   const previousScannedAt = state.scannedAt;
-  const mergedTruncated = scan.truncated || budget.exhausted;
-  const delta = mergeIntoState(state, root, scan.entries, mergedTruncated, budget);
+  const delta = mergeIntoState(state, root, scan.entries, scan.truncated, budget);
+  const mergedTruncated = state.truncated;
   const contentChanged =
     delta.added > 0 || delta.updated > 0 || delta.removed > 0 || previousTruncated !== mergedTruncated;
   state.scannedAt = new Date().toISOString();

@@ -70,6 +70,47 @@ function makeProject(): string {
 
 const emptyState = (): IndexState => ({ version: 1, projectRoot: '', builtAt: '', scannedAt: '', truncated: false, files: {}, postings: {} });
 
+describe('AUD-01/07 incomplete refresh integrity', () => {
+  it('keeps unseen documents on a partial scan but removes real deletions after a complete scan', () => {
+    const root = makeProject();
+    const state = createEmptyState(root);
+    const scan = scanProject(root, 512);
+    mergeIntoState(state, root, scan.entries, false);
+    const partial = scan.entries.filter((entry) => entry.relPath === 'src/a.ts');
+    assert.equal(mergeIntoState(state, root, partial, true).removed, 0);
+    assert.ok(state.files['deep/nested/b.md']);
+    assert.ok(rankQuery(state, ['markdowngrepkeyword']).length > 0);
+    rmSync(join(root, 'deep'), { recursive: true, force: true });
+    assert.equal(mergeIntoState(state, root, partial, false).removed, 1);
+    assert.equal(state.files['deep/nested/b.md'], undefined);
+  });
+
+  it('persists merge exhaustion and clears it after a complete follow-up', () => {
+    const root = makeProject();
+    const dir = join(root, '.test-index');
+    const first = ensureFresh(root, { maxFileKB: 512, mergeBudgetDocs: 0 }, dir);
+    assert.equal(first.state.truncated, true);
+    assert.equal(loadIndex(dir)?.truncated, true);
+    const second = ensureFresh(root, { maxFileKB: 512 }, dir);
+    assert.equal(second.state.truncated, false);
+    assert.equal(loadIndex(dir)?.truncated, false);
+    assert.equal(Object.keys(second.state.files).length, 2);
+  });
+
+  it('preserves a prior index when git cannot evaluate its ignore rules', () => {
+    const root = makeProject();
+    const dir = join(root, '.test-index');
+    ensureFresh(root, { maxFileKB: 512 }, dir);
+    writeFileSync(join(root, '.git'), 'gitdir: ../missing-audit-repository\n');
+    writeFile(root, ['private-new.ts'], 'export const neverIndexOnGitFailure = 1;');
+    const next = ensureFresh(root, { maxFileKB: 512 }, dir);
+    assert.equal(next.delta.removed, 0);
+    assert.equal(next.state.truncated, true);
+    assert.equal(Object.keys(next.state.files).length, 2);
+    assert.equal(next.state.files['private-new.ts'], undefined);
+  });
+});
+
 describe('tokenize', () => {
   it('splits identifiers and numbers, lowercases everything', () => {
     assert.deepEqual(tokenize('alphaFind Invoice12'), ['alphafind', 'invoice12']);

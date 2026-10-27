@@ -13,6 +13,12 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve existing search-index entries after incomplete or failed scans and
+  manual rebuilds; persist merge-budget exhaustion and clear it after recovery
+  (AUD-01/AUD-07).
+
 ### Added
 
 - **Output brevity directive and per-tool / tool-level truncation (S8 - `savemytoken` migration).**

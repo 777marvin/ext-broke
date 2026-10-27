@@ -1581,8 +1581,9 @@ export default class Broke implements Extension {
     const root = this.rootFor(context);
     if (!root) return 'broke: no open project - indexing is project-scoped';
     try {
-      const scan = scanProject(root, config.search.maxFileKB);
-      const state = createEmptyState(root);
+      const scan = scanProject(root, config.search.maxFileKB, { includeGitIgnored: config.search.includeGitIgnored });
+      const previous = scan.truncated ? loadIndex(indexDirFor(root)) : null;
+      const state = previous?.projectRoot === root ? previous : createEmptyState(root);
       const delta = mergeIntoState(state, root, scan.entries, scan.truncated);
       // BRK-017: a manual rebuild IS a completed freshness check over fresh
       // content - stamp both times or the index reports an unknown/ancient
@@ -1595,7 +1596,7 @@ export default class Broke implements Extension {
         `broke: index rebuilt - ${Object.keys(state.files).length.toLocaleString('en-US')} file(s), ` +
         `${Object.keys(state.postings).length.toLocaleString('en-US')} term(s), ` +
         `(+${delta.added} new/0 unchanged/-${delta.removed})` +
-        (scan.truncated ? ' [TRUNCATED: entries exceed the hard cap]' : '')
+        (state.truncated ? ' [TRUNCATED: scan incomplete; previous entries preserved]' : '')
       );
     } catch (err) {
       return `broke: index rebuild failed - ${err instanceof Error ? err.message : String(err)}`;

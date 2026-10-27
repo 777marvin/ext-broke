@@ -869,6 +869,23 @@ describe('ST-slicing focus path resolution (D5)', () => {
 });
 
 describe('project-scoped indexing via execution contexts (regression: "no open project")', () => {
+  it('AUD-01: an incomplete manual rebuild preserves the previous index', async () => {
+    writeConfig({ search: { ...DEFAULT_CONFIG.search, enabled: true } });
+    const ext = new Broke();
+    const root = makeProject();
+    try {
+      const { context, lines } = makeScopedHost(root);
+      const [cmd] = ext.getCommands(context);
+      await cmd.execute(['index'], context);
+      writeFileSync(join(root, '.git'), 'gitdir: ../missing-audit-repository\n');
+      await cmd.execute(['index', 'rebuild'], context);
+      await cmd.execute(['index', 'status'], context);
+      assert.match(lines[lines.length - 1] ?? '', /files: 2/);
+      assert.match(lines[lines.length - 1] ?? '', /TRUNCATED/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   /**
    * A context shaped like the one the host passes to command execution and
    * tool invocation - per-project, with a real getProjectDir(). The context
