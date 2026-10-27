@@ -21,7 +21,8 @@
  * Verified consumed props against @aiderdesk/extensions 0.32.1 and
  * @aiderdesk/extensions 0.33.0 (checked against these hotovo/aider-desk source
  * commits), and re-verified against @aiderdesk/extensions 0.35.0,
- * @aiderdesk/extensions 0.37.0 and @aiderdesk/extensions 0.38.0:
+ * @aiderdesk/extensions 0.37.0, @aiderdesk/extensions 0.38.0 and
+ * @aiderdesk/extensions 0.39.0:
  * - 0.32.1: d671c96a5b744d1215b4b9f2938f3bfa171802ea
  * - 0.33.0: ef09179b705eed5acb04b313c9acc5e39e7314f4
  * 0.35.0 was verified against a HOST SOURCE CHECKOUT, AiderDesk v0.85.0 at
@@ -56,6 +57,10 @@
  *   TRANSFORMATION stage's output, not raw stored context;
  * - NEW hooks consumed by broke: `onTransformMessages` (pre-transform baseline
  *   observation) and `onApplyCacheControl` (frozen-prefix cache breakpoint).
+ * 0.39.0 was verified against the npm-published package only (no host source
+ * checkout was available at verification time). The type diff between 0.38.0
+ * and 0.39.0 shows only additive changes (new runtime deps, no consumed UI
+ * prop shape moved) – typecheck and all UI validation tests pass cleanly.
  * The 0.84-0.87 degrade note below is historic: at the 0.88 floor every
  * supported host carries the 'task-message-bar-menu' placement (0.85+).
  * So the shapes below are current: only the version reference was stale.

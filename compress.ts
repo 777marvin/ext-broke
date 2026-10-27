@@ -493,7 +493,36 @@ function findCallHolder(result: ContextMessage[], callIds: string[]): ContextMes
 // truncate pass (lossy)
 // ---------------------------------------------------------------------------
 
-function truncateText(text: string, maxLines: number, maxKB: number): { kept: string; removedChars: number } {
+export function resolveToolTruncationLimits(
+  toolName: string,
+  truncateCfg: Pick<Config['truncate'], 'maxLines' | 'maxKB'> & { tools?: Config['truncate']['tools'] },
+): { enabled: boolean; maxLines: number; maxKB: number } {
+  const tools = truncateCfg.tools;
+  if (tools && toolName) {
+    const bare = toolName.includes('---') ? toolName.split('---').pop()! : toolName;
+    const rule = tools[toolName] ?? (bare !== toolName ? tools[bare] : undefined);
+    if (rule) {
+      return {
+        enabled: rule.enabled ?? true,
+        maxLines: rule.maxLines ?? truncateCfg.maxLines,
+        maxKB: rule.maxKB ?? truncateCfg.maxKB,
+      };
+    }
+  }
+  return {
+    enabled: true,
+    maxLines: truncateCfg.maxLines,
+    maxKB: truncateCfg.maxKB,
+  };
+}
+
+export function truncateText(
+  text: string,
+  maxLines: number,
+  maxKB: number,
+  suffix = ' - full output removed',
+): { kept: string; removedChars: number } {
+  if (text.includes('\n… [broke: truncated ')) return { kept: text, removedChars: 0 };
   const maxChars = maxKB * 1024;
   const lines = text.split('\n');
   const overLines = lines.length > maxLines;
@@ -535,7 +564,7 @@ function truncateText(text: string, maxLines: number, maxKB: number): { kept: st
       overLines ? `${lines.length} lines → ${maxLines} lines` : null,
       `${Math.round(text.length / 1024)} KB → ${maxKB} KB`,
     ].filter((p): p is string => p !== null);
-    const marker = `… [broke: truncated ${cutParts.join(', ')}] - full output removed`;
+    const marker = `… [broke: truncated ${cutParts.join(', ')}]${suffix}`;
     const budget = Math.max(maxChars - marker.length - 2, 1);
     const headChars = Math.min(Math.ceil(budget * 0.6), budget);
     const tailChars = budget - headChars;
@@ -545,9 +574,23 @@ function truncateText(text: string, maxLines: number, maxKB: number): { kept: st
     return { kept, removedChars: text.length - kept.length };
   }
 
-  const marker = `… [broke: truncated ${lines.length} lines → ${maxLines}] - full output removed`;
+  const marker = `… [broke: truncated ${lines.length} lines → ${maxLines}]${suffix}`;
   const kept = `${headText}\n${marker}\n${tailText}`;
   return { kept, removedChars: text.length - kept.length };
+}
+
+function resolvePartToolName(messages: ContextMessage[], part: PartLike): string {
+  if (typeof part.toolName === 'string' && part.toolName.length > 0) return part.toolName;
+  if (typeof part.toolCallId === 'string') {
+    const holder = findCallHolder(messages, [part.toolCallId]);
+    if (holder && Array.isArray(holder.content)) {
+      const call = (holder.content as unknown as PartLike[]).find(
+        (c) => c.type === 'tool-call' && c.toolCallId === part.toolCallId,
+      );
+      if (call && typeof call.toolName === 'string') return call.toolName;
+    }
+  }
+  return '';
 }
 
 export function truncatePass(
@@ -557,6 +600,7 @@ export function truncatePass(
   maxKB: number,
   maxInputChars: number,
   frozen?: (msg: ContextMessage) => boolean,
+  tools?: Config['truncate']['tools'],
 ): PassResult {
   const { start, end } = compressibleRange(messages, protectedTurns);
   if (start >= end) return { messages, removedChars: 0 };
@@ -571,11 +615,14 @@ export function truncatePass(
       const parts = msg.content.map((p) => {
         const part = p as unknown as PartLike;
         if (part.type !== 'tool-result') return p;
+        const toolName = resolvePartToolName(messages, part);
+        const limits = resolveToolTruncationLimits(toolName, { maxLines, maxKB, tools });
+        if (!limits.enabled) return p;
         const output = part.output as { type?: string; value?: unknown } | undefined;
         if (!output) return p;
         if (output.type === 'text' || output.type === 'error-text') {
           if (typeof output.value !== 'string') return p;
-          const { kept, removedChars: removed } = truncateText(output.value, maxLines, maxKB);
+          const { kept, removedChars: removed } = truncateText(output.value, limits.maxLines, limits.maxKB);
           if (removed > 0) {
             changed = true;
             removedChars += removed;
@@ -590,7 +637,7 @@ export function truncatePass(
           // exitCode/other fields survive.
           const extracted = extractOutputText(output);
           if (extracted && extracted.text.length > 0) {
-            const { kept, removedChars: removed } = truncateText(extracted.text, maxLines, maxKB);
+            const { kept, removedChars: removed } = truncateText(extracted.text, limits.maxLines, limits.maxKB);
             if (removed > 0) {
               changed = true;
               removedChars += removed;
@@ -606,7 +653,7 @@ export function truncatePass(
           } catch {
             return p;
           }
-          const { kept, removedChars: removed } = truncateText(serialized, maxLines, maxKB);
+          const { kept, removedChars: removed } = truncateText(serialized, limits.maxLines, limits.maxKB);
           if (removed > 0) {
             changed = true;
             removedChars += removed;
@@ -1314,7 +1361,7 @@ async function executePasses(
 
   // Pass 3 - truncate (lossy, synchronous, cannot throw).
   if ((config.level === 'truncate' || config.level === 'summarize') && hasOldContent && totalCharsBefore > config.maxContextChars) {
-    const truncated = truncatePass(work, config.protectedTurns, config.truncate.maxLines, config.truncate.maxKB, config.truncate.maxInputChars, frozen);
+    const truncated = truncatePass(work, config.protectedTurns, config.truncate.maxLines, config.truncate.maxKB, config.truncate.maxInputChars, frozen, config.truncate.tools);
     report.truncateChars = truncated.removedChars;
     work = truncated.messages;
   }

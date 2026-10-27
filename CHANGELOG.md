@@ -15,6 +15,16 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Added
 
+- **Output brevity directive and per-tool / tool-level truncation (S8 - `savemytoken` migration).**
+  Added `brevity.ts` (`onPromptTemplate` for `system-prompt`, levels `off | lite | full | ultra`,
+  adapted from `JuliusBrussee/caveman` under MIT) to reduce assistant output verbosity while
+  keeping code blocks, commit messages and PR descriptions intact. Coupled `brevity.level`
+  to the F5 mode presets (`short -> off`, `normal -> lite`, `long -> full`; manual edits or
+  `ultra` switch `mode` to `custom`). Extended `truncate` with per-tool truncation overrides
+  (`truncate.tools` / `/broke truncate tool <name> <lines> <kb>|off|reset`) and opt-in
+  tool-level truncation + secret-masked archiving (`truncate.toolLevel`, `truncate.archive`,
+  `truncate.retentionDays`), reusing the bounded `errors/` archive infrastructure (`0o600`,
+  100 MB cap, `maskSecrets`). Output-side brevity never invents token-savings numbers.
 - **Guided setup and readiness checks (F7.2).** The badge introduces new users
   with a skippable, reopenable guide, remembers dismissal independently of
   configuration, and checks the displayed settings without saving them.

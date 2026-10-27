@@ -28,7 +28,8 @@
     const ownedChanged = ['level', 'maxContextChars', 'protectedTurns'].some((key) => merged[key] !== previous[key])
       || merged.truncate?.maxLines !== previous.truncate?.maxLines
       || merged.truncate?.maxKB !== previous.truncate?.maxKB
-      || merged.summarize?.afterTurns !== previous.summarize?.afterTurns;
+      || merged.summarize?.afterTurns !== previous.summarize?.afterTurns
+      || merged.brevity?.level !== previous.brevity?.level;
     const published = ownedChanged ? { ...merged, mode: 'custom' } : merged;
     lastPublished.current = published;
     publishConfig(published);
@@ -65,6 +66,7 @@
   const cfg = config ?? {};
   const summarize = cfg.summarize ?? {};
   const truncate = cfg.truncate ?? {};
+  const brevity = cfg.brevity ?? {};
   const errors = cfg.errors ?? {};
   const uiCfg = cfg.ui ?? {};
   const statsCfg = cfg.stats ?? {};
@@ -147,8 +149,19 @@
             { value: 'summarize', label: 'Summarize - + LLM summary of old turns (most aggressive)' },
           ]}
         />
+        <Select
+          label="Answer brevity (output token reduction)"
+          value={brevity.level ?? 'off'}
+          onChange={(value) => updateConfig({ ...config, brevity: { ...brevity, level: value } })}
+          options={[
+            { value: 'off', label: 'Off - normal assistant responses (Safe preset)' },
+            { value: 'lite', label: 'Lite - concise prose, no filler/hedging (Balanced preset)' },
+            { value: 'full', label: 'Full - terse caveman-style fragments (Maximum savings preset)' },
+            { value: 'ultra', label: 'Ultra - maximum telegraphic compression (Custom)' },
+          ]}
+        />
         <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
-          The task's stored history is never touched - compression applies to the input of each model call.
+          The task's stored history is never touched - compression applies to the input of each model call. Answer brevity injects a system-prompt directive (code, commits and PR text always stay intact).
         </p>
       </div>
 
@@ -268,6 +281,23 @@
             updateConfig({ ...config, truncate: { ...truncate, maxInputChars: n } }),
           )}
         </div>
+        <Checkbox
+          label="Tool-level truncation (rewrites stored history irreversibly)"
+          checked={truncate.toolLevel ?? false}
+          onChange={(checked) => updateConfig({ ...config, truncate: { ...truncate, toolLevel: checked } })}
+        />
+        <Checkbox
+          label="Save full truncated outputs to the errors archive"
+          checked={truncate.archive ?? false}
+          onChange={(checked) => updateConfig({ ...config, truncate: { ...truncate, archive: checked } })}
+        />
+        {truncate.archive ? (
+          <div className="flex gap-4">
+            {numberField('Truncate archive retention (days)', truncate.retentionDays ?? 30, (n) =>
+              updateConfig({ ...config, truncate: { ...truncate, retentionDays: n } }),
+            1, 365)}
+          </div>
+        ) : null}
       </div>
 
       {/* 5 - Summarizer */}

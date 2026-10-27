@@ -761,5 +761,48 @@ describe('F5 status visibility', () => {
     const config = applyPreset(DEFAULT_CONFIG, 'long');
     const text = await formatStatus({ ...config, autonomy: 'manual', summarize: { ...config.summarize, via: 'cloud' } }, null);
     assert.match(text, /mode: long, automation: manual/);
+    assert.match(text, /brevity: full/);
+  });
+});
+
+describe('S8 brevity and per-tool / tool-level truncate commands', () => {
+  it('parses and applies brevity and truncate subcommands', () => {
+    assert.deepEqual(parseBrokeCommand(['brevity', 'lite']), { kind: 'brevity', level: 'lite' });
+    assert.deepEqual(parseBrokeCommand(['brevity', 'ultra']), { kind: 'brevity', level: 'ultra' });
+    expectUnknown(['brevity', 'invalid']);
+    expectUnknown(['brevity', 'lite', 'extra']);
+
+    assert.deepEqual(parseBrokeCommand(['truncate', 'toollevel', 'on']), { kind: 'truncate-toollevel', enabled: true });
+    assert.deepEqual(parseBrokeCommand(['truncate', 'archive', 'on']), { kind: 'truncate-archive', enabled: true });
+    assert.deepEqual(parseBrokeCommand(['truncate', 'retention', '14']), { kind: 'truncate-retention', days: 14 });
+    assert.deepEqual(parseBrokeCommand(['truncate', 'clear']), { kind: 'truncate-clear' });
+    assert.deepEqual(parseBrokeCommand(['truncate', 'tool', 'power---bash', '50', '5']), {
+      kind: 'truncate-tool',
+      toolName: 'power---bash',
+      action: 'set',
+      lines: 50,
+      kb: 5,
+    });
+    assert.deepEqual(parseBrokeCommand(['truncate', 'tool', 'bash', 'off']), {
+      kind: 'truncate-tool',
+      toolName: 'bash',
+      action: 'off',
+    });
+    assert.deepEqual(parseBrokeCommand(['truncate', 'tool', 'bash', 'reset']), {
+      kind: 'truncate-tool',
+      toolName: 'bash',
+      action: 'reset',
+    });
+    expectUnknown(['truncate', 'tool', '__proto__', 'off']);
+
+    const file = join(tmp, 'config-s8.json');
+    const r1 = applyBrokeCommand(parseBrokeCommand(['brevity', 'full']), DEFAULT_CONFIG, file);
+    assert.equal(r1.config.brevity.level, 'full');
+    const r2 = applyBrokeCommand(parseBrokeCommand(['truncate', 'tool', 'bash', '80', '8']), r1.config, file);
+    assert.deepEqual(r2.config.truncate.tools.bash, { enabled: true, maxLines: 80, maxKB: 8 });
+    const r3 = applyBrokeCommand(parseBrokeCommand(['truncate', 'tool', 'bash', 'off']), r2.config, file);
+    assert.equal(r3.config.truncate.tools.bash.enabled, false);
+    const r4 = applyBrokeCommand(parseBrokeCommand(['truncate', 'tool', 'bash', 'reset']), r3.config, file);
+    assert.equal(r4.config.truncate.tools.bash, undefined);
   });
 });

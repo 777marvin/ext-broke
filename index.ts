@@ -8,6 +8,7 @@ import type {
   Extension,
   ExtensionContext,
   OptimizeMessagesEvent,
+  PromptTemplateEvent,
   TaskInitializedEvent,
   ToolCalledEvent,
   ToolDefinition,
@@ -15,6 +16,7 @@ import type {
   TransformMessagesEvent,
   UIComponentDefinition,
 } from '@aiderdesk/extensions';
+import { buildBrevityDirective } from './brevity';
 import { applyBrokeCommand, coerceConfigValue, formatEstimate, formatMeasure, formatStats, formatStatus, HELP_TEXT, parseBrokeCommand, type BrokeCommand } from './commands';
 import { applyPreset, type Mode } from './presets';
 import {
@@ -23,8 +25,10 @@ import {
   compressMessages,
   createCompressState,
   maskSecrets,
+  resolveToolTruncationLimits,
   shouldCompress,
   summarizePass,
+  truncateText,
   type CompressReport,
   type CompressState,
   type SummarizeCacheGate,
@@ -415,6 +419,30 @@ export default class Broke implements Extension {
     this.flushStats();
     this.configWatcher?.close();
     this.configWatcher = null;
+  }
+
+  /**
+   * Output-side brevity directive (S8): inject caveman-style conciseness
+   * instructions into the system prompt when `brevity.level !== 'off'`.
+   * Contract wrapper (R13): failure-isolated so a hostile host surface never
+   * breaks prompt assembly.
+   */
+  async onPromptTemplate(event: PromptTemplateEvent, context: ExtensionContext): Promise<void | Partial<PromptTemplateEvent>> {
+    try {
+      if (event.name !== 'system-prompt') return undefined;
+      const config = getConfig();
+      if (!config.enabled) return undefined;
+      const directive = buildBrevityDirective(config.brevity.level);
+      if (!directive) return undefined;
+      return { prompt: `${event.prompt}\n\n${directive}` };
+    } catch (err) {
+      try {
+        context.log(`Broke: brevity prompt injection failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+      } catch {
+        // swallow - logging is best effort
+      }
+      return undefined;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -870,39 +898,64 @@ export default class Broke implements Extension {
       }
     }
 
-    if (!config.errors.enabled || !config.errors.toolLevel) return;
-    if (!isCommandTool(event.toolName)) return;
-
     const task = context.getTaskContext();
     if (!task) return;
     const taskId = task.data.id;
 
-    try {
-      const extractedText = extractOutputText(event.output, { eventOutput: true });
-      if (!extractedText) return;
-      const { text, wrap } = extractedText;
-      if (text.length < config.errors.minChars) return;
+    if (config.errors.enabled && config.errors.toolLevel && isCommandTool(event.toolName)) {
+      try {
+        const extractedText = extractOutputText(event.output, { eventOutput: true });
+        if (extractedText) {
+          const { text, wrap } = extractedText;
+          if (text.length >= config.errors.minChars) {
+            // Redact secrets BEFORE archiving and BEFORE extraction: neither the
+            // archive file nor the summary in the conversation may leak tokens/keys.
+            const redacted = maskSecrets(text);
+            const extracted = extractErrorSummary(redacted, { contextLines: config.errors.contextLines });
+            if (extracted.matched) {
+              // Privacy control (XF10): archive on/off + retention. When the user
+              // turned the archive off, no full output is written to disk at all.
+              const savedPath = config.errors.archive
+                ? saveErrorOutput(taskId, event.toolCallId || event.toolName, redacted, undefined, { retentionDays: config.errors.retentionDays })
+                : '';
+              const suffix = savedPath ? ` - full output saved to ${savedPath}` : ' - full output removed';
+              const summary = formatErrorSummary(extracted, suffix);
+              // XF6/D2 (review F-08): never grow the stored history with a summary
+              // longer than the output it replaces.
+              if (summary.length < text.length) {
+                return { output: wrap(summary) };
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Never break tool execution - compression is best effort.
+        context.log(`Broke: tool-level error compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+      }
+    }
 
-      // Redact secrets BEFORE archiving and BEFORE extraction: neither the
-      // archive file nor the summary in the conversation may leak tokens/keys.
-      const redacted = maskSecrets(text);
-      const extracted = extractErrorSummary(redacted, { contextLines: config.errors.contextLines });
-      if (!extracted.matched) return;
+    if (config.truncate.toolLevel) {
+      try {
+        const limits = resolveToolTruncationLimits(event.toolName, config.truncate);
+        if (!limits.enabled) return;
+        const extractedText = extractOutputText(event.output, { eventOutput: true });
+        if (!extractedText || !extractedText.text) return;
+        const { text, wrap } = extractedText;
+        // Dry-run check before archiving so under-limit outputs never touch disk.
+        const probe = truncateText(text, limits.maxLines, limits.maxKB);
+        if (probe.removedChars <= 0) return;
 
-      // Privacy control (XF10): archive on/off + retention. When the user
-      // turned the archive off, no full output is written to disk at all.
-      const savedPath = config.errors.archive
-        ? saveErrorOutput(taskId, event.toolCallId || event.toolName, redacted, undefined, { retentionDays: config.errors.retentionDays })
-        : '';
-      const suffix = savedPath ? ` - full output saved to ${savedPath}` : ' - full output removed';
-      const summary = formatErrorSummary(extracted, suffix);
-      // XF6/D2 (review F-08): never grow the stored history with a summary
-      // longer than the output it replaces.
-      if (summary.length >= text.length) return;
-      return { output: wrap(summary) };
-    } catch (err) {
-      // Never break tool execution - compression is best effort.
-      context.log(`Broke: tool-level error compression failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+        const redacted = config.truncate.archive ? maskSecrets(text) : '';
+        const savedPath = config.truncate.archive
+          ? saveErrorOutput(taskId, event.toolCallId || event.toolName, redacted, undefined, { retentionDays: config.truncate.retentionDays })
+          : '';
+        const suffix = savedPath ? ` - full output saved to ${savedPath}` : ' - full output removed';
+        const { kept, removedChars } = savedPath ? truncateText(text, limits.maxLines, limits.maxKB, suffix) : probe;
+        if (removedChars <= 0 || kept.length >= text.length) return;
+        return { output: wrap(kept) };
+      } catch (err) {
+        context.log(`Broke: tool-level truncation failed - ${err instanceof Error ? err.message : String(err)}`, 'error');
+      }
     }
   }
 
@@ -1347,7 +1400,8 @@ export default class Broke implements Extension {
         }
         return log(result.message);
       }
-      case 'errors-clear': {
+      case 'errors-clear':
+      case 'truncate-clear': {
         const result = clearArchive();
         return log(
           result.removedFiles > 0
@@ -1980,6 +2034,7 @@ export default class Broke implements Extension {
     return {
       level: config.enabled ? config.level : 'off',
       mode: config.mode,
+      brevity: config.brevity.level,
       autonomy: config.autonomy,
       setupReadiness: deriveSetupReadiness(config, ollama ?? undefined),
       isOptimizing,

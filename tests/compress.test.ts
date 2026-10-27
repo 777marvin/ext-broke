@@ -1327,3 +1327,28 @@ describe('messagesChars', () => {
     assert.equal(messagesChars(msgs), sum);
   });
 });
+
+describe('truncatePass per-tool overrides (S8)', () => {
+  it('honors per-tool maxLines/maxKB and exemption rules (exact and bare tool names)', () => {
+    const thirtyLines = Array.from({ length: 30 }, (_, i) => `line-${i}`).join('\n');
+    const msgs: ContextMessage[] = [
+      user('Task brief'),
+      assistantWithCall('c1', 'power---bash', { command: 'ls' }),
+      toolFor('c1', 'power---bash', thirtyLines),
+      assistantWithCall('c2', 'power---file_read', { path: 'a.ts' }),
+      toolFor('c2', 'power---file_read', thirtyLines),
+      user('Turn 2'),
+      user('Turn 3'),
+    ];
+    // Global limit 50 lines (neither would truncate by default), but 'bash' has a 10-line override and 'file_read' is disabled
+    const res = truncatePass(msgs, 1, 50, 20, 2000, undefined, {
+      bash: { enabled: true, maxLines: 10, maxKB: 5 },
+      'power---file_read': { enabled: false },
+    });
+    assert.ok(res.removedChars > 0, 'bash output should be truncated under its 10-line override');
+    const bashOut = JSON.stringify(res.messages[2]);
+    const readOut = JSON.stringify(res.messages[4]);
+    assert.ok(bashOut.includes('truncated 30 lines → 10'), `expected bash truncation marker, got: ${bashOut}`);
+    assert.ok(!readOut.includes('truncated'), 'disabled file_read tool must not be truncated');
+  });
+});

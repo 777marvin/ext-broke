@@ -18,6 +18,22 @@ export const CONFIG_PATH = process.env.BROKE_CONFIG_PATH ?? join(runtimeDir(), '
  * extension directory and is preserved across deploys (deploy.ps1 keeps
  * config.json in the target).
  */
+const ToolTruncationRuleSchema = z.object({
+  /** Whether truncation is enabled for this specific tool (false = exempt from truncation). */
+  enabled: z.boolean().default(true),
+  /** Tool-specific max lines override (head + tail). */
+  maxLines: z.number().int().positive().optional(),
+  /** Tool-specific max KB override. */
+  maxKB: z.number().int().positive().optional(),
+});
+export type ToolTruncationRule = z.infer<typeof ToolTruncationRuleSchema>;
+
+const TOOL_RULE_TEMPLATE: Record<string, unknown> = {
+  enabled: true,
+  maxLines: 200,
+  maxKB: 20,
+};
+
 const TruncateSchema = z.object({
   /** Max lines kept per truncated old tool output (head + tail). */
   maxLines: z.number().int().positive().default(200),
@@ -25,8 +41,37 @@ const TruncateSchema = z.object({
   maxKB: z.number().int().positive().default(20),
   /** Tool-call inputs (assistant messages) longer than this many chars are trimmed. */
   maxInputChars: z.number().int().positive().default(2000),
+  /**
+   * Optional per-tool truncation overrides keyed by tool name (e.g. 'power---bash'
+   * or bare 'bash'). Empty by default so global maxLines/maxKB apply everywhere.
+   */
+  tools: z.record(z.string(), ToolTruncationRuleSchema).default({}),
+  /**
+   * Rewrite oversized tool results at the source (onToolFinished) instead of
+   * input-only. Rewrites STORED history - off by default (non-destructive by default).
+   */
+  toolLevel: z.boolean().default(false),
+  /**
+   * Persist full truncated tool outputs under <extension>/errors/ (secret-masked,
+   * 0o600, 100 MB cap) when toolLevel is active. Default OFF (explicit opt-in).
+   */
+  archive: z.boolean().default(false),
+  /** Age-based eviction: archived outputs older than N days are deleted. */
+  retentionDays: z.number().int().min(1).max(365).default(30),
 });
 const truncateDefault = TruncateSchema.parse({});
+
+const BrevitySchema = z.object({
+  /**
+   * Output-side brevity directive injected into the system prompt via
+   * onPromptTemplate ('off' | 'lite' | 'full' | 'ultra'). Coupled to mode
+   * presets (short -> 'off', normal -> 'lite', long -> 'full'), while 'ultra'
+   * or manual overrides switch mode to 'custom'. Default 'off' so legacy/custom
+   * configs never alter model output style unannounced.
+   */
+  level: z.enum(['off', 'lite', 'full', 'ultra']).default('off'),
+});
+const brevityDefault = BrevitySchema.parse({});
 
 const ErrorsSchema = z.object({
   /** Compress matching tool results (stack traces, compiler/test output). */
@@ -303,6 +348,7 @@ export const ConfigSchema = z.object({
    */
   protectedTurns: z.number().int().min(1).max(50).default(2),
   truncate: TruncateSchema.default(truncateDefault),
+  brevity: BrevitySchema.default(brevityDefault),
   errors: ErrorsSchema.default(errorsDefault),
   slice: SliceSchema.default(sliceDefault),
   summarize: SummarizeSchema.default(summarizeDefault),
@@ -398,21 +444,39 @@ function collectUnknownKeys(candidate: unknown, defaults: unknown, prefix = '', 
   for (const [key, value] of Object.entries(candidate as Record<string, unknown>)) {
     const path = prefix ? `${prefix}.${key}` : key;
     const defaultRecord = defaults as Record<string, unknown>;
-    if (!Object.prototype.hasOwnProperty.call(defaultRecord, key)) out.push(path);
-    else collectUnknownKeys(value, defaultRecord[key], path, out);
+    if (!Object.prototype.hasOwnProperty.call(defaultRecord, key)) {
+      out.push(path);
+    } else if (path === 'truncate.tools') {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        for (const [toolKey, toolVal] of Object.entries(value as Record<string, unknown>)) {
+          collectUnknownKeys(toolVal, TOOL_RULE_TEMPLATE, `${path}.${toolKey}`, out);
+        }
+      }
+    } else {
+      collectUnknownKeys(value, defaultRecord[key], path, out);
+    }
   }
   return out;
 }
 
 /** Deep-remove the reported unknown keys so the parse still applies known values. */
-function stripUnknownKeys(candidate: unknown, defaults: unknown): unknown {
+function stripUnknownKeys(candidate: unknown, defaults: unknown, prefix = ''): unknown {
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return candidate;
   if (!defaults || typeof defaults !== 'object' || Array.isArray(defaults)) return undefined;
   const out: Record<string, unknown> = {};
   const defaultRecord = defaults as Record<string, unknown>;
   for (const [key, value] of Object.entries(candidate as Record<string, unknown>)) {
     if (!Object.prototype.hasOwnProperty.call(defaultRecord, key)) continue;
-    out[key] = stripUnknownKeys(value, defaultRecord[key]);
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (path === 'truncate.tools' && value && typeof value === 'object' && !Array.isArray(value)) {
+      const cleanedTools: Record<string, unknown> = {};
+      for (const [toolKey, toolVal] of Object.entries(value as Record<string, unknown>)) {
+        cleanedTools[toolKey] = stripUnknownKeys(toolVal, TOOL_RULE_TEMPLATE, `${path}.${toolKey}`);
+      }
+      out[key] = cleanedTools;
+    } else {
+      out[key] = stripUnknownKeys(value, defaultRecord[key], path);
+    }
   }
   return out;
 }
@@ -542,7 +606,8 @@ export function saveConfig(config: Config, filePath: string = CONFIG_PATH): void
 export function applyConfigUpdates(current: Config, updates: Array<[string, unknown]>): Config {
   let clone: Record<string, unknown> = {
     ...current,
-    truncate: { ...current.truncate },
+    truncate: { ...current.truncate, tools: { ...current.truncate.tools } },
+    brevity: { ...current.brevity },
     errors: { ...current.errors },
     slice: { ...current.slice },
     summarize: { ...current.summarize },
