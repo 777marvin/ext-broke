@@ -202,7 +202,8 @@
     invalidatePreview();
     const c = draftRef.current;
     if (!c) return;
-    const changed = ['level', 'maxContextChars', 'protectedTurns'].some((key) => key in patch && patch[key] !== c[key]);
+    const changed = ['level', 'maxContextChars', 'protectedTurns'].some((key) => key in patch && patch[key] !== c[key])
+      || ('brevity' in patch && patch.brevity?.level !== c.brevity?.level);
     setDraft({ ...c, ...patch, ...(changed ? { mode: 'custom' } : {}) });
   };
   const numberCommit = (key, fallback, max = Infinity) => (e) => {
@@ -211,6 +212,7 @@
     else e.target.value = String(draftRef.current?.[key] ?? fallback);
   };
   const overlayCache = overlayCfg?.cache ?? {};
+  const overlayBrevity = overlayCfg?.brevity ?? {};
   // Commands that change state or spend money from a single click.
   // `reset` destroys this task's stats and `summarize now` triggers a real
   // summarizer call. The synthetic setup check is safe to run directly.
@@ -747,6 +749,14 @@
                           <option value="structural">Structural - content-preserving only</option>
                           <option value="truncate">Truncate - + truncation of old tool outputs</option>
                           <option value="summarize">Summarize - + LLM summary (needs backend)</option>
+                        </select>
+                      </label>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontWeight: 500, fontSize: 12, color: '#222' }}>Answer brevity
+                        <select value={overlayBrevity.level ?? 'off'} onChange={(e) => patchOverlay({ brevity: { ...overlayBrevity, level: e.target.value } })} style={{ ...selectStyle, marginTop: 4 }}>
+                          <option value="off">Off - normal responses</option>
+                          <option value="lite">Lite - concise prose, no filler</option>
+                          <option value="full">Full - terse caveman-style fragments</option>
+                          <option value="ultra">Ultra - maximum telegraphic compression</option>
                         </select>
                       </label>
                       <div style={{ display: 'flex', gap: 12 }}>

@@ -1,5 +1,5 @@
 import type { Config } from './config';
-import { DEFAULT_CONFIG, updateConfigPath, updateConfigPaths } from './config';
+import { DEFAULT_CONFIG, loadConfigFile, updateConfigPath, updateConfigPaths } from './config';
 import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaStatus, type OllamaStatus } from './local';
 import { checkSetupReadiness, hasOllamaModel } from './setup';
 export { hasOllamaModel } from './setup';
@@ -25,7 +25,14 @@ Usage: /broke <subcommand>
                                 compression depth (default: truncate)
   maxchars <n>                  engage lossy passes above ~n chars (default ${d.maxContextChars})
   protect <turns>               never compress the last n user turns (default ${d.protectedTurns})
+  brevity <off|lite|full|ultra> output brevity directive (default: ${d.brevity.level} - preset-coupled)
   truncate <lines> <kb>         old tool output limits (default ${d.truncate.maxLines} ${d.truncate.maxKB})
+  truncate tool <name> <lines> <kb>
+                                per-tool truncation override (or 'truncate tool <name> off|reset')
+  truncate toollevel <on|off>   rewrite oversized tool results at tool level (default: ${d.truncate.toolLevel ? 'on' : 'off'})
+  truncate archive <on|off>     save full truncated outputs to errors/ (default: ${d.truncate.archive ? 'on' : 'off'})
+  truncate retention <days>     delete archived outputs older than n days (default ${d.truncate.retentionDays})
+  truncate clear                delete the whole archive now
   errors on | off               compress compiler/test output (default: ${d.errors.enabled ? 'on' : 'off'})
   errors minchars <n>           compress matching outputs ≥ n chars (default ${d.errors.minChars})
   errors lines <n>              context lines kept around the failure (default ${d.errors.contextLines})
@@ -90,7 +97,13 @@ export type BrokeCommand =
   | { kind: 'level'; level: Config['level'] }
   | { kind: 'maxchars'; value: number }
   | { kind: 'protect'; value: number }
+  | { kind: 'brevity'; level: Config['brevity']['level'] }
   | { kind: 'truncate'; lines: number; kb: number }
+  | { kind: 'truncate-toollevel'; enabled: boolean }
+  | { kind: 'truncate-archive'; enabled: boolean }
+  | { kind: 'truncate-retention'; days: number }
+  | { kind: 'truncate-clear' }
+  | { kind: 'truncate-tool'; toolName: string; action: 'set' | 'off' | 'reset'; lines?: number; kb?: number }
   | { kind: 'errors-toggle'; enabled: boolean }
   | { kind: 'errors-minchars'; value: number }
   | { kind: 'errors-lines'; value: number }
@@ -174,7 +187,47 @@ export function parseBrokeCommand(args: string[]): BrokeCommand {
       if (Number.isFinite(n) && n >= 1 && n <= 50) return { kind: 'protect', value: n };
       return { kind: 'unknown', raw: args.join(' ') };
     }
+    case 'brevity': {
+      const lvl = rest[0];
+      if (rest.length === 1 && (lvl === 'off' || lvl === 'lite' || lvl === 'full' || lvl === 'ultra')) {
+        return { kind: 'brevity', level: lvl };
+      }
+      return { kind: 'unknown', raw: args.join(' ') };
+    }
     case 'truncate': {
+      const opt = rest[0];
+      if (opt === 'toollevel' && rest.length === 2 && (rest[1] === 'on' || rest[1] === 'off')) {
+        return { kind: 'truncate-toollevel', enabled: rest[1] === 'on' };
+      }
+      if (opt === 'archive' && rest.length === 2 && (rest[1] === 'on' || rest[1] === 'off')) {
+        return { kind: 'truncate-archive', enabled: rest[1] === 'on' };
+      }
+      if (opt === 'retention' && rest.length === 2) {
+        const n = roundArg(rest[1]);
+        if (Number.isFinite(n) && n >= 1 && n <= 365) return { kind: 'truncate-retention', days: n };
+        return { kind: 'unknown', raw: args.join(' ') };
+      }
+      if (opt === 'clear' && rest.length === 1) return { kind: 'truncate-clear' };
+      if (opt === 'tool') {
+        const toolName = rest[1]?.trim() ?? '';
+        if (!toolName || toolName === '__proto__' || toolName === 'constructor' || toolName === 'prototype') {
+          return { kind: 'unknown', raw: args.join(' ') };
+        }
+        if (rest.length === 3 && rest[2] === 'off') {
+          return { kind: 'truncate-tool', toolName, action: 'off' };
+        }
+        if (rest.length === 3 && (rest[2] === 'reset' || rest[2] === 'default')) {
+          return { kind: 'truncate-tool', toolName, action: 'reset' };
+        }
+        if (rest.length === 4) {
+          const lines = roundArg(rest[2]);
+          const kb = roundArg(rest[3]);
+          if (Number.isFinite(lines) && Number.isFinite(kb) && lines > 0 && kb > 0) {
+            return { kind: 'truncate-tool', toolName, action: 'set', lines, kb };
+          }
+        }
+        return { kind: 'unknown', raw: args.join(' ') };
+      }
       const lines = roundArg(rest[0]);
       const kb = roundArg(rest[1]);
       if (Number.isFinite(lines) && Number.isFinite(kb) && lines > 0 && kb > 0) {
@@ -362,12 +415,14 @@ function configValueAt(source: unknown, path: string): unknown {
   return cur;
 }
 
-/** Every dotted leaf path of the object (arrays are leaves, never walked). */
+const RECORD_LEAF_PATHS = new Set(['truncate.tools']);
+
+/** Every dotted leaf path of the object (arrays and dynamic record maps are leaves, never walked). */
 function collectLeafPaths(source: Record<string, unknown>, prefix: string, out: string[]): void {
   for (const key of Object.keys(source)) {
     const value = source[key];
     const path = prefix ? `${prefix}.${key}` : key;
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && !RECORD_LEAF_PATHS.has(path)) {
       collectLeafPaths(value as Record<string, unknown>, path, out);
     } else {
       out.push(path);
@@ -423,7 +478,8 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
     case 'config-list': {
       const lines = configLeafPaths(config).map((p) => {
         const value = configValueAt(config, p);
-        const isDefault = value === configValueAt(DEFAULT_CONFIG, p) && typeof value !== 'object';
+        const defVal = configValueAt(DEFAULT_CONFIG, p);
+        const isDefault = typeof value === 'object' && value !== null ? JSON.stringify(value) === JSON.stringify(defVal) : value === defVal;
         return `  ${p} = ${formatConfigValue(value)}${isDefault ? '' : ' (changed from default)'}`;
       });
       return { config, message: `current settings (all settable via /broke config set <path> <value>):\n${lines.join('\n')}` };
@@ -463,6 +519,14 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
       return { config: updateConfigPath('maxContextChars', cmd.value, filePath), message: `maxContextChars → ${cmd.value.toLocaleString('en-US')} chars (≈ ${estimateTokens(cmd.value).toLocaleString('en-US')} tokens)` };
     case 'protect':
       return { config: updateConfigPath('protectedTurns', cmd.value, filePath), message: `protectedTurns → ${cmd.value}` };
+    case 'brevity':
+      return {
+        config: updateConfigPath('brevity.level', cmd.level, filePath),
+        message:
+          cmd.level === 'off'
+            ? 'brevity → off (no system-prompt brevity directive)'
+            : `brevity → ${cmd.level} (injected via system prompt; output token savings are not counted in /broke stats)`,
+      };
     case 'truncate':
       // One atomic write for both limits: two consecutive writes could leave
       // a half-updated config if the first succeeds and the second fails.
@@ -476,6 +540,46 @@ export function applyBrokeCommand(cmd: BrokeCommand, config: Config, filePath?: 
         ),
         message: `truncate limits → ${cmd.lines} lines / ${cmd.kb} KB`,
       };
+    case 'truncate-toollevel':
+      return {
+        config: updateConfigPath('truncate.toolLevel', cmd.enabled, filePath),
+        message: `truncate tool-level rewriting ${cmd.enabled ? 'enabled' : 'disabled'} - rewrites STORED history irreversibly`,
+      };
+    case 'truncate-archive':
+      return {
+        config: updateConfigPath('truncate.archive', cmd.enabled, filePath),
+        message: cmd.enabled
+          ? 'truncate archive enabled - full tool outputs are stored locally under errors/ (redacted best effort)'
+          : 'truncate archive disabled - full outputs are no longer saved, markers say "full output removed"',
+      };
+    case 'truncate-retention':
+      return { config: updateConfigPath('truncate.retentionDays', cmd.days, filePath), message: `truncate archive retention → ${cmd.days} day(s)` };
+    case 'truncate-clear':
+      // Side effect handled in index.ts (deletes the archive directory).
+      return { config, message: '' };
+    case 'truncate-tool': {
+      const baseTools = filePath ? loadConfigFile(filePath).config.truncate.tools : config.truncate.tools;
+      const nextTools = { ...baseTools };
+      if (cmd.action === 'off') {
+        nextTools[cmd.toolName] = { enabled: false };
+        return {
+          config: updateConfigPath('truncate.tools', nextTools, filePath),
+          message: `truncate tool ${cmd.toolName} → disabled (exempt from truncation)`,
+        };
+      }
+      if (cmd.action === 'reset') {
+        delete nextTools[cmd.toolName];
+        return {
+          config: updateConfigPath('truncate.tools', nextTools, filePath),
+          message: `truncate tool ${cmd.toolName} → reset to global limits`,
+        };
+      }
+      nextTools[cmd.toolName] = { enabled: true, maxLines: cmd.lines, maxKB: cmd.kb };
+      return {
+        config: updateConfigPath('truncate.tools', nextTools, filePath),
+        message: `truncate tool ${cmd.toolName} → ${cmd.lines} lines / ${cmd.kb} KB`,
+      };
+    }
     case 'errors-toggle':
       return { config: updateConfigPath('errors.enabled', cmd.enabled, filePath), message: `error compression ${cmd.enabled ? 'enabled' : 'disabled'}` };
     case 'errors-minchars':
@@ -699,10 +803,11 @@ export async function formatStatus(config: Config, stats: TaskStats | null, pric
     return observation.status;
   });
   const ollama = observation.status;
+  const toolRuleCount = Object.keys(config.truncate.tools ?? {}).length;
   const lines = [
-    `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level}, mode: ${config.mode}, automation: ${config.autonomy})`,
+    `broke - ${config.enabled ? 'enabled' : 'DISABLED'} (level: ${config.level}, mode: ${config.mode}, automation: ${config.autonomy}, brevity: ${config.brevity.level})`,
     `  maxContextChars: ${config.maxContextChars.toLocaleString('en-US')} chars | protectedTurns: ${config.protectedTurns}`,
-    `  truncate limits: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB | maxInputChars: ${config.truncate.maxInputChars}`,
+    `  truncate limits: ${config.truncate.maxLines} lines / ${config.truncate.maxKB} KB | maxInputChars: ${config.truncate.maxInputChars} | tool-level: ${config.truncate.toolLevel ? 'on' : 'off'} | archive: ${config.truncate.archive ? 'on' : 'off'} (${config.truncate.retentionDays} d retention)${toolRuleCount > 0 ? ` | ${toolRuleCount} per-tool rule(s)` : ''}`,
     `  errors: ${config.errors.enabled ? 'on' : 'off'} | min ${config.errors.minChars.toLocaleString('en-US')} chars | ${config.errors.contextLines} context lines | tool-level: ${config.errors.toolLevel ? 'on' : 'off'} | archive: ${config.errors.archive ? 'on' : 'off'} (${config.errors.retentionDays} d retention)`,
     `  slice: ${config.slice.enabled ? 'on' : 'off'} | parser: ${config.slice.parser} | min ${config.slice.minChars.toLocaleString('en-US')} chars | view cap ${config.slice.maxChars.toLocaleString('en-US')} chars | focusAuto: ${config.slice.focusAuto ? 'on' : 'off'}`,
     `  summarizer: ${config.summarize.via}${config.summarize.via === 'local' ? ` (model: ${config.summarize.localModel})` : ` (model: ${config.summarize.cloudModelId || 'task model'})`} | after ${config.summarize.afterTurns} turns | min ${config.summarize.minChars.toLocaleString('en-US')} chars`,

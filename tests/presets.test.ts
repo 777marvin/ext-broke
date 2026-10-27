@@ -35,7 +35,7 @@ describe('F5 mode presets', () => {
     assert.deepEqual(original, before);
   });
 
-  it('pins the approved starting values', () => {
+  it('pins the approved starting values (including preset-coupled brevity)', () => {
     for (const mode of ['short', 'normal', 'long'] as const) {
       const result = applyPreset(DEFAULT_CONFIG, mode);
       assert.equal(result.maxContextChars, 60000);
@@ -43,6 +43,7 @@ describe('F5 mode presets', () => {
       assert.equal(result.truncate.maxLines, mode === 'long' ? 120 : 200);
       assert.equal(result.truncate.maxKB, mode === 'long' ? 12 : 20);
       assert.equal(result.summarize.afterTurns, mode === 'long' ? 4 : 8);
+      assert.equal(result.brevity.level, mode === 'short' ? 'off' : mode === 'normal' ? 'lite' : 'full');
     }
   });
 
@@ -50,10 +51,12 @@ describe('F5 mode presets', () => {
     const config = applyPreset(DEFAULT_CONFIG, 'long');
     assert.deepEqual(applyPreset(config, 'custom'), { ...config, mode: 'custom' });
     assert.equal(applyConfigUpdates(config, [['maxContextChars', 90000]]).mode, 'custom');
+    assert.equal(applyConfigUpdates(config, [['brevity.level', 'ultra']]).mode, 'custom');
     assert.equal(ConfigSchema.parse({ ...config, level: 'structural' }).mode, 'custom');
     assert.equal(applyConfigUpdates(config, [['cache.profile', 'auto']]).mode, 'long');
     assert.equal(applyConfigUpdates(config, [['autonomy', 'manual']]).mode, 'long');
     assert.equal(applyConfigUpdates(DEFAULT_CONFIG, [['mode', 'long']]).level, 'summarize');
+    assert.equal(applyConfigUpdates(DEFAULT_CONFIG, [['mode', 'normal']]).brevity.level, 'lite');
   });
 
   it('rejects invalid modes and autonomy values', () => {

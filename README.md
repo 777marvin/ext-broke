@@ -285,7 +285,15 @@ all commands) or from the advanced section of the badge dialog:
 /broke level <structural|truncate|summarize>
 /broke maxchars <n>                engage lossy passes above ~n chars
 /broke protect <turns>             never compress the last n user turns
+/broke brevity <off|lite|full|ultra>
+                                   output brevity directive (preset-coupled; default: off)
 /broke truncate <lines> <kb>       old tool output limits
+/broke truncate tool <name> <lines> <kb>
+                                   per-tool truncation override (or 'off' / 'reset')
+/broke truncate toollevel <on|off> rewrite oversized tool results at tool level (default: off)
+/broke truncate archive <on|off>   save full truncated outputs to errors/ (default: off)
+/broke truncate retention <days>   delete archived outputs older than n days (default: 30)
+/broke truncate clear              delete the whole archive now
 /broke errors on | off            compress compiler/test output (default: on)
 /broke errors minchars <n>        compress matching outputs ≥ n chars (default 8000)
 /broke errors lines <n>           context lines kept around the failure (default 8)
@@ -421,8 +429,13 @@ The per-pass rules, gates and failure handling are in
 | cache.escapeHatch | on | one deliberate cache-invalidating rewrite on real budget overruns |
 | cache.anchorBreakpoint | off | Anthropic only: target the frozen prefix for a cache breakpoint; a provider cache hit is not guaranteed |
 | cache.openaiStateless | off | `auto` profile only: conservative estimate switch when you cannot rely on OpenAI cache hits; `store: false` or Zero Data Retention alone does not prove caching is unavailable ([OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)) |
+| brevity.level | `off` | output brevity directive injected via `onPromptTemplate` (`off` / `lite` / `full` / `ultra`; preset-coupled: Safe=`off`, Balanced=`lite`, Maximum savings=`full`; code/commits/PRs stay intact) |
 | truncate.maxLines / maxKB | 200 / 20 | old tool output limits |
 | truncate.maxInputChars | 2000 | tool-call input trim threshold |
+| truncate.tools | `{}` | per-tool truncation rules (`{ [toolName]: { enabled, maxLines, maxKB } }`) |
+| truncate.toolLevel | off | rewrite oversized tool results at tool level (`onToolFinished`, opt-in) |
+| truncate.archive | off | save full truncated tool outputs to `errors/` when `truncate.toolLevel` is on (secret-masked, 100 MB cap) |
+| truncate.retentionDays | 30 | delete archived truncated outputs older than N days |
 | errors.enabled | on | stack-trace/log compression |
 | errors.minChars | 8000 | compress matching tool results ≥ N chars |
 | errors.contextLines | 8 | context lines kept around the failure |

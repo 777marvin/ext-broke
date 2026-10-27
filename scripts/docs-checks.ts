@@ -131,7 +131,9 @@ export function compareVersions(a: string, b: string): number {
 export function leafPaths(obj: Record<string, unknown>, prefix = ''): string[] {
   return Object.entries(obj).flatMap(([k, v]) => {
     const p = prefix ? `${prefix}.${k}` : k;
-    return v !== null && typeof v === 'object' && !Array.isArray(v) ? leafPaths(v as Record<string, unknown>, p) : [p];
+    return v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0
+      ? leafPaths(v as Record<string, unknown>, p)
+      : [p];
   });
 }
 

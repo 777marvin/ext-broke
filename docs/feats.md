@@ -106,6 +106,7 @@ no release version or delivery date is assigned to this remaining work.
   | truncate.maxLines | 200 | 200 | 120 |
   | truncate.maxKB | 20 | 20 | 12 |
   | summarize.afterTurns | 8 | 8 | 4 |
+  | brevity.level | off | lite | full |
 - **F6 - Live-UI expansion (completed in Unreleased).** Separate observed
   conversation-character reduction, provider-reported usage and modeled
   monetary estimates. A measurement ledger does not prove a billed saving.
@@ -153,10 +154,17 @@ no release version or delivery date is assigned to this remaining work.
   attribution and compress passes behave when subagents are spawned?
   (Which events fire per subagent task, per-task map behavior, risk of
   double counting?)
-- **S8 - savemytoken migration (investigation).** Evaluate migrating the
-  savemytoken extension's functionality into broke (precedent: its
-  `truncateToolResult` feature-detection pattern is already referenced in
-  the cross-cutting principles).
+- **S8 - savemytoken migration (implemented in Unreleased, 2026-10-23).**
+  Migrated the caveman-inspired output brevity directive (`brevity.ts`,
+  `onPromptTemplate` for `system-prompt`, levels `off | lite | full | ultra`)
+  and coupled `brevity.level` to the F5 mode presets (`short -> off`,
+  `normal -> lite`, `long -> full`, manual overrides or `ultra` -> `custom`).
+  Extended `truncate` with per-tool truncation rules (`truncate.tools` /
+  `/broke truncate tool ...`) and opt-in tool-level truncation + bounded,
+  secret-masked archiving (`truncate.toolLevel`, `truncate.archive`,
+  `truncate.retentionDays`), reusing `errors.ts` archive safety (`0o600`,
+  100 MB cap, `maskSecrets`) instead of savemytoken's unbounded `/tmp`
+  writes. Output-side brevity never invents token-savings numbers.
 
 ### F7.2: Guided setup & readiness check
 
