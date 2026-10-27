@@ -1,4 +1,5 @@
 ({ config, updateConfig: publishConfig, ui, executeExtensionAction }) => {
+  /* BROKE_CONFIG_DRAFT_HELPER */
   const { Select, Checkbox, Input, Tooltip } = ui;
   const [presetError, setPresetError] = React.useState(null);
   const [previewing, setPreviewing] = React.useState(false);
@@ -14,23 +15,7 @@
     // Handlers capture the last render. Apply only their changed fields to
     // the latest published draft, preserving other edits in the same batch.
     const previous = lastPublished.current ?? {};
-    const merged = { ...previous };
-    for (const key of Object.keys(next)) {
-      const value = next[key];
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        const block = { ...previous[key] };
-        for (const field of Object.keys(value)) {
-          if (value[field] !== config?.[key]?.[field]) block[field] = value[field];
-        }
-        merged[key] = block;
-      } else if (value !== config?.[key]) merged[key] = value;
-    }
-    const ownedChanged = ['level', 'maxContextChars', 'protectedTurns'].some((key) => merged[key] !== previous[key])
-      || merged.truncate?.maxLines !== previous.truncate?.maxLines
-      || merged.truncate?.maxKB !== previous.truncate?.maxKB
-      || merged.summarize?.afterTurns !== previous.summarize?.afterTurns
-      || merged.brevity?.level !== previous.brevity?.level;
-    const published = ownedChanged ? { ...merged, mode: 'custom' } : merged;
+    const published = mergeConfigDraft(config ?? {}, previous, next);
     lastPublished.current = published;
     publishConfig(published);
   };

@@ -94,12 +94,13 @@ import { boundedMapSet } from './compress';
 import { runUpdateWithLifecycle } from './update-lifecycle';
 import { validateContext } from './validate';
 import { z } from 'zod';
+import { composeUiTemplate } from './scripts/ui-template-source.cjs';
 
 // Load the JSX templates once at module level (official template pattern).
 // A missing template must not prevent the extension from loading at all.
 function loadTemplate(path: string): string {
   try {
-    return readFileSync(join(__dirname, path), 'utf-8');
+    return composeUiTemplate(readFileSync(join(__dirname, path), 'utf-8'));
   } catch {
     return '';
   }

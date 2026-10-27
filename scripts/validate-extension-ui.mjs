@@ -36,6 +36,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { composeUiTemplate } from './ui-template-source.cjs';
 
 const require = createRequire(import.meta.url);
 
@@ -411,7 +412,7 @@ const cleanSucraseMessage = (message) => {
 
 const validateFile = (filePath, kind, opts, env) => {
   const relative = displayPath(filePath);
-  const template = fs.readFileSync(filePath, 'utf8');
+  const template = composeUiTemplate(fs.readFileSync(filePath, 'utf8'));
   const sourceLines = template.split('\n');
   const issues = [];
   const checksRun = [];

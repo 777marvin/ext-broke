@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { transform } from 'sucrase';
 import { ConfigSchema, DEFAULT_CONFIG } from '../config';
 import { applyPreset } from '../presets';
+import { composeUiTemplate } from '../scripts/ui-template-source.cjs';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost' });
 const win = dom.window;
@@ -24,7 +25,7 @@ const ui = {
   Tooltip: ({ children }: any) => children,
 };
 function component(file: string): React.ComponentType<any> {
-  const js = transform(`const Component = ${readFileSync(file, 'utf8')}`, { transforms: ['typescript', 'jsx'], filePath: file }).code;
+  const js = transform(`const Component = ${composeUiTemplate(readFileSync(file, 'utf8'))}`, { transforms: ['typescript', 'jsx'], filePath: file }).code;
   return new Function('React', `${js}; return Component;`)(React);
 }
 let root: Root;

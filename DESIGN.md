@@ -114,6 +114,11 @@ and action failure.
 
 ### Savings approach
 
+Both settings surfaces use the same synchronous draft reducer assembled into
+their standalone templates by `scripts/ui-template-source.cjs`. Draft edits
+preserve other changes from the same render and mark preset-owned edits Custom.
+Preset values remain owned by `presets.ts`; edits do not add network round trips.
+
 The native select is intentional: the host/operating-system popup is accepted.
 Options are outcome-focused: Safe, Balanced, Maximum savings, and Custom.
 Balanced is the recommended default.

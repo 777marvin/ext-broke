@@ -15,6 +15,10 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Share synchronous configuration-draft merging and Custom-mode detection
+  between the badge and settings templates; host loading, UI validation and
+  interaction tests use the same template composition (AUD-09).
+
 - Separate update lifecycle coordination and restore configuration observation
   on success, reported failure and unexpected runner exceptions (AUD-09).
 

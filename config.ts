@@ -14,9 +14,8 @@ export const CONFIG_PATH = process.env.BROKE_CONFIG_PATH ?? join(runtimeDir(), '
 
 /**
  * Broke configuration. All values have defaults, so a missing or partial
- * config file always produces a valid configuration. The file lives in the
- * extension directory and is preserved across deploys (deploy.ps1 keeps
- * config.json in the target).
+ * config file always produces a valid configuration. Mutable settings live
+ * under runtimeDir(), outside the installation directory replaced by updates.
  */
 const ToolTruncationRuleSchema = z.object({
   /** Whether truncation is enabled for this specific tool (false = exempt from truncation). */
@@ -551,11 +550,6 @@ export function invalidateConfigCache(): void {
   configWarning = null;
 }
 
-/**
- * Atomic write: temp file + fsync + rename, so a crash mid-write cannot
- * corrupt config.json and a power loss cannot leave the renamed file
- * empty (fsync flushes the data to disk before the rename).
- */
 /**
  * Atomic write (BRK-010): UNIQUE temp file (pid + randomness) + file fsync +
  * rename + parent-directory fsync (POSIX), so a crash mid-write cannot

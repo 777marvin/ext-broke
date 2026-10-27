@@ -242,7 +242,7 @@ export const MAX_SNAPSHOT_BYTES_PER_TASK = 25 * 1024 * 1024;
 export const MAX_HISTORY_FILE_BYTES = 10 * 1024 * 1024;
 
 /** Root for snapshots: explicit override > env var (tests/host contract) >
- * default next to the extension entry module (like stats.jsonl). */
+ * default under the stable runtime data root. */
 export function snapshotsRoot(overrides?: { dir?: string }): string {
   return overrides?.dir ?? process.env.BROKE_SNAPSHOTS_DIR ?? join(runtimeDir(), SNAPSHOT_DIR_NAME);
 }
