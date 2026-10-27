@@ -42,18 +42,14 @@ import { DEFAULT_DIFF_BUDGET_CHARS, MAX_DIFF_FILES_READ, formatDiffDigest, type 
 import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
 import {
-  createEmptyState,
   ensureFresh,
   estimateBulkReadAvoided,
   formatSearchFooter,
   indexDirFor,
   loadIndex,
-  mergeIntoState,
   projectHash,
   resolveSearchOptions,
   runSearch,
-  saveIndex,
-  scanProject,
   type IndexState,
 } from './indexer';
 import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
@@ -1583,16 +1579,10 @@ export default class Broke implements Extension {
     const root = this.rootFor(context);
     if (!root) return 'broke: no open project - indexing is project-scoped';
     try {
-      const scan = scanProject(root, config.search.maxFileKB, { includeGitIgnored: config.search.includeGitIgnored });
-      const previous = scan.truncated ? loadIndex(indexDirFor(root)) : null;
-      const state = previous?.projectRoot === root ? previous : createEmptyState(root);
-      const delta = mergeIntoState(state, root, scan.entries, scan.truncated);
-      // BRK-017: a manual rebuild IS a completed freshness check over fresh
-      // content - stamp both times or the index reports an unknown/ancient
-      // age and every subsequent TTL window starts expired.
-      state.scannedAt = new Date().toISOString();
-      state.builtAt = state.scannedAt;
-      saveIndex(indexDirFor(root), state);
+      const { state, delta } = ensureFresh(root, {
+        maxFileKB: config.search.maxFileKB, includeGitIgnored: config.search.includeGitIgnored,
+        deadlineMs: config.search.scanBudgetMs, rebuild: true,
+      });
       boundedMapSet(this.indexByProject, projectHash(root), { state, at: Date.now() });
       return (
         `broke: index rebuilt - ${Object.keys(state.files).length.toLocaleString('en-US')} file(s), ` +

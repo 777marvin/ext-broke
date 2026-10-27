@@ -111,6 +111,45 @@ describe('AUD-01/07 incomplete refresh integrity', () => {
   });
 });
 
+describe('AUD-08 shared deadline', () => {
+  it('gives git only the remaining absolute budget and marks expiration honestly', () => {
+    const root = makeProject();
+    let clock = 1000; let gitTimeout = 0;
+    const options = {
+      deadlineMs: 100, absoluteDeadline: 1050,
+      runtime: { now: () => clock, git: (_root: string, _ignored: boolean, timeout: number) => { gitTimeout = timeout; clock = 1060; return ['src/a.ts']; } },
+    };
+    const result = scanProject(root, 512, options);
+    assert.equal(gitTimeout, 50);
+    assert.equal(result.truncated, true);
+    assert.deepEqual(result.entries, []);
+  });
+
+  it('does not start merge reads once the shared deadline has expired', () => {
+    const root = makeProject(); const state = createEmptyState(root);
+    const entries = scanProject(root, 512).entries;
+    const budget = { remainingBytes: 1000000, remainingDocs: 100, exhausted: false, deadline: 100, now: () => 101 };
+    assert.deepEqual(mergeIntoState(state, root, entries, false, budget), { added: 0, updated: 0, removed: 0 });
+    assert.equal(state.truncated, true);
+    assert.equal(budget.exhausted, true);
+  });
+
+  it('shares git time with freshness merge and keeps the prior snapshot after expiry', () => {
+    const root = makeProject(); const dir = join(root, '.test-index');
+    ensureFresh(root, { maxFileKB: 512 }, dir);
+    writeFile(root, ['new.ts'], 'export const newDeadlineEntry = 1;');
+    let clock = 1000; let timeout = 0;
+    const options = { maxFileKB: 512, deadlineMs: 100, runtime: {
+      now: () => clock, git: (_root: string, _ignored: boolean, remaining: number) => { timeout = remaining; clock = 1101; return ['src/a.ts', 'new.ts']; },
+    } };
+    const result = ensureFresh(root, options, dir);
+    assert.equal(timeout, 100);
+    assert.equal(result.state.truncated, true);
+    assert.equal(Object.keys(result.state.files).length, 2);
+    assert.deepEqual(result.delta, { added: 0, updated: 0, removed: 0 });
+  });
+});
+
 describe('tokenize', () => {
   it('splits identifiers and numbers, lowercases everything', () => {
     assert.deepEqual(tokenize('alphaFind Invoice12'), ['alphafind', 'invoice12']);

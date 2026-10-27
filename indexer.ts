@@ -267,14 +267,14 @@ export function isSafeWorkspaceFile(root: string, relPath: unknown): relPath is 
  * missing or fails; the caller then decides the fallback. `-z` keeps paths
  * raw (no core.quotePath escaping), NUL-separated.
  */
-function gitCandidateFiles(root: string, includeGitIgnored: boolean): string[] | null {
+function gitCandidateFiles(root: string, includeGitIgnored: boolean, timeout: number): string[] | null {
   try {
     const out = execFileSync(
       'git',
       includeGitIgnored ? ['ls-files', '-co', '-z'] : ['ls-files', '-co', '--exclude-standard', '-z'],
       {
         cwd: root,
-        timeout: 15_000,
+        timeout,
         windowsHide: true,
         maxBuffer: 64 * 1024 * 1024,
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -301,6 +301,12 @@ interface ScannedEntry {
 
 export type ScanSource = 'git' | 'git-unavailable' | 'walk';
 
+/** Narrow process/clock boundary for deterministic deadline tests. */
+export interface IndexRuntime {
+  now?: () => number;
+  git?: (root: string, includeGitIgnored: boolean, timeout: number) => string[] | null;
+}
+
 export interface ScanOptions {
   /** BRK-003 opt-in: index gitignored files too (denylists stay ON). */
   includeGitIgnored?: boolean;
@@ -312,6 +318,9 @@ export interface ScanOptions {
    * 2000 is always true, so every deadline handed in truncated instantly).
    */
   deadlineMs?: number;
+  /** Internal absolute deadline shared by refresh, scan and merge. */
+  absoluteDeadline?: number;
+  runtime?: IndexRuntime;
 }
 
 /**
@@ -333,15 +342,20 @@ export function scanProject(root: string, maxFileKB: number, opts: ScanOptions =
   const entries: ScannedEntry[] = [];
   let truncated = false;
   // A DURATION, turned into an absolute deadline once (M3).
-  const deadline = Date.now() + (opts.deadlineMs ?? Number.POSITIVE_INFINITY);
-  const outOfTime = (): boolean => Date.now() >= deadline;
+  const now = opts.runtime?.now ?? Date.now;
+  const deadline = opts.absoluteDeadline ?? now() + (opts.deadlineMs ?? INDEX_SCAN_BUDGET_MS);
+  const outOfTime = (): boolean => now() >= deadline;
+  if (outOfTime()) return { entries, truncated: true, source: 'git-unavailable' };
   let canonicalRoot: string;
   try {
     canonicalRoot = realpathSync(root);
   } catch {
     return { entries: [], truncated: true, source: 'git-unavailable' };
   }
-  const gitFiles = gitCandidateFiles(root, opts.includeGitIgnored === true);
+  const remaining = Math.floor(deadline - now());
+  if (remaining <= 0) return { entries, truncated: true, source: 'git-unavailable' };
+  // timeout=0 disables Node's timeout; it never represents expiry.
+  const gitFiles = (opts.runtime?.git ?? gitCandidateFiles)(root, opts.includeGitIgnored === true, Math.min(15000, remaining));
   if (gitFiles !== null) {
     if (outOfTime()) return { entries: [], truncated: true, source: 'git' };
     for (const relPath of gitFiles) {
@@ -493,12 +507,25 @@ function addDocument(state: IndexState, root: string, entry: ScannedEntry, budge
  * the budgeted loop never reached would look deleted and be dropped from
  * the index (the review's suggested single-loop `break` does exactly that).
  */
+export interface MergeBudget {
+  remainingBytes: number;
+  exhausted: boolean;
+  remainingDocs?: number;
+  deadline?: number;
+  now?: () => number;
+}
+
+function mergeOutOfTime(budget: MergeBudget | undefined): boolean {
+  if (budget?.deadline !== undefined && (budget.now ?? Date.now)() >= budget.deadline) budget.exhausted = true;
+  return budget?.exhausted === true;
+}
+
 export function mergeIntoState(
   state: IndexState,
   root: string,
   entries: ScannedEntry[],
   truncated: boolean,
-  budget?: { remainingBytes: number; exhausted: boolean; remainingDocs?: number },
+  budget?: MergeBudget,
 ): { added: number; updated: number; removed: number } {
   let added = 0;
   let updated = 0;
@@ -508,6 +535,7 @@ export function mergeIntoState(
 
   // Pass 2: re-tokenize, bounded.
   for (const entry of entries) {
+    if (mergeOutOfTime(budget)) break;
     seen.add(entry.relPath);
     if (budget?.remainingDocs !== undefined && budget.remainingDocs <= 0) {
       budget.exhausted = true;
@@ -531,13 +559,14 @@ export function mergeIntoState(
   let removed = 0;
   if (!truncated && !budget?.exhausted) {
     for (const relPath of Object.keys(state.files)) {
+      if (mergeOutOfTime(budget)) break;
       if (!seen.has(relPath)) {
         removeDocument(state, relPath);
         removed++;
       }
     }
   }
-  state.truncated = truncated || budget?.exhausted === true;
+  state.truncated = truncated || mergeOutOfTime(budget);
   return { added, updated, removed };
 }
 
@@ -581,12 +610,16 @@ function removeLegacyIndexDirs(indexBase: string, currentHash: string): void {
 
 export function ensureFresh(
   root: string,
-  opts: { maxFileKB: number; includeGitIgnored?: boolean; ttlMs?: number; mergeBudgetBytes?: number; mergeBudgetDocs?: number; deadlineMs?: number },
+  opts: { maxFileKB: number; includeGitIgnored?: boolean; ttlMs?: number; mergeBudgetBytes?: number; mergeBudgetDocs?: number; deadlineMs?: number; rebuild?: boolean; runtime?: IndexRuntime },
   dirOverride?: string,
 ): { state: IndexState; delta: { added: number; updated: number; removed: number } } {
+  const now = opts.runtime?.now ?? Date.now;
+  const deadline = now() + (opts.deadlineMs ?? INDEX_SCAN_BUDGET_MS);
   const dir = dirOverride ?? indexDirFor(root);
   if (!dirOverride) removeLegacyIndexDirs(join(dir, '..'), projectHash(root));
-  const state = loadIndex(dir) ?? createEmptyState(root);
+  const loaded = loadIndex(dir);
+  const previous = loaded && sameProjectRoot(loaded.projectRoot, root) ? loaded : null;
+  let state = (opts.rebuild ? null : loaded) ?? createEmptyState(root);
   if (!sameProjectRoot(state.projectRoot, root)) {
     // Foreign/stale root (moved project, copied store, tampered file): the
     // persisted state says nothing about THIS tree - rebuild from scratch.
@@ -606,9 +639,9 @@ export function ensureFresh(
   // once its builtAt aged past the TTL.
   const ttlMs = opts.ttlMs ?? 0;
   const ttlStamp = state.scannedAt || state.builtAt;
-  if (ttlMs > 0 && ttlStamp) {
+  if (!opts.rebuild && ttlMs > 0 && ttlStamp) {
     const lastCheck = Date.parse(ttlStamp);
-    if (Number.isFinite(lastCheck) && Date.now() - lastCheck < ttlMs) {
+    if (Number.isFinite(lastCheck) && now() - lastCheck < ttlMs) {
       return { state, delta: { added: 0, updated: 0, removed: 0 } };
     }
   }
@@ -622,21 +655,30 @@ export function ensureFresh(
   const scan = scanProject(root, opts.maxFileKB, {
     includeGitIgnored: opts.includeGitIgnored,
     deadlineMs: opts.deadlineMs ?? INDEX_SCAN_BUDGET_MS,
+    absoluteDeadline: deadline,
+    runtime: opts.runtime,
   });
   const budget = {
     remainingBytes: opts.mergeBudgetBytes ?? DEFAULT_MERGE_BUDGET_BYTES,
     exhausted: false,
     remainingDocs: opts.mergeBudgetDocs ?? DEFAULT_MERGE_BUDGET_DOCS,
+    deadline,
+    now,
   };
   // BRK-017: compare the truncation flag BEFORE mergeIntoState mutates it -
   // the previous post-mutation compare could never observe a flip.
   const previousTruncated = state.truncated;
   const previousScannedAt = state.scannedAt;
-  const delta = mergeIntoState(state, root, scan.entries, scan.truncated, budget);
+  let delta = mergeIntoState(state, root, scan.entries, scan.truncated, budget);
+  if (opts.rebuild && state.truncated && previous) {
+    state = previous;
+    state.truncated = true;
+    delta = { added: 0, updated: 0, removed: 0 };
+  }
   const mergedTruncated = state.truncated;
   const contentChanged =
     delta.added > 0 || delta.updated > 0 || delta.removed > 0 || previousTruncated !== mergedTruncated;
-  state.scannedAt = new Date().toISOString();
+  state.scannedAt = new Date(now()).toISOString();
   if (contentChanged) state.builtAt = state.scannedAt;
   // Persist the freshness marker too, so the TTL window survives restarts
   // (otherwise every query after TTL expiry would rescan without ever

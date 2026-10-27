@@ -15,6 +15,10 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Share one deadline across Git discovery, filesystem scanning and incremental
+  merging; manual rebuilds use the same bounded path and preserve the previous
+  snapshot if the rebuild is incomplete (AUD-08).
+
 - Escape provider-cache preservation only when the compressed candidate still
   exceeds its budget, avoiding unnecessary rewrites and ledger resets (AUD-06).
 
