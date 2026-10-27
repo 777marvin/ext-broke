@@ -91,7 +91,7 @@ import {
   type LastCallUsage,
 } from './tokens';
 import { boundedMapSet } from './compress';
-import { runUpdate } from './update';
+import { runUpdateWithLifecycle } from './update-lifecycle';
 import { validateContext } from './validate';
 import { z } from 'zod';
 
@@ -1352,28 +1352,11 @@ export default class Broke implements Extension {
         return log(result.lines.join('\n'));
       }
       case 'update': {
-        // Self-update from GitHub releases. The hooks free the config
-        // watcher's directory handle for the folder swap and reopen it
-        // afterwards; progress goes to the extension log, not the chat.
-        // BRK-006: onAfterSwap only fires on SUCCESS - a failed update
-        // used to leave the watcher closed forever. Track the close and
-        // always restore afterwards.
-        let watcherClosedByUpdate = false;
-        const result = await runUpdate({ mode: cmd.mode, tag: cmd.tag }, {
-          onBeforeSwap: () => {
-            ext.closeConfigWatcher();
-            watcherClosedByUpdate = true;
-          },
-          onAfterSwap: () => {
-            ext.startConfigWatcher();
-            watcherClosedByUpdate = false;
-          },
+        const result = await runUpdateWithLifecycle({ mode: cmd.mode, tag: cmd.tag }, {
+          closeWatcher: () => ext.closeConfigWatcher(),
+          startWatcher: () => ext.startConfigWatcher(),
           progress: (line) => context.log(line, 'info'),
         });
-        if (watcherClosedByUpdate) {
-          ext.startConfigWatcher();
-          context.log('broke: config watcher restored after failed update', 'info');
-        }
         return log(result.message);
       }
       case 'errors-clear':

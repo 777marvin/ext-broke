@@ -15,6 +15,9 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Separate update lifecycle coordination and restore configuration observation
+  on success, reported failure and unexpected runner exceptions (AUD-09).
+
 - Isolate project-index coordination from the host extension class while
   preserving command, search-budget and estimate behavior (AUD-09).
 
