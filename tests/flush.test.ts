@@ -58,10 +58,26 @@ function fixture() {
   };
   const context = { getTaskContext: () => task, log: () => {}, triggerUIDataRefresh: () => {} } as unknown as ExtensionContext;
   const ext = new Broke() as unknown as Commands;
-  return { ext, context, messages, config, task, current: () => current, calls: () => calls, replacements: () => replacements, confirm: (cb: () => void) => { onConfirm = cb; } };
+  return { ext, context, messages, config, task, current: () => current, calls: () => calls, replacements: () => replacements, estimate: () => (ext as any).statsByTask.get(task.data.id)?.estimates?.flush ?? 0, confirm: (cb: () => void) => { onConfirm = cb; } };
 }
 
 describe('AUD-04 covered-region flush', () => {
+  it('undo removes exactly the credited savings when the state record grows the region', async () => {
+    const f = fixture();
+    f.messages[1].content = 'Detailed synthetic brief '.repeat(1000);
+    f.messages.splice(2, 5, { id: 'small-covered', role: 'assistant', content: 'Completed step. '.repeat(40) } as ContextMessage);
+    assert.match(await f.ext.summarizeNow(f.context), /summary generated/);
+    assert.match(await f.ext.handleFlushCommand(f.context, { kind: 'flush', yes: true }), /flushed/);
+    assert.equal(f.estimate(), 0);
+    await f.ext.handleFlushCommand(f.context, { kind: 'flush', undoIndex: 1 });
+    assert.equal(f.estimate(), 0);
+  });
+  it('does not write raw history or replace messages when undo storage is disabled', async () => {
+    const f = fixture(); await f.ext.summarizeNow(f.context);
+    configModule.saveConfig({ ...f.config, flush: { ...f.config.flush, undo: false } });
+    assert.match(await f.ext.handleFlushCommand(f.context, { kind: 'flush', yes: true }), /undo.*required|requires.*undo/i);
+    assert.equal(f.replacements(), 0);
+  });
   it('uses a real cached summary, preserves recent messages and undoes the entire original history', async () => {
     const f = fixture();
     assert.match(await f.ext.summarizeNow(f.context), /summary generated/);

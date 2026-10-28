@@ -100,8 +100,8 @@ remain unchanged. Missing, edited or stale summary coverage causes an abort;
 a summary: use `/broke summarize now` explicitly when a valid summary can be
 created under the current backend and cache policies. It is manual,
 asks for confirmation (`flush.confirm`), writes BOTH the snapshot record and
-a raw-history undo file BEFORE touching any message (when `flush.undo` is on,
-default), aborts untouched if
+a raw-history undo file BEFORE touching any message. With `flush.undo` off,
+flush refuses replacement rather than writing history without consent. It aborts untouched if
 those writes fail or the undo file would exceed its size cap, and
 `/broke flush --undo <n>` restores the byte-identical
 history afterwards. Auto/manual snapshots are summary-only by default

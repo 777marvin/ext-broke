@@ -47,6 +47,24 @@ describe('runtimeDir (BRK-016)', () => {
 });
 
 describe('migrateLegacyRuntimeData (BRK-016)', () => {
+  for (const placement of ['same', 'nested', 'ancestor', 'linked-root', 'linked-parent']) {
+    it(`review regression: refuses ${placement} migration roots without removing originals`, () => {
+      const root = mkdtempSync(join(tmpdir(), 'broke-overlap-'));
+      tmpRoots.push(root);
+      const legacy = join(root, 'legacy'); mkdirSync(legacy);
+      writeFileSync(join(legacy, 'config.json'), 'the only original');
+      let target = placement === 'same' ? legacy : placement === 'nested' ? join(legacy, 'data') : root;
+      if (placement.startsWith('linked')) {
+        const outside = join(root, 'outside'); mkdirSync(outside);
+        const link = join(root, 'link');
+        try { symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir'); }
+        catch { return; }
+        target = placement === 'linked-root' ? link : join(link, 'nested');
+      }
+      assert.equal(migrateLegacyRuntimeData(legacy, target), false);
+      assert.equal(readFileSync(join(legacy, 'config.json'), 'utf-8'), 'the only original');
+    });
+  }
   it('AUD-05: refuses another migration owner without moving legacy files', () => {
     const legacy = mkdtempSync(join(tmpdir(), 'broke-owned-'));
     const target = mkdtempSync(join(tmpdir(), 'broke-owned-target-'));

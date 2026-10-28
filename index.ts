@@ -1617,7 +1617,7 @@ export default class Broke implements Extension {
         // Undo takes the flush estimate back - exactly what the flushed
         // snapshot recorded, so undoing never leaves inflated numbers.
         if (record.reduction) {
-          this.bumpEstimate(taskId, 'flush', -(record.reduction.regionChars - record.reduction.stateMessageChars));
+          this.bumpEstimate(taskId, 'flush', -Math.max(0, record.reduction.regionChars - record.reduction.stateMessageChars));
         }
         return `broke: restored ${history.length} message(s) from snapshot #${cmd.undoIndex}`;
       } catch (err) {
@@ -1630,6 +1630,7 @@ export default class Broke implements Extension {
       if (!messages || messages.length === 0) {
         return 'broke: this AiderDesk build does not expose getContextMessages - flush unavailable (feature-detect)';
       }
+      if (!config.flush.undo) return 'broke: flush requires undo history; enable flush.undo before replacing messages';
       // Capture before any await: host arrays can also be edited in place.
       const observedContext = JSON.stringify(messages);
       const cached = this.state.cachedSummaryByTask.get(taskId);

@@ -457,7 +457,6 @@ function addDocument(state: IndexState, root: string, entry: ScannedEntry, budge
       return false;
     }
   }
-  removeDocument(state, entry.relPath);
   // SEC-001: strictly enforce workspace confinement before reading
   if (!isSafeWorkspaceFile(root, entry.relPath)) {
     return false;
@@ -466,8 +465,9 @@ function addDocument(state: IndexState, root: string, entry: ScannedEntry, budge
   try {
     text = readFileSync(join(root, ...entry.relPath.split('/')), 'utf-8');
   } catch {
-    return false; // unreadable at index time - absent from postings is honest
+    return false; // retain prior postings until a complete refresh can replace them
   }
+  removeDocument(state, entry.relPath);
   if (budget) budget.remainingBytes -= entry.sizeBytes;
   const tokens = tokenize(text);
   const tfByTerm = new Map<string, number>();
@@ -529,6 +529,7 @@ export function mergeIntoState(
 ): { added: number; updated: number; removed: number } {
   let added = 0;
   let updated = 0;
+  let incomplete = truncated;
   // Pass 1: the full set of paths this scan SAW. Independent of the budget,
   // because "not seen" must mean "gone from disk", never "not reached yet".
   const seen = new Set<string>();
@@ -546,18 +547,18 @@ export function mergeIntoState(
       if (addDocument(state, root, entry, budget)) {
         added++;
         if (budget?.remainingDocs !== undefined) budget.remainingDocs -= 1;
-      }
+      } else incomplete = true;
     } else if (old.mtimeMs !== entry.mtimeMs || old.sizeBytes !== entry.sizeBytes) {
       if (addDocument(state, root, entry, budget)) {
         updated++;
         if (budget?.remainingDocs !== undefined) budget.remainingDocs -= 1;
-      }
+      } else incomplete = true;
     }
   }
   // Pass 3: removals. Skipped entirely when the budget cut pass 2 short -
   // without the complete `seen` above this would delete valid entries.
   let removed = 0;
-  if (!truncated && !budget?.exhausted) {
+  if (!incomplete && !budget?.exhausted) {
     for (const relPath of Object.keys(state.files)) {
       if (mergeOutOfTime(budget)) break;
       if (!seen.has(relPath)) {
@@ -566,7 +567,7 @@ export function mergeIntoState(
       }
     }
   }
-  state.truncated = truncated || mergeOutOfTime(budget);
+  state.truncated = incomplete || mergeOutOfTime(budget);
   return { added, updated, removed };
 }
 

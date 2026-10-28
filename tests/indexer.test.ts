@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, describe, it } from 'node:test';
+import { after, describe, it, mock } from 'node:test';
 import {
   createEmptyState,
   ensureFresh,
@@ -71,6 +72,25 @@ function makeProject(): string {
 const emptyState = (): IndexState => ({ version: 1, projectRoot: '', builtAt: '', scannedAt: '', truncated: false, files: {}, postings: {} });
 
 describe('AUD-01/07 incomplete refresh integrity', () => {
+  it('retains the last readable document and marks a failed replacement read incomplete', () => {
+    const root = makeProject(); const state = createEmptyState(root);
+    const scan = scanProject(root, 512);
+    mergeIntoState(state, root, scan.entries, false);
+    const original = state.files['src/a.ts'];
+    writeFile(root, ['src', 'a.ts'], 'export const replacementReadFails = 9;');
+    const changed = scanProject(root, 512);
+    const read = fs.readFileSync;
+    const fault = mock.method(fs, 'readFileSync', ((...args: any[]) => {
+      if (String(args[0]) === join(root, 'src', 'a.ts')) throw Object.assign(new Error('synthetic EACCES'), { code: 'EACCES' });
+      return Reflect.apply(read, fs, args);
+    }) as typeof fs.readFileSync);
+    try {
+      mergeIntoState(state, root, changed.entries, false);
+      assert.deepEqual(state.files['src/a.ts'], original);
+      assert.ok(state.postings['alphafind']);
+      assert.equal(state.truncated, true);
+    } finally { fault.mock.restore(); }
+  });
   it('keeps unseen documents on a partial scan but removes real deletions after a complete scan', () => {
     const root = makeProject();
     const state = createEmptyState(root);

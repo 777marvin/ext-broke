@@ -22,7 +22,8 @@
 
 import { chmodSync, closeSync, copyFileSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { acquireFileLock, releaseUpdateLock } from './update-lock';
 
 /** Where the extension code is installed (the swappable directory). */
@@ -44,6 +45,32 @@ export function runtimeDir(): string {
 export interface MigrationOptions {
   copyFile?: (from: string, to: string) => void;
   onIssue?: (message: string) => void;
+}
+
+/** Validate before even creating a lock, removing a marker or making parents. */
+function validateMigrationRoots(legacy: string, target: string): void {
+  let current = target;
+  for (;;) {
+    try {
+      const entry = lstatSync(current);
+      if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`destination is linked or not a directory: ${current}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const parent = dirname(current);
+    if (current === parent) break;
+    current = parent;
+  }
+  current = target;
+  const missing: string[] = [];
+  while (!existsSync(current)) { missing.unshift(basename(current)); current = dirname(current); }
+  const canonicalTarget = resolve(realpathSync(current), ...missing);
+  const canonicalSource = realpathSync(legacy);
+  const within = (base: string, path: string) => {
+    const rel = relative(base, path);
+    return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`));
+  };
+  if (within(canonicalSource, canonicalTarget) || within(canonicalTarget, canonicalSource)) throw new Error('legacy and destination roots overlap; originals retained');
 }
 
 function fileDigest(path: string): string {
@@ -115,6 +142,7 @@ export function migrateLegacyRuntimeData(legacyDir: string = INSTALL_DIR, target
   let claim;
   let staging: string | undefined;
   try {
+    validateMigrationRoots(legacyDir, target);
     mkdirSync(dirname(target), { recursive: true });
     const lock = acquireFileLock(`${target}.migration.lock`);
     if (!lock.ok) { options.onIssue?.(lock.reason); return false; }

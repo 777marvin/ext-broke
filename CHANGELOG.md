@@ -15,6 +15,10 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Retain old index documents when replacement reads fail; reject linked or
+  overlapping migration roots before mutations; make undo subtract exactly the
+  credited flush estimate. Flush requires its explicitly enabled undo storage.
+
 - Share synchronous configuration-draft merging and Custom-mode detection
   between the badge and settings templates; host loading, UI validation and
   interaction tests use the same template composition (AUD-09).
