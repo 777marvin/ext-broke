@@ -15,6 +15,10 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Extend unchanged coverage thresholds to the extracted modules and add a
+  focused Windows filesystem/process CI job. Record local audit verification
+  and remaining release checks in `docs/audit-remediation.md`.
+
 - Retain old index documents when replacement reads fail; reject linked or
   overlapping migration roots before mutations; make undo subtract exactly the
   credited flush estimate. Flush requires its explicitly enabled undo storage.

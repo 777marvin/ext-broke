@@ -50,6 +50,18 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  windows-regressions:
+    name: Windows filesystem and process regressions
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test tests/update.test.ts tests/update-lock.test.ts tests/update-lifecycle.test.ts tests/paths.test.ts tests/indexer.test.ts tests/flush.test.ts
+
   coverage:
     name: Coverage gate (branch thresholds, critical modules)
     runs-on: ubuntu-latest

@@ -1581,11 +1581,10 @@ export default class Broke implements Extension {
 
   /**
    * The ONLY destructive operation in broke. Order of guarantees:
-   * 1. plan + confirm gate, 2. write snapshot AND (when flush.undo is on)
-   * the undo file - abort on any IO failure or an oversized undo file BEFORE
-   * touching the conversation, 3. one loadContextMessages() replacement to
-   * task brief + [broke-state]. removeMessagesUpTo cannot keep the brief
-   * (inclusive-of-self), hence the documented loadContext alternative.
+   * 1. validate coverage + confirm, 2. require undo and persist the snapshot
+   * and full history before replacement, 3. recheck context, then replace
+   * only the covered region with [broke-state], preserving its prefix and tail.
+   * Any failed persistence or context check aborts before touching history.
    */
   private async handleFlushCommand(context: ExtensionContext, cmd: BrokeCommand): Promise<string> {
     if (cmd.kind !== 'flush') return '';
