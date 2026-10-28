@@ -24,7 +24,7 @@ The three levels are strictly additive; `truncate` includes `structural`,
 | Debug-heavy work: compiler/test loops | `errors on` (default); raise `errors lines` to 12-15 if summaries feel starved | Error dumps get replaced by their diagnostic essence *even below the global threshold* (`errors.minChars` is its own gate) |
 | Medium sessions that cross the threshold regularly | `level truncate` + `measure on`; consider a lower `maxContextChars` after reviewing results | Truncation shortens old tool outputs but can remove details needed later |
 | Long or milestone-heavy tasks | Consider `level summarize` with local Ollama; inspect the summary before relying on it | A synthetic benchmark with a stub summary removed ~90% of its input; local latency and quality vary |
-| Very long scrollback you want slimmed for good | Snapshot first, then `/broke flush` between milestones | Flush is the one destructive operation - manual, confirmed, and reversible through the history file |
+| Very long scrollback you want slimmed for good | Prepare current coverage with `/broke summarize now`, then `/broke flush` between milestones | Flush replaces only the summarized region, keeps recent turns, and requires enabled undo storage; it makes no model call |
 | Read-heavy agents exploring a big codebase | `/broke slice on`, clear the focus afterwards | Interface views instead of full bodies; the focus file (last edited) always comes back complete |
 | Finding where something lives without filling the context | Leave `search.enabled` on (default); combine with `/broke slice on` | The agent gets a `broke-search` tool and can pull path:line snippets under a char budget instead of bulk-reading files; sliced views keep the reads it still makes cheap |
 

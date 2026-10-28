@@ -220,10 +220,10 @@ const SearchSchema = z.object({
    */
   includeGitIgnored: z.boolean().default(false),
   /**
-   * Wall-clock budget for ONE index scan pass, in ms (BRK-013, external
-   * review M3). The scan is synchronous and runs on the host event loop
-   * (in the broke-search tool path and in the post-commit refresh), so a
-   * very large repository could otherwise block the UI for seconds. Hitting
+   * Shared Git-discovery, scan and merge budget in ms. Work is synchronous
+   * on the host event loop; a running operation and final persistence can
+   * exceed the deadline. Search, manual rebuild and commit refresh share this
+   * limit to reduce event-loop blocking on large repositories. Hitting
    * the budget marks the index `truncated`, which the search footer reports
    * honestly - the remaining files are picked up by a later refresh.
    *

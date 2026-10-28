@@ -5,7 +5,7 @@
  * of several findings (BRK-004, -006, -010, -011 preserve-list coupling).
  *
  * This module owns the ONE path decision: a stable, versioned runtime root
- * that sits OUTSIDE the swap path, plus a one-time best-effort migration
+ * that sits OUTSIDE the swap path, plus a resumable, verified migration
  * that moves legacy artifacts out of the installation tree into the new
  * layout. Every other module derives its default paths from here; the
  * BROKE_* env overrides keep working on top (tests + host isolation).
@@ -29,7 +29,7 @@ import { acquireFileLock, releaseUpdateLock } from './update-lock';
 /** Where the extension code is installed (the swappable directory). */
 const INSTALL_DIR = __dirname;
 
-/** Marker that the one-time legacy migration already ran for this root. */
+/** Completion marker, rechecked whenever legacy artifacts still exist. */
 const MIGRATION_MARKER = '.migrated-v1';
 
 /**
@@ -131,11 +131,11 @@ function migrateArtifact(from: string, to: string, staging: string, options: Mig
 }
 
 /**
- * One-time migration of runtime data from the installation tree into the
- * versioned runtime root. Best-effort and idempotent (marker file):
- * anything that cannot be moved stays in place. The marker is written
- * ONLY when all migrations succeeded, ensuring failed directories or files
- * can be retried on subsequent starts. Injectable paths for hermetic tests.
+ * Resumable migration of runtime data into the versioned runtime root.
+ * Verified staged copies never overwrite conflicting targets; unresolved
+ * sources stay in place. The completion marker is written only on success,
+ * so failed files or directories can be retried on subsequent starts.
+ * Paths and copy operations are injectable for hermetic tests.
  */
 export function migrateLegacyRuntimeData(legacyDir: string = INSTALL_DIR, targetDir: string = runtimeDir(), options: MigrationOptions = {}): boolean {
   const target = resolve(targetDir);

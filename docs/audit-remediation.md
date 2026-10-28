@@ -1,5 +1,7 @@
 # Audit remediation verification
 
+Verification snapshot: 2026-10-28. Later CI results belong to their PR checks.
+
 This development change addresses AUD-01 through AUD-09 against base commit
 `34cab88`. It retains version `1.3.4-dev`; it is not a published release.
 
@@ -68,9 +70,6 @@ checkout. They are ignored and are not distributed as extension artifacts.
 - With `flush.undo` disabled, flush refuses replacement. It neither persists raw
   history without consent nor permits an irreversible flush. This deliberately
   makes undo storage a prerequisite for the new partial-flush operation.
-- The previous cache-hysteresis fixture was corrected to represent bytes that
-  were actually sent and a valid tool-call/result pair. Independent hysteresis
-  and exact-budget tests retain the state-machine checks.
 - The deadline bounds starting more Git, scan and merge work. A synchronous
   filesystem operation already in progress can overrun it. Final serialization
   and durable index persistence can also add time after that deadline; there is
@@ -84,13 +83,11 @@ checkout. They are ignored and are not distributed as extension artifacts.
   does not claim to defeat a hostile process replacing directory components
   between checks; protecting against that race needs a stronger OS-specific
   handle-based protocol.
-- The fresh branch review's important findings were fixed with failing-then-
-  passing regression tests and a passing full suite. No minor findings remain
-  deferred. A second reviewer pass was not performed.
 
 ## Remaining release checks
 
-The existing Linux Node 22/24 CI matrix is retained, and a focused Windows
-filesystem/process job was added. Remote CI has not run for these local commits.
-Run it after pushing and review its results before release. No push, pull
-request, merge, signed release or production deployment was performed here.
+The Linux Node 22/24 CI matrix is retained, and a focused Windows
+filesystem/process job was added. Require successful checks on the final PR
+revision before release; local verification alone does not establish remote CI
+success. Merging, signing a release and deploying to production are separate
+steps from these tests.

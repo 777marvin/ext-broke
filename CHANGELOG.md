@@ -15,6 +15,10 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Align the public README, tuning and token-saving guides with verified partial
+  flush, required undo storage, shared index deadlines and candidate-based cache
+  escape. Refresh migration, updater, SDK and contributor verification notes.
+
 - Extend unchanged coverage thresholds to the extracted modules and add a
   focused Windows filesystem/process CI job. Record local audit verification
   and remaining release checks in `docs/audit-remediation.md`.
