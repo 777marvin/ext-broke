@@ -887,6 +887,19 @@ function regionContentFingerprint(region: ContextMessage[], throughIndex: number
   return h.digest('hex');
 }
 
+/** Prove which current, pair-aligned region an existing summary represents. */
+export function cachedSummaryCoverage(messages: ContextMessage[], cached: CachedSummary | undefined, config: Config): { start: number; end: number } | undefined {
+  if (!cached || !assistantText(cached.message).trim() || cached.fingerprint !== summarizeConfigFingerprint(config)) return undefined;
+  const { start, end } = compressibleRange(messages, config.protectedTurns);
+  const region = messages.slice(start, end);
+  const through = region.findIndex((message) => message.id === cached.throughId);
+  if (through < 0 || cached.contentFingerprint !== regionContentFingerprint(region, through)) return undefined;
+  const coveredEnd = start + through + 1;
+  const paired = clampRegionToPairs(messages, start, coveredEnd);
+  if (paired.start !== start || paired.end !== coveredEnd) return undefined;
+  return { start, end: coveredEnd };
+}
+
 /**
  * Chunk the flattened region for hierarchical summarization (review F-07).
  * Messages stay whole within a chunk wherever possible. A single message
@@ -1431,10 +1444,9 @@ export async function compressMessages(
 
   let didEscape = false;
   // Escape hatch (option B):
-  // When cache mode is active and the cache-preserving candidate output is over budget
-  // (or if input was over budget and candidate could not reduce below budget):
+  // Only the remaining size can justify sacrificing the stable sent prefix.
   if (isCacheMode && gate.escape) {
-    const candidateOver = runResult.report.totalCharsAfter > config.maxContextChars || totalCharsBefore > config.maxContextChars;
+    const candidateOver = runResult.report.totalCharsAfter > config.maxContextChars;
     const canEscape = (config.cache?.escapeHatch ?? true) && !gate.escape.locked;
 
     if (candidateOver && canEscape) {

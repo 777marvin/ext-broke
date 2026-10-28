@@ -19,6 +19,9 @@
 ## Current Focus
 
 **Active development (Unreleased):**
+- Audit hardening: incomplete-index preservation, redirect refusal, process-safe
+  update ownership, verified partial flush, resumable migration and shared index
+  deadlines; see [verification and release boundaries](audit-remediation.md).
 - F6/F7 completion: live status dot, three-tier savings, guided setup
 - S8 (savemytoken migration): brevity directive + per-tool truncation
 

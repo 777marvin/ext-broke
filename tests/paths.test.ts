@@ -6,10 +6,11 @@
  */
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { migrateLegacyRuntimeData, runtimeDir } from '../paths';
+import { acquireFileLock, releaseUpdateLock } from '../update-lock';
 
 const savedDataDir = process.env.BROKE_DATA_DIR;
 const tmpRoots: string[] = [];
@@ -46,6 +47,97 @@ describe('runtimeDir (BRK-016)', () => {
 });
 
 describe('migrateLegacyRuntimeData (BRK-016)', () => {
+  for (const placement of ['same', 'nested', 'ancestor', 'linked-root', 'linked-parent']) {
+    it(`review regression: refuses ${placement} migration roots without removing originals`, () => {
+      const root = mkdtempSync(join(tmpdir(), 'broke-overlap-'));
+      tmpRoots.push(root);
+      const legacy = join(root, 'legacy'); mkdirSync(legacy);
+      writeFileSync(join(legacy, 'config.json'), 'the only original');
+      let target = placement === 'same' ? legacy : placement === 'nested' ? join(legacy, 'data') : root;
+      if (placement.startsWith('linked')) {
+        const outside = join(root, 'outside'); mkdirSync(outside);
+        const link = join(root, 'link');
+        try { symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir'); }
+        catch { return; }
+        target = placement === 'linked-root' ? link : join(link, 'nested');
+      }
+      assert.equal(migrateLegacyRuntimeData(legacy, target), false);
+      assert.equal(readFileSync(join(legacy, 'config.json'), 'utf-8'), 'the only original');
+    });
+  }
+  it('AUD-05: refuses another migration owner without moving legacy files', () => {
+    const legacy = mkdtempSync(join(tmpdir(), 'broke-owned-'));
+    const target = mkdtempSync(join(tmpdir(), 'broke-owned-target-'));
+    tmpRoots.push(legacy, target);
+    writeFileSync(join(legacy, 'config.json'), 'source');
+    const owner = acquireFileLock(`${target}.migration.lock`);
+    assert.ok(owner.ok);
+    try {
+      assert.equal(migrateLegacyRuntimeData(legacy, target), false);
+      assert.equal(readFileSync(join(legacy, 'config.json'), 'utf-8'), 'source');
+    } finally { releaseUpdateLock(owner.claim); }
+  });
+
+  it('AUD-05: never publishes ledger data through a destination directory link', () => {
+    const legacy = mkdtempSync(join(tmpdir(), 'broke-link-'));
+    const target = mkdtempSync(join(tmpdir(), 'broke-link-target-'));
+    const outside = mkdtempSync(join(tmpdir(), 'broke-link-outside-'));
+    tmpRoots.push(legacy, target, outside);
+    writeFileSync(join(legacy, 'stats.jsonl'), 'synthetic private ledger');
+    try { symlinkSync(outside, join(target, 'ledgers'), process.platform === 'win32' ? 'junction' : 'dir'); }
+    catch { return; }
+    assert.equal(migrateLegacyRuntimeData(legacy, target), false);
+    assert.equal(existsSync(join(outside, 'stats.jsonl')), false);
+    assert.equal(existsSync(join(legacy, 'stats.jsonl')), true);
+  });
+  it('AUD-05: fills missing descendants after a historical partial copy even with an old marker', () => {
+    const legacy = mkdtempSync(join(tmpdir(), 'broke-partial-'));
+    const target = mkdtempSync(join(tmpdir(), 'broke-partial-target-'));
+    tmpRoots.push(legacy, target);
+    mkdirSync(join(legacy, 'snapshots'));
+    mkdirSync(join(target, 'snapshots'));
+    writeFileSync(join(legacy, 'snapshots', 'a.json'), 'first');
+    writeFileSync(join(legacy, 'snapshots', 'b.json'), 'second');
+    writeFileSync(join(target, 'snapshots', 'a.json'), 'first');
+    writeFileSync(join(target, '.migrated-v1'), 'premature historical marker');
+    assert.equal(migrateLegacyRuntimeData(legacy, target), true);
+    assert.equal(readFileSync(join(target, 'snapshots', 'b.json'), 'utf-8'), 'second');
+    assert.equal(existsSync(join(legacy, 'snapshots')), false);
+  });
+
+  for (const corrupt of [false, true]) {
+    it(`AUD-05: ${corrupt ? 'corrupt' : 'interrupted'} staging never becomes final and a retry succeeds`, () => {
+      const legacy = mkdtempSync(join(tmpdir(), 'broke-copy-fault-'));
+      const target = mkdtempSync(join(tmpdir(), 'broke-copy-target-'));
+      tmpRoots.push(legacy, target);
+      writeFileSync(join(legacy, 'config.json'), '{"complete":"original"}');
+      const migrate = migrateLegacyRuntimeData as (from: string, to: string, options?: { copyFile: (from: string, to: string) => void }) => boolean;
+      assert.equal(migrate(legacy, target, { copyFile: (_from, to) => {
+        writeFileSync(to, 'partial');
+        if (!corrupt) throw new Error('injected copy failure');
+      } }), false);
+      assert.equal(existsSync(join(target, 'config.json')), false);
+      assert.equal(existsSync(join(target, '.migrated-v1')), false);
+      assert.equal(readFileSync(join(legacy, 'config.json'), 'utf-8'), '{"complete":"original"}');
+      assert.equal(migrateLegacyRuntimeData(legacy, target), true);
+      assert.equal(readFileSync(join(target, 'config.json'), 'utf-8'), '{"complete":"original"}');
+    });
+  }
+
+  it('AUD-05: preserves conflicting files, complements missing files and reports incomplete migration', () => {
+    const legacy = mkdtempSync(join(tmpdir(), 'broke-conflict-'));
+    const target = mkdtempSync(join(tmpdir(), 'broke-conflict-target-'));
+    tmpRoots.push(legacy, target);
+    mkdirSync(join(legacy, 'snapshots')); mkdirSync(join(target, 'snapshots'));
+    writeFileSync(join(legacy, 'snapshots', 'shared.json'), 'legacy');
+    writeFileSync(join(target, 'snapshots', 'shared.json'), 'new');
+    writeFileSync(join(legacy, 'snapshots', 'missing.json'), 'missing');
+    assert.equal(migrateLegacyRuntimeData(legacy, target), false);
+    assert.equal(readFileSync(join(target, 'snapshots', 'shared.json'), 'utf-8'), 'new');
+    assert.equal(readFileSync(join(legacy, 'snapshots', 'shared.json'), 'utf-8'), 'legacy');
+    assert.equal(readFileSync(join(target, 'snapshots', 'missing.json'), 'utf-8'), 'missing');
+    assert.equal(existsSync(join(target, '.migrated-v1')), false);
+  });
   it('moves legacy artifacts from the install dir into the new layout and is idempotent', () => {
     const legacy = mkdtempSync(join(tmpdir(), 'broke-legacy-'));
     const target = mkdtempSync(join(tmpdir(), 'broke-target-'));

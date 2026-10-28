@@ -43,7 +43,7 @@ async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit,
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, { ...init, signal: controller.signal });
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, { ...init, redirect: 'error', signal: controller.signal });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`HTTP ${res.status}${text ? `: ${text.slice(0, 300)}` : ''}`);

@@ -1,4 +1,4 @@
-import { readFileSync, statSync, watch, type FSWatcher } from 'node:fs';
+import { readFileSync, watch, type FSWatcher } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type {
   AfterCommitEvent,
@@ -21,6 +21,7 @@ import { applyBrokeCommand, coerceConfigValue, formatEstimate, formatMeasure, fo
 import { applyPreset, type Mode } from './presets';
 import {
   ACTIVE_TURN_TAIL,
+  cachedSummaryCoverage,
   compressibleRange,
   compressMessages,
   createCompressState,
@@ -40,21 +41,7 @@ import { ANTHROPIC_BREAKPOINT, anchorBreakpoint } from './cachecontrol';
 import { DEFAULT_DIFF_BUDGET_CHARS, MAX_DIFF_FILES_READ, formatDiffDigest, type DiffFileInput } from './diff';
 import { migrateLegacyRuntimeData } from './paths';
 import { clearArchive, extractErrorSummary, formatErrorSummary, isCommandTool, saveErrorOutput } from './errors';
-import {
-  createEmptyState,
-  ensureFresh,
-  estimateBulkReadAvoided,
-  formatSearchFooter,
-  indexDirFor,
-  loadIndex,
-  mergeIntoState,
-  projectHash,
-  resolveSearchOptions,
-  runSearch,
-  saveIndex,
-  scanProject,
-  type IndexState,
-} from './indexer';
+import { IndexCoordinator } from './index-coordinator';
 import { isPlaintextRemoteUrl, isRemoteOllamaHost, ollamaGenerate, ollamaStatus, type OllamaStatus } from './local';
 import { extractOutputText } from './output';
 import { formatUsd, priceLabel, resolveTaskModelPrice, savedCostUsd, type TaskModelPrice } from './pricing';
@@ -104,14 +91,16 @@ import {
   type LastCallUsage,
 } from './tokens';
 import { boundedMapSet } from './compress';
-import { runUpdate } from './update';
+import { runUpdateWithLifecycle } from './update-lifecycle';
+import { validateContext } from './validate';
 import { z } from 'zod';
+import { composeUiTemplate } from './scripts/ui-template-source.cjs';
 
 // Load the JSX templates once at module level (official template pattern).
 // A missing template must not prevent the extension from loading at all.
 function loadTemplate(path: string): string {
   try {
-    return readFileSync(join(__dirname, path), 'utf-8');
+    return composeUiTemplate(readFileSync(join(__dirname, path), 'utf-8'));
   } catch {
     return '';
   }
@@ -321,19 +310,7 @@ export default class Broke implements Extension {
   /** Review R12: dynamic tool names must not grow state unboundedly. */
   private static readonly MAX_UNKNOWN_READ_TOOLS = 1000;
   private static readonly UPDATED_FILES_TTL_MS = 30_000;
-  /**
-   * F4 state: one keyword index per open project (hash-keyed, bounded like
-   * every other map here). `at` also throttles the commit-signal refresh -
-   * a rebuild storm must never follow a rapid commit series.
-   */
-  private readonly indexByProject = new Map<string, { state: IndexState; at: number }>();
-  private static readonly INDEX_REFRESH_TTL_MS = 60_000;
-  /**
-   * Chars runSearch keeps free for the footer appended below (BRK-017):
-   * hits + separators + footer + truncation note must stay inside
-   * search.maxChars, so the budget is enforced as maxChars minus this reserve.
-   */
-  private static readonly SEARCH_FOOTER_RESERVE_CHARS = 256;
+  private readonly indexes = new IndexCoordinator();
 
   onLoad(context: ExtensionContext): void {
     this.context = context;
@@ -341,7 +318,7 @@ export default class Broke implements Extension {
     // out of the installation tree into the versioned runtime root (once,
     // best-effort, marker-guarded).
     try {
-      migrateLegacyRuntimeData();
+      migrateLegacyRuntimeData(undefined, undefined, { onIssue: (message) => context.log(`Broke migration: ${message}`, 'warn') });
     } catch {
       // never block loading - the modules fall back to defaults
     }
@@ -1376,28 +1353,11 @@ export default class Broke implements Extension {
         return log(result.lines.join('\n'));
       }
       case 'update': {
-        // Self-update from GitHub releases. The hooks free the config
-        // watcher's directory handle for the folder swap and reopen it
-        // afterwards; progress goes to the extension log, not the chat.
-        // BRK-006: onAfterSwap only fires on SUCCESS - a failed update
-        // used to leave the watcher closed forever. Track the close and
-        // always restore afterwards.
-        let watcherClosedByUpdate = false;
-        const result = await runUpdate({ mode: cmd.mode, tag: cmd.tag }, {
-          onBeforeSwap: () => {
-            ext.closeConfigWatcher();
-            watcherClosedByUpdate = true;
-          },
-          onAfterSwap: () => {
-            ext.startConfigWatcher();
-            watcherClosedByUpdate = false;
-          },
+        const result = await runUpdateWithLifecycle({ mode: cmd.mode, tag: cmd.tag }, {
+          closeWatcher: () => ext.closeConfigWatcher(),
+          startWatcher: () => ext.startConfigWatcher(),
           progress: (line) => context.log(line, 'info'),
         });
-        if (watcherClosedByUpdate) {
-          ext.startConfigWatcher();
-          context.log('broke: config watcher restored after failed update', 'info');
-        }
         return log(result.message);
       }
       case 'errors-clear':
@@ -1531,123 +1491,26 @@ export default class Broke implements Extension {
     return context?.getProjectDir?.() || this.context?.getProjectDir?.() || '';
   }
 
-  /** Tool entry point: freshness sweep + budgeted search, never throwing. */
   private searchViaTool(input: { query: string; k?: number; files?: string[] }, context?: ExtensionContext): string {
-    const config = getConfig();
-    if (!config.search.enabled) return 'broke-search is disabled (/broke help for config paths)';
-    const root = this.rootFor(context);
-    if (!root) return 'broke-search: no open project - indexing is project-scoped';
     try {
-      const fresh = ensureFresh(root, {
-        maxFileKB: config.search.maxFileKB,
-        includeGitIgnored: config.search.includeGitIgnored,
-        ttlMs: Broke.INDEX_REFRESH_TTL_MS,
-        deadlineMs: config.search.scanBudgetMs,
-      });
-      boundedMapSet(this.indexByProject, projectHash(root), { state: fresh.state, at: Date.now() });
-      const resolved = resolveSearchOptions(config.search);
-      // BRK-017: ONE effective-options object feeds runSearch AND the footer -
-      // a tool-input k override used to be applied to the search but the
-      // footer still advertised the configured default.
-      const effective = { ...resolved.options, k: input.k ?? resolved.options.k, footerReserve: Broke.SEARCH_FOOTER_RESERVE_CHARS };
-      const result = runSearch(fresh.state, root, input.query, effective, input.files);
-      // "scanned" age = the last freshness check (BRK-017), falling back to
-      // builtAt for indexes persisted before scannedAt existed.
-      const stampMs = Date.parse(fresh.state.scannedAt || fresh.state.builtAt);
-      const ageMs = Number.isFinite(stampMs) ? Math.max(0, Date.now() - stampMs) : 0;
-      const footer =
-        formatSearchFooter(result.hits.length, Object.keys(fresh.state.files).length, effective, ageMs) +
-        (result.truncated ? ' | INDEX TRUNCATED at cap' : '');
-      if (result.hits.length === 0) return `no matches for "${input.query}"\n${footer}`;
-      // Counterfactual estimate only (E5 honesty): never shown to the agent
-      // and never added to savedChars - /broke estimate + badge tooltip use
-      // it with an explicit "counterfactual" label. Files that changed since
-      // indexing are skipped by the estimator itself.
+      const result = this.indexes.search(this.rootFor(context), getConfig().search, input);
       const taskId = context?.getTaskContext?.()?.data.id ?? this.context?.getTaskContext?.()?.data.id;
-      if (taskId) {
-        const avoided = estimateBulkReadAvoided(result.hits, fresh.state.files);
-        if (avoided > 0) this.bumpEstimate(taskId, 'search', avoided);
-      }
-      return `${result.hits.map((h) => h.text).join('\n\n')}\n\n${footer}`;
-    } catch (err) {
-      return `broke-search failed - ${err instanceof Error ? err.message : String(err)} - the agent loop was not affected`;
-    }
+      if (taskId && result.avoided > 0) this.bumpEstimate(taskId, 'search', result.avoided);
+      return result.text;
+    } catch (error) { return `broke-search failed - ${error instanceof Error ? error.message : String(error)} - the agent loop was not affected`; }
   }
 
-  /** /broke index|index rebuild: full re-index from scratch, persisted atomically. */
   private rebuildProjectIndex(context?: ExtensionContext): string {
-    const config = getConfig();
-    if (!config.search.enabled) return 'broke: search is disabled - nothing to build';
-    const root = this.rootFor(context);
-    if (!root) return 'broke: no open project - indexing is project-scoped';
-    try {
-      const scan = scanProject(root, config.search.maxFileKB);
-      const state = createEmptyState(root);
-      const delta = mergeIntoState(state, root, scan.entries, scan.truncated);
-      // BRK-017: a manual rebuild IS a completed freshness check over fresh
-      // content - stamp both times or the index reports an unknown/ancient
-      // age and every subsequent TTL window starts expired.
-      state.scannedAt = new Date().toISOString();
-      state.builtAt = state.scannedAt;
-      saveIndex(indexDirFor(root), state);
-      boundedMapSet(this.indexByProject, projectHash(root), { state, at: Date.now() });
-      return (
-        `broke: index rebuilt - ${Object.keys(state.files).length.toLocaleString('en-US')} file(s), ` +
-        `${Object.keys(state.postings).length.toLocaleString('en-US')} term(s), ` +
-        `(+${delta.added} new/0 unchanged/-${delta.removed})` +
-        (scan.truncated ? ' [TRUNCATED: entries exceed the hard cap]' : '')
-      );
-    } catch (err) {
-      return `broke: index rebuild failed - ${err instanceof Error ? err.message : String(err)}`;
-    }
+    return this.indexes.rebuild(this.rootFor(context), getConfig().search);
   }
 
-  /** /broke index status: honest numbers without forcing a rescan. */
   private indexStatusText(context?: ExtensionContext): string {
-    const config = getConfig();
-    if (!config.search.enabled) return 'broke: local search disabled (search.enabled=false)';
-    const root = this.rootFor(context);
-    if (!root) return 'broke: no open project - nothing indexed';
-    let state: IndexState | null | undefined = this.indexByProject.get(projectHash(root))?.state;
-    if (!state) {
-      try {
-        state = loadIndex(indexDirFor(root));
-      } catch {
-        state = null;
-      }
-    }
-    if (!state) return 'broke: no index yet on disk - run "/broke index" to build one';
-    let bytes = 0;
-    try {
-      bytes = statSync(join(indexDirFor(root), 'index.json')).size;
-    } catch {
-      bytes = 0;
-    }
-    const builtMs = Date.parse(state.builtAt);
-    const age = Number.isFinite(builtMs) && builtMs > 0 ? Math.max(1, Math.round((Date.now() - builtMs) / 1000)) : null;
-    return [
-      `broke index status: backend ${config.search.backend} | top-k ${config.search.maxResults} | budget ${config.search.maxChars.toLocaleString('en-US')} chars/context ±${config.search.contextLines} line(s)`,
-      `files: ${Object.keys(state.files).length.toLocaleString('en-US')} | terms: ${Object.keys(state.postings).length.toLocaleString('en-US')} | index.json: ${(bytes / 1024).toFixed(1)} KB`,
-      `built: ${state.builtAt || '(unknown)'}${age !== null ? ` (${age}s ago)` : ''}${state.truncated ? ' | TRUNCATED' : ''}`,
-      `location: <extension>/index/${projectHash(root)}`,
-    ].join('\n');
+    return this.indexes.status(this.rootFor(context), getConfig().search);
   }
 
-  /** Fire-and-forget freshness sweep off the commit signal (throttled by TTL). */
   private refreshIndexFromSignal(context: ExtensionContext): void {
-    try {
-      const config = getConfig();
-      if (!config.enabled || !config.search.enabled) return;
-      const root = context.getProjectDir?.() ?? '';
-      if (!root) return;
-      const hash = projectHash(root);
-      const cached = this.indexByProject.get(hash);
-      if (cached && Date.now() - cached.at < Broke.INDEX_REFRESH_TTL_MS) return;
-      const fresh = ensureFresh(root, { maxFileKB: config.search.maxFileKB, includeGitIgnored: config.search.includeGitIgnored, deadlineMs: config.search.scanBudgetMs });
-      boundedMapSet(this.indexByProject, hash, { state: fresh.state, at: Date.now() });
-    } catch {
-      // best effort - never propagate into the commit loop
-    }
+    const config = getConfig();
+    if (config.enabled) this.indexes.refresh(context.getProjectDir?.() ?? '', config.search);
   }
 
   // -------------------------------------------------------------------------
@@ -1718,11 +1581,10 @@ export default class Broke implements Extension {
 
   /**
    * The ONLY destructive operation in broke. Order of guarantees:
-   * 1. plan + confirm gate, 2. write snapshot AND (when flush.undo is on)
-   * the undo file - abort on any IO failure or an oversized undo file BEFORE
-   * touching the conversation, 3. one loadContextMessages() replacement to
-   * task brief + [broke-state]. removeMessagesUpTo cannot keep the brief
-   * (inclusive-of-self), hence the documented loadContext alternative.
+   * 1. validate coverage + confirm, 2. require undo and persist the snapshot
+   * and full history before replacement, 3. recheck context, then replace
+   * only the covered region with [broke-state], preserving its prefix and tail.
+   * Any failed persistence or context check aborts before touching history.
    */
   private async handleFlushCommand(context: ExtensionContext, cmd: BrokeCommand): Promise<string> {
     if (cmd.kind !== 'flush') return '';
@@ -1748,10 +1610,13 @@ export default class Broke implements Extension {
           return 'broke: this AiderDesk build does not expose loadContextMessages - undo unavailable (feature-detect)';
         }
         await task.loadContextMessages(history as ContextMessage[]);
+        this.state.cachedSummaryByTask.delete(taskId);
+        clearTask(taskId);
+        this.escapeByTask.delete(taskId);
         // Undo takes the flush estimate back - exactly what the flushed
         // snapshot recorded, so undoing never leaves inflated numbers.
         if (record.reduction) {
-          this.bumpEstimate(taskId, 'flush', -(record.reduction.regionChars - record.reduction.stateMessageChars));
+          this.bumpEstimate(taskId, 'flush', -Math.max(0, record.reduction.regionChars - record.reduction.stateMessageChars));
         }
         return `broke: restored ${history.length} message(s) from snapshot #${cmd.undoIndex}`;
       } catch (err) {
@@ -1764,29 +1629,38 @@ export default class Broke implements Extension {
       if (!messages || messages.length === 0) {
         return 'broke: this AiderDesk build does not expose getContextMessages - flush unavailable (feature-detect)';
       }
-      const plan = buildFlushPlan(messages);
-      if (!plan.ok) return `broke: nothing flushed - ${plan.reason}`;
+      if (!config.flush.undo) return 'broke: flush requires undo history; enable flush.undo before replacing messages';
+      // Capture before any await: host arrays can also be edited in place.
+      const observedContext = JSON.stringify(messages);
+      const cached = this.state.cachedSummaryByTask.get(taskId);
+      const coverage = cachedSummaryCoverage(messages, cached, config);
+      const plan = buildFlushPlan(messages, coverage);
+      if (!plan.ok || !coverage) return `broke: nothing flushed - ${plan.reason}`;
+      if (typeof task.loadContextMessages !== 'function') return 'broke: flush unavailable - host cannot replace context';
       if (config.flush.confirm && !cmd.yes) {
         if (typeof task.askQuestion !== 'function') {
           return `broke: host confirmation is unavailable here - rerun with explicit "/broke flush --yes" to remove ${plan.removedCount} message(s)`;
         }
         const answer = await task.askQuestion(
-          `broke flush removes ${plan.removedCount} message(s) between the task brief and now and replaces them with ONE [broke-state] summary. With flush.undo on (default), a history file enables /broke flush --undo. Proceed?`,
+          `broke flush removes ${plan.removedCount} older message(s) covered by the cached summary. Recent messages stay unchanged. With flush.undo on, the original history can be restored. Proceed?`,
           { answers: [{ text: 'Flush', shortkey: 'y' }, { text: 'Cancel', shortkey: 'n' }], defaultAnswer: 'n' },
         );
         if (!/^y(es)?$/i.test(String(answer ?? '').trim())) return 'broke: flush cancelled - nothing changed';
+      }
+      if (JSON.stringify(await task.getContextMessages()) !== observedContext || !cachedSummaryCoverage(messages, cached, getConfig())) {
+        return 'broke: flush cancelled - context or summary settings changed; retry with a current summary';
       }
       let persistedName = '';
       let stateText = '';
       let recordPath = '';
       try {
-        const cachedText = summaryTextOf(this.state.cachedSummaryByTask.get(taskId));
+        const cachedText = summaryTextOf(cached);
         const record = makeSnapshotRecord({
           taskId,
           taskName: task.data.name ?? '',
           goal: extractGoal(messages),
-          achieved: extractAchieved(messages),
-          summary: cachedText || `${plan.removedCount} message(s) were flushed right after this state was recorded`,
+          achieved: extractAchieved(messages.slice(coverage.start, coverage.end)),
+          summary: cachedText,
         });
         stateText = buildStateMessage(record);
         const persisted = persistSnapshot(record, messages, { label: 'flush', keepHistory: config.flush.undo });
@@ -1806,24 +1680,31 @@ export default class Broke implements Extension {
         return 'broke: flush stopped AFTER writing the snapshot but BEFORE removing anything - this AiderDesk build does not expose loadContextMessages (feature-detect)';
       }
       const replacement: ContextMessage[] = [
-        ...plan.headerIndexes.map((i) => messages[i]),
-        messages[plan.briefIndex],
+        ...messages.slice(0, coverage.start),
         { id: `broke-state-${Date.now()}`, role: 'user', content: stateText } as unknown as ContextMessage,
+        ...messages.slice(coverage.end),
       ];
+      if (validateContext(replacement).length > 0) return 'broke: flush cancelled - replacement would break tool-call framing';
+      if (JSON.stringify(await task.getContextMessages()) !== observedContext || !cachedSummaryCoverage(messages, cached, getConfig())) {
+        return 'broke: flush cancelled - context changed before replacement; nothing removed';
+      }
       await task.loadContextMessages(replacement);
+      this.state.cachedSummaryByTask.delete(taskId);
+      clearTask(taskId);
+      this.escapeByTask.delete(taskId);
       // Estimate bookkeeping (only AFTER the replacement succeeded): the
       // measured net reduction is the chars removed from context minus the
       // replacement [broke-state] message's own chars - both real numbers,
       // but this is a one-shot freed-bytes figure, NOT a compression pass.
       // Best effort on every line below: estimates never break a flush.
       try {
-        const regionChars = messagesChars(messages.slice(plan.briefIndex + 1));
+        const regionChars = messagesChars(messages.slice(coverage.start, coverage.end));
         writeFlushReduction(recordPath, { regionChars, stateMessageChars: stateText.length });
         this.bumpEstimate(taskId, 'flush', Math.max(0, regionChars - stateText.length));
       } catch {
         // estimates are best effort
       }
-      return `broke: flushed ${plan.removedCount} message(s) - context is now the task brief plus one [broke-state] summary (snapshot ${persistedName}). Undo with /broke flush --undo <n>.`;
+      return `broke: flushed ${plan.removedCount} message(s) into one [broke-state] summary; newer messages were preserved (snapshot ${persistedName}). Undo with /broke flush --undo <n>.`;
     } catch (err) {
       return `broke: flush failed - ${err instanceof Error ? err.message : String(err)}. If a replacement already happened, restore via /broke flush --undo.`;
     }

@@ -1,11 +1,13 @@
 # Project Overview
 
 *Snapshot: release v1.3.3 (2026-09-28), the published documentation-gate
-baseline. Development additions reviewed at 1.3.4-dev on 2026-10-22 include
+baseline. Development additions reviewed at 1.3.4-dev on 2026-10-28 include
 Unreleased AiderDesk 0.88 message-preparation support, F6's live status and
 savings breakdown, and F7.1's everyday badge view. F7.2 guided setup and
-readiness is also implemented under Unreleased, with live-host smoke and
-non-expert usability checks still open. The changelog records
+readiness is also implemented under Unreleased. Audit hardening has local
+real-host headless and browser-fixture evidence; a complete interactive host
+GUI and non-expert usability evaluation remain separate checks. See
+[audit verification](audit-remediation.md) for its scope. The changelog records
 v1.3.3 as the first published release containing the documentation-gate work
 of v1.3.1 and v1.3.2; neither of those earlier tags was published. See
 [CHANGELOG](../CHANGELOG.md) for release history and
@@ -40,7 +42,11 @@ surface.
 
 | File | Responsibility |
 |---|---|
-| `indexer.ts` | F4 local keyword index (0.10.0): identifier tokenizer, incremental mtime/size merge (bounded scan: `search.scanBudgetMs` wall-clock budget + per-merge document cap for the O(all-terms) delete path, INDEX_MAX_ENTRIES cap), BM25 ranking, live snippet windows (mergeWindows/renderSnippet), total char-budget enforcement per query (footer included, BRK-017), builtAt/scannedAt freshness split (TTL measures the last freshness CHECK), atomic index/<projectHash>/index.json persistence (unique tmp + file/parent fsync) (postings + metadata ONLY, corruption-tolerant load; persisted relPaths are confinement-validated, the project root is re-checked, projectHash is a 64-bit SHA-256 prefix with legacy-dir cleanup, F-09), dirOverride isolation for tests; never throws upward |
+| `index-coordinator.ts` | Project-index refresh, rebuild, status, search receipts and bounded project cache; host adapters retain task attribution |
+| `update-lock.ts` | Stable ownership locks with serialized acquisition, dead-owner reclamation and token-checked release; also protects legacy migration |
+| `update-lifecycle.ts` | Configuration-watcher close/reopen around updates, including failure and exception recovery |
+| `scripts/ui-template-source.cjs` | Shared template assembly for the host, validator and UI renderer; injects the synchronous draft reducer from `scripts/ui-config-helper.js` |
+| `indexer.ts` | Local keyword index: identifier tokenizer, BM25 ranking and budgeted live snippets. Git discovery, scan and merge share an absolute deadline derived from `search.scanBudgetMs`; incomplete work retains existing entries, including on manual rebuild. Atomic `index/<projectHash>/index.json` persistence stores postings and metadata with the final completeness status, not full file contents. Workspace confinement, freshness TTL and injectable clock/Git boundaries support safe incremental refresh and isolated tests. Synchronous operations and final persistence can exceed the deadline. |
 | `index.ts` | Extension entry: class Broke implements Extension, onLoad (BRK-016 one-time legacy-data migration before the first config read; BRK-029 starts the Ollama status probe in the background), onOptimizeMessages (core pipeline, shouldCompress content gate F-10, summarize auto-disable gate, reentry guard), onTransformMessages (pre-transform baseline observation, 0.88), onApplyCacheControl (frozen-prefix cache breakpoint, opt-in, Anthropic, 0.88), onToolFinished (optional tool-level rewrite + F3 test-green trigger), onAfterCommit (snapshot milestones), onTaskInitialized (activation notice), getCommands (thin wrapper over executeBrokeCommand, the single /broke command surface incl. snapshots, flush, update wiring, config-watcher close/reopen for the folder swap), executeUIExtensionAction incl. the allowlisted `runCommand` used by the badge Quick Commands, getTools (broke-search tool + throttled index refresh off commit signals), getUIComponents (badge), config API (getConfigComponent/getConfigData/saveConfigData), per-run measurement persistence in recordReport (incl. the 0.88 `anchored`/`anchorIndex`/`baselineChars` fields); on AiderDesk >= 0.80 the watcher is additionally registered via context.addDisposable() so disable/uninstall releases the directory handle |
 | `compress.ts` | Core pipeline: `compressibleRange` (region protection), `shouldCompress` content gate (F-10), `structuralPass`, `truncatePass`, `errorPass` (command tools only), `summarizePass` (rich-part skip, `maskSecrets` + disclosure telemetry + extended secret patterns F-13, hierarchical chunked summarization with 8+1 call budget F-07, content-fingerprinted summary cache F-06), `compressMessages` (with `CompressOptions` gate). Since 1.2.0 cache-friendly mode: `frozen` predicate keeps sent bytes byte-identical in passes 1-3, escape hatch with hysteresis (one deliberate rewrite per budget crossing, `escape.locked` released by an under-budget run), summarize gated on sent bytes in BOTH the generate and the cache-reuse branch (byte-stable incremental shape forced, history edits ship untouched, `frozenSkip` reports a frozen refusal instead of a silent no-op) |
 | `output.ts` | Canonical tool-output text extraction (F10): `extractOutputText` (part + event-output shapes, `eventOutput`/`serializeJson` options) and `partText`. The single place that knows output shapes, everything else goes through it |
@@ -48,14 +54,14 @@ surface.
 | `config.ts` | Zod schema (incl. the per-field bounds the settings dialog mirrors), defaults, fsynced atomic `config.json` writes, cache invalidation, corrupted-config warning; `stats.measure` and `search.scanBudgetMs` toggles/knobs |
 | `cache.ts` | Sent-ledger (cache-friendly mode 1.2.0): per-task content-hash set (SHA-256 over {role, content, toolCallId}) of bytes already sent to the model, `markSent`/`isSent`/`clearTask`, FIFO 2000 entries per task, task LRU 50 - false "sent" only costs one compression chance, false "not sent" would bust the cache; `frozenPrefixLength` (longest leading already-sent run) and `messageFingerprint` (the ledger's content key, reused to re-locate a message across an array the HOST rebuilt) serve the 0.88 frozen-prefix anchor |
 | `cachecontrol.ts` | 0.88 `onApplyCacheControl` helper: `anchorBreakpoint` adds an Anthropic `cache_control` breakpoint (`providerOptions.anthropic.cacheControl`) on a chosen message, merging into that message's existing `providerOptions` without mutating the input; the host's existing tail marker is not removed |
-| `paths.ts` | BRK-016 runtime-path decision: `runtimeDir()` = `BROKE_DATA_DIR` override, else the versioned `<extension>/../.broke-data/v1` sibling of the installation (outside the swap path); one-time marker-guarded best-effort migration of legacy artifacts (config.json, ledgers, snapshots, index, errors) with no-overwrite and EXDEV copy-then-remove fallback; injectable paths for hermetic tests |
+| `paths.ts` | Runtime paths: `BROKE_DATA_DIR` override or the versioned `<extension>/../.broke-data/v1` sibling outside the installation swap. Legacy migration uses ownership locking, uniquely staged verified copies and exclusive publication. Existing targets and conflicting sources are retained; unresolved work prevents a completion marker. Historical markers do not hide remaining source files. Linked destinations and overlapping roots are rejected before mutation; paths and copy operations are injectable for tests. |
 | `commands.ts` | `/broke` parser + all subcommands (status/why, stats with measured-reduction headline, estimate, measure, reset, selftest, update, snapshot/flush, index/search, level/threshold/limit tuning, help); help text generated from `DEFAULT_CONFIG`; `formatMeasure` (sum-over-runs framing) |
-| `update.ts` | Self-update: resolves tagged GitHub release assets, verifies an Ed25519-signed SHA256SUMS manifest before extraction, rebuilds runtime dependencies from the lockfile, and keeps runtime data outside the installation tree. Uses a rename-based swap when possible; Windows file locks can require an in-place fallback with verification and attempted rollback. A crash during that fallback remains an accepted limitation. |
+| `update.ts` | Self-update: resolves tagged GitHub release assets, verifies an Ed25519-signed SHA256SUMS manifest before extraction and rebuilds runtime dependencies from the lockfile. `update-lock.ts` retains installation ownership outside the swap tree; lifecycle observation is coordinated by `update-lifecycle.ts`. Rename-based swap is preferred; Windows locks can require an in-place fallback with verification and attempted rollback. A crash during that fallback remains an accepted limitation. |
 | `tokens.ts` | Token estimation (chars/4), measured vs. modeled-counterfactual savings categories (BRK-022), per-task stats persisted to `stats.jsonl` (rotation > 5 MB, real reset, TTL-cached loader); measurement ledger `measure.jsonl` (`RunRecord`, per-run persistence + rotation, loader, summary aggregation) |
-| `local.ts` | Ollama HTTP client (`requestJson`: fetch + body read inside ONE abort window, so stalled responses fail fast), plaintext-remote-URL detection |
+| `local.ts` | Ollama HTTP client: status and generation reject redirects; fetch and body read share one abort window. Includes plaintext-remote-URL detection. |
 | `validate.ts` | ContextValidator (external review P0): pure provider-bound invariant checks - no duplicate tool-call/result ids, no orphaned calls or results; `compressMessages` reverts to the original input when its output violates invariants that the input did not have |
 | `slice.ts` | ST-slicing (opt-in, 0.7.0): heuristic TS/Python interface-view extraction, fail-open on uncertainty: exported initializers kept whole (no unparseable stubs), public/protected fields + overload signatures kept, case-folding Windows-only, regex-escaped focus symbols (BRK-020); focus resolution + tool detection helpers |
-| `snapshot.ts` | F3 milestone snapshots: `snapshot [label]` records + onCommit/onTestPass triggers, summary-only records by default (`snapshot.keepHistory` off; the destructive flush keeps its undo file via `flush.undo`, D1), per-task 25 MB byte budget and 10 MB undo-file cap with size-aware eviction of the oldest record+history pairs (F-14), owner-only permissions (0600/0700), count-based rotation; ALL conversation-derived fields masked incl. taskName/files, collision-free hashed task dirs + unique filenames, readHistory refuses unexpected names/paths/shapes (BRK-019) |
+| `snapshot.ts` | Milestone records and explicit covered-region flush planning. Snapshots are summary-only by default (`snapshot.keepHistory` off); flush requires enabled raw-history undo storage and persists it before replacement. Per-task 25 MB storage budget, 10 MB undo-file cap, owner-only permissions and rotation bound retention. Snapshot fields are secret-masked; raw undo history preserves original bytes. `readHistory` rejects unexpected names, paths and shapes. |
 | `scripts/sign-release.mjs` | Release artifact signing: sha256sum manifest + Ed25519 signature (`BROKE_RELEASE_SIGNING_KEY`, CI-only) |
 | `.github/workflows/release.yml` | Tag-push release pipeline (BRK-007/008): full CI gate runs on the exact tagged commit (reusable workflow_call), then `release-sign-and-publish.yml` is called PINNED TO `@main` - the signing code always comes from protected main, never from the tag; ancestor check against origin/main, `environment: release` approval gate, assets built by `git archive` of the tag (the ONLY supported release path since 0.8.0) |
 | `.github/workflows/release-sign-and-publish.yml` | BRK-008 callee: signs the tag-built archive and publishes release assets + SHA256SUMS + signature; requires the `release` environment approval |
@@ -174,10 +180,10 @@ conversation-message character counts in real runs, not provider billing data.
   `npm run validate:ui` (JSX UI components, syntax + prop types; vendored
   AiderDesk validator script)
 - Conventions: Conventional Commits, Keep a Changelog, SemVer + annotated tags
-- Compatibility: the declared API line is `@aiderdesk/extensions` ^0.38.0
-  (see package.json; the SDK that ships with AiderDesk 0.88); CI runs
+- Compatibility: the declared API line is `@aiderdesk/extensions` ^0.39.0
+  (see package.json); CI runs
   typecheck + tests against both the lockfile and `@latest` so API drift is
-  caught on every push. Host floor: AiderDesk >= 0.88, the release that
+  caught on pull requests and pushes to `main`. Host floor: AiderDesk >= 0.88, the release that
   dispatches the message-preparation hooks broke relies on
   (`onTransformMessages`, `onOptimizeMessages`, `onApplyCacheControl`)
   (`docs/aiderdesk-builtin.md` carries the per-version SDK table)
@@ -197,4 +203,4 @@ conversation-message character counts in real runs, not provider billing data.
 - `docs/aiderdesk-builtin.md`: AiderDesk's built-in token savings (verified from source)
 - `docs/local-models.md`: local Ollama setup and measurement limits
 - `docs/roadmap.md`: shipped features, current focus, proposed candidates
-- `docs/roadmap.md`: shipped features, current focus, proposed candidates
+- `docs/audit-remediation.md`: dated audit verification and release boundaries

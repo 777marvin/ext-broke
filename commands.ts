@@ -55,8 +55,8 @@ Usage: /broke <subcommand>
   snapshot [label]              record a milestone snapshot of this task now
   snapshot list                 list this task's snapshots (newest first)
   snapshot show <n>             print snapshot #n from the list
-  flush [--yes]                 DANGEROUS: replace everything after the task brief with
-                                one [broke-state] summary - asks for confirmation unless --yes
+  flush [--yes]                 replace covered older messages with one [broke-state]
+                                summary; keep recent messages (confirmation unless --yes)
   flush --undo <n>              restore the exact message history stored with snapshot #n
   summarize via <local|cloud>   summarizer backend (default: ${d.summarize.via}${d.summarize.via === 'local' ? ' = Ollama' : ''})
   summarize model <name>        Ollama model tag (default: ${d.summarize.localModel})

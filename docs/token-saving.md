@@ -104,11 +104,13 @@ Two different things, both real:
 
 Recommended: **Broke transient for daily work + built-in `Compact`/Smart
 as the emergency brake.** For the on-demand persistent variant, use
-`/broke flush`: it replaces everything after the task brief with one
-`[broke-state]` message, is manual and confirmed by default, and is
-reversible through the history file that `/broke flush --undo <n>` reads
-back (F3 state snapshotting & memory flushing, shipped in v0.9.0, see
-docs/roadmap.md).
+`/broke flush`: it replaces only an older region covered by a current cached
+summary with a `[broke-state]` message. Messages before and after that region,
+including the recent turns, stay unchanged. Flush is manual, confirmed by
+default, and requires enabled undo storage; `/broke flush --undo <n>` restores
+the complete pre-flush history. Missing or stale coverage aborts the operation.
+Flush makes no model call, and `--yes` only skips confirmation. See
+[Snapshots & flush](features.md#snapshots--flush-f3) for the current contract.
 
 ## Honest numbers
 

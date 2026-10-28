@@ -1,4 +1,5 @@
 ({ data, executeExtensionAction }) => {
+  /* BROKE_CONFIG_DRAFT_HELPER */
   // Badge settings overlay (task 7): one-click access to the core knobs.
   // The overlay reads the full config via 'getConfig' and saves through
   // 'setConfig' - the same validated path as the settings dialog (a schema
@@ -202,9 +203,8 @@
     invalidatePreview();
     const c = draftRef.current;
     if (!c) return;
-    const changed = ['level', 'maxContextChars', 'protectedTurns'].some((key) => key in patch && patch[key] !== c[key])
-      || ('brevity' in patch && patch.brevity?.level !== c.brevity?.level);
-    setDraft({ ...c, ...patch, ...(changed ? { mode: 'custom' } : {}) });
+    const base = overlayCfg ?? c;
+    setDraft(mergeConfigDraft(base, c, { ...base, ...patch }));
   };
   const numberCommit = (key, fallback, max = Infinity) => (e) => {
     const n = Math.trunc(Number(e.target.value));

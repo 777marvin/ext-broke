@@ -107,7 +107,7 @@ The first user message and recent turns are protected. Optional tool-level slici
 /broke search <query>              # broke-search snippet summary
 /broke snapshot [label]            # record a milestone snapshot
 /broke snapshot list               # list snapshots
-/broke flush [--yes]               # DANGEROUS: replace history with one summary
+/broke flush [--yes]               # replace only the verified summarized region; keep recent turns
 /broke flush --undo <n>            # restore history from snapshot #n
 /broke stats                       # per-pass saved chars/tokens
 /broke diff [chars]                # token-budgeted digest of uncommitted changes
@@ -119,6 +119,11 @@ The first user message and recent turns are protected. Optional tool-level slici
 /broke update                      # self-update from GitHub releases
 /broke help                        # all commands
 ```
+
+Flush requires a current cached summary and enabled undo storage. If coverage is
+missing or stale, it aborts; `/broke summarize now` can explicitly prepare a
+summary under the current settings. Flush never generates one itself. `--yes`
+skips confirmation only. See [Snapshots & flush](docs/features.md#snapshots--flush-f3).
 
 ---
 
@@ -135,7 +140,7 @@ Every setting is reachable via `/broke config set <path> <value>` (schema-valida
 | maxContextChars | 60000 | ≈15k tokens, engages lossy passes |
 | protectedTurns | 2 | Last N user turns never compressed |
 | cache.profile | `off` | off / auto / anthropic / openai |
-| cache.escapeHatch | on | One cache-invalidating rewrite on budget overruns |
+| cache.escapeHatch | on | One cache-invalidating rewrite if the compressed candidate still exceeds budget |
 | cache.anchorBreakpoint | off | Anthropic only: target frozen prefix for cache breakpoint |
 | cache.openaiStateless | off | `auto` profile only: conservative estimate when no OpenAI cache hits |
 | brevity.level | `off` | Output brevity directive (off / lite / full / ultra) |
@@ -161,7 +166,7 @@ Every setting is reachable via `/broke config set <path> <value>` (schema-valida
 | search.maxResults / maxChars | 8 / 6000 | Top-k results and total char budget per query |
 | search.contextLines | 6 | Context lines around each match |
 | search.maxFileKB | 512 | Files larger than this never enter the index |
-| search.scanBudgetMs | 2000 | Wall-clock budget for one index scan |
+| search.scanBudgetMs | 2000 | Shared time budget for Git discovery, scan and merge |
 | search.includeGitIgnored | off | Opt-in: index git-ignored files too |
 | summarize.via | `local` | Local (Ollama) / cloud |
 | summarize.localModel | `qwen2.5-coder:3b` | Ollama model tag |
@@ -178,7 +183,7 @@ Every setting is reachable via `/broke config set <path> <value>` (schema-valida
 | snapshot.onTestPass | off | Test-green detection as milestones |
 | snapshot.keepHistory | off | Raw-history undo files for snapshots |
 | flush.confirm | on | Ask before destructive `/broke flush` |
-| flush.undo | on | Raw pre-flush undo file |
+| flush.undo | on | Raw pre-flush undo file; required for flush |
 
 Full configuration reference: see [docs/features.md](docs/features.md) and the gear dialog.
 

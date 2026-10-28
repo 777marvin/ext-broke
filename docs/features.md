@@ -25,8 +25,9 @@ particular saving is guaranteed:
   models get the Anthropic rules, GPT/o-models the OpenAI ones, anything
   else keeps the plain behavior.
 - The **escape hatch** (`cache.escapeHatch`) is the one sanctioned cache
-  loss: a run that starts over `maxContextChars` gets exactly ONE
-  deliberate full rewrite, the hatch locks until a run fits under budget
+  loss: if the compressed candidate still exceeds `maxContextChars`, an
+  eligible run gets ONE deliberate full rewrite. An input above budget whose
+  candidate fits needs no escape or ledger reset. The hatch locks until a run fits under budget
   again (hysteresis / re-arming), and the cache re-stabilizes on that run's output.
   Escape operations are transactional: if output validation fails, changes revert
   cleanly without locking the hatch or dropping cache state.
@@ -93,12 +94,15 @@ on), optionally on detected test-green tool results (`snapshot.onTestPass`,
 default off), and manually via `/broke snapshot [label]`.
 
 The *flush* is the only destructive operation in broke. `/broke flush`
-replaces everything after the original task brief with ONE `[broke-state]`
-message carrying that state record - so long-running tasks can restart each
-step from brief + current state instead of the full scrollback. It is manual,
+replaces only an older region proven to be covered by a current cached summary
+with ONE `[broke-state]` message. The task brief, headers and newer messages
+remain unchanged. Missing, edited or stale summary coverage causes an abort;
+`--yes` skips confirmation, never the coverage check. Flush does not generate
+a summary: use `/broke summarize now` explicitly when a valid summary can be
+created under the current backend and cache policies. It is manual,
 asks for confirmation (`flush.confirm`), writes BOTH the snapshot record and
-a raw-history undo file BEFORE touching any message (when `flush.undo` is on,
-default), aborts untouched if
+a raw-history undo file BEFORE touching any message. With `flush.undo` off,
+flush refuses replacement rather than writing history without consent. It aborts untouched if
 those writes fail or the undo file would exceed its size cap, and
 `/broke flush --undo <n>` restores the byte-identical
 history afterwards. Auto/manual snapshots are summary-only by default
@@ -110,7 +114,7 @@ Replacing the context messages does not rewrite that file; depending on the
 AiderDesk version it may re-hydrate old content on the next prompt. If you
 observe flushed content returning, prefer AiderDesk's native
 handoffConversation-style flows or report back to the broke issue tracker -
-the acceptance docs track this gap explicitly.
+this remains a host-version-dependent limitation.
 
 ## Local project search (broke-search tool)
 
@@ -125,9 +129,19 @@ came from.
 Broke's index is
 **offline** (no embedding model needed), persisted per project under
 the data root (`index/<projectHash>/`, BRK-016), re-indexed incrementally by mtime/size diffing
-(triggered on commits and re-checked before queries once the 60s freshness window expires), and strictly budgeted.
+(triggered on commits and re-checked before queries once the 60s freshness window expires).
 It complements rather than replaces `power---semantic_search` or the repo
 map.
+
+Git discovery, filesystem scanning and merging share `search.scanBudgetMs`
+(default 2000 ms). After the deadline, no further scan or merge work starts;
+an already-running synchronous operation and final index persistence can add
+time, so this is not a hard response-time guarantee. An incomplete Git query,
+scan, merge or replacement read preserves existing entries and reports an
+incomplete index. A Git failure does not trigger an unfiltered directory walk.
+Manual rebuilds also retain the usable previous index if the candidate is
+incomplete. Only a complete later refresh can prune deleted files and clear
+the incomplete status.
 
 The on-disk index contains term postings and file metadata, not full file
 contents or snippets. Terms and paths can still reveal sensitive information.
@@ -173,8 +187,8 @@ patterns catch, disable snapshots or move them off shared machines.
 
 broke-search (F4) returns raw code/file snippets - the same content class
 as any file-read tool result. The persisted index contains term keys derived
-from file text. Removing or editing a file and rebuilding the index removes
-its postings; delete the project's index data if immediate erasure is
+from file text. A complete refresh or rebuild updates edited files and removes
+deleted files' postings; incomplete work retains previous entries. Delete the project's index data if immediate erasure is
 required. Queries read current files from disk, honoring the same skip rules in
 every repo (`node_modules`, `.git`, dot-dirs of other tooling etc.).
 The indexer and snippet reader strictly enforce workspace confinement

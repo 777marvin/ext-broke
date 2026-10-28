@@ -119,7 +119,7 @@ describe('buildFlushPlan (pure)', () => {
 
   it('plans keep-header+brief / remove-rest with exact counts', () => {
     const messages = [systemLike('s1', 'sys'), user('u1', 'brief'), assistant('a1', 'one'), user('u2', 'two'), assistant('a2', 'three')];
-    const plan = buildFlushPlan(messages);
+    const plan = buildFlushPlan(messages, { start: 2, end: 5 });
     assert.equal(plan.ok, true);
     assert.equal(plan.briefIndex, 1);
     assert.deepEqual(plan.headerIndexes, [0]);
@@ -129,7 +129,7 @@ describe('buildFlushPlan (pure)', () => {
   it('collapses earlier state messages into the new one (re-flush)', () => {
     const stateText = `[broke-state]\n{}`;
     const messages = [user('u1', 'brief'), assistant('a0', 'mid'), { id: 'st0', role: 'user' as const, content: stateText }, assistant('a1', 'more work')];
-    const plan = buildFlushPlan(messages);
+    const plan = buildFlushPlan(messages, { start: 1, end: messages.length });
     assert.equal(plan.ok, true);
     assert.equal(plan.removedCount, messages.length - 1, 'everything after the brief is replaced');
   });

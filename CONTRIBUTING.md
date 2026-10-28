@@ -8,13 +8,15 @@ deliberate: the following conventions keep it that way.
 ```powershell
 npm ci
 npm run typecheck    # tsc --noEmit
-npm test             # tsx --test, pure-function tests
+npm test             # full suite, including loopback HTTP and child-process fixtures
+npm run coverage    # per-file thresholds, including extracted critical modules
+npm run validate:ui # assembled JSX templates: syntax and host-contract prop types
 npm run check:docs   # links, release claims, README config table vs. the schema
 npm run check:files  # allowlist over git ls-files (the release tarball is a git archive)
 npm run check:version # lockfile sync + exact-version-with-tag invariant
 ```
 
-Both checks must pass before a change is ready. There are no lint rules
+All applicable checks must pass before a change is ready. There are no lint rules
 beyond TypeScript itself (`tsconfig.json`) - an ESLint/format gate was
 deliberately deferred during the 2026-08-29 review remediation (BRK-026):
 the setup cost outweighed the benefit while the critical-module branch
@@ -57,6 +59,14 @@ once the test suite grows beyond its current shape.
 - New behavior needs regression tests in `tests/` (plain node:test with
   tsx, no framework). Compression passes are pure functions; test them
   on synthetic conversations.
+- Filesystem and updater tests use disposable directories and real child
+  processes; HTTP tests use loopback servers. Do not run fixtures against normal
+  profiles or installations. CI retains Linux Node 22/24 runs and adds focused
+  Windows filesystem/process regressions. Fake-host tests do not replace a real
+  AiderDesk smoke test; see [audit verification](docs/audit-remediation.md).
+- Keep logs, screenshots, local profiles and working notes in ignored locations
+  such as `.superpowers/`. Run `npm run check:files` and inspect the complete PR
+  file list before pushing; the release archive includes every tracked file.
 - Test fixtures that look like secrets (`sk-…`, `ghp_…`, `AKIA…`) are fake
   by design, they verify `maskSecrets`. Keep them obviously fake.
 - A test that reads the repository itself must not assume facts the

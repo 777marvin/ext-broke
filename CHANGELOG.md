@@ -13,6 +13,56 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ## [Unreleased]
 
+### Fixed
+
+- Align the public README, tuning and token-saving guides with verified partial
+  flush, required undo storage, shared index deadlines and candidate-based cache
+  escape. Refresh migration, updater, SDK and contributor verification notes.
+
+- Extend unchanged coverage thresholds to the extracted modules and add a
+  focused Windows filesystem/process CI job. Record local audit verification
+  and remaining release checks in `docs/audit-remediation.md`.
+
+- Retain old index documents when replacement reads fail; reject linked or
+  overlapping migration roots before mutations; make undo subtract exactly the
+  credited flush estimate. Flush requires its explicitly enabled undo storage.
+
+- Share synchronous configuration-draft merging and Custom-mode detection
+  between the badge and settings templates; host loading, UI validation and
+  interaction tests use the same template composition (AUD-09).
+
+- Separate update lifecycle coordination and restore configuration observation
+  on success, reported failure and unexpected runner exceptions (AUD-09).
+
+- Isolate project-index coordination from the host extension class while
+  preserving command, search-budget and estimate behavior (AUD-09).
+
+- Share one deadline across Git discovery, filesystem scanning and incremental
+  merging; manual rebuilds use the same bounded path and preserve the previous
+  snapshot if the rebuild is incomplete (AUD-08).
+
+- Escape provider-cache preservation only when the compressed candidate still
+  exceeds its budget, avoiding unnecessary rewrites and ledger resets (AUD-06).
+
+- Resume partial legacy-data migrations, verify staged file contents before
+  exclusive publication, preserve conflicting sources and serialize migration
+  across instances; historical completion markers no longer hide missing files
+  (AUD-05).
+
+- Flush only a current, fingerprint-verified summarized region, retain recent
+  messages, recheck context after confirmation, and preserve full-history undo
+  before replacement (AUD-04). Flush never generates a new summary implicitly.
+
+- Keep update ownership outside the swappable installation, serialize lock
+  reclamation/release and refuse unknown or inaccessible owners (AUD-02).
+
+- Reject Ollama HTTP redirects before any prompt or status request can be
+  forwarded to a different endpoint (AUD-03).
+
+- Preserve existing search-index entries after incomplete or failed scans and
+  manual rebuilds; persist merge-budget exhaustion and clear it after recovery
+  (AUD-01/AUD-07).
+
 ### Added
 
 - **Output brevity directive and per-tool / tool-level truncation (S8 - `savemytoken` migration).**

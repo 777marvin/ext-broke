@@ -51,6 +51,8 @@ export const LINK_CHECKED = [
   'docs/tuning.md',
   'docs/local-models.md',
   'docs/aiderdesk-builtin.md',
+  'docs/roadmap.md',
+  'docs/audit-remediation.md',
 ];
 
 /** Files in which a release claim must point at a real tag. */
