@@ -13,11 +13,10 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ## [Unreleased]
 
-Release target: **1.4.0**. New features since 1.3.3 make this a minor release,
-superseding the earlier 1.3.4 development target. Preparation retains the
-`-dev` suffix until the exact-version release commit is tagged. See the
-[release notes and checklist](docs/releases/1.4.0.md). Requires AiderDesk 0.88
-or newer; older hosts must be upgraded before updating broke.
+## [1.4.0] - 2026-10-29
+
+Requires **AiderDesk 0.88 or newer**; upgrade older hosts before updating broke.
+See the [release notes and upgrade guidance](docs/releases/1.4.0.md).
 
 ### Fixed
 
@@ -302,7 +301,7 @@ a checkout that carries git tags, and most CI jobs do not.
   their input from the changelog itself, so they verify what they claim
   wherever they run.
 
-## [Unreleased]
+## Documentation-gate follow-up (included in 1.3.3)
 
 ### Fixed
 

@@ -191,7 +191,7 @@ Full configuration reference: see [docs/features.md](docs/features.md) and the g
 
 ## Status
 
-broke is in active development. The roadmap ([docs/roadmap.md](docs/roadmap.md)) documents shipped features and proposed candidates F8–F9. The next release target is **1.4.0**, with F6 (live status dot + three-tier savings breakdown), F7.1/F7.2 (everyday badge view + guided setup), output brevity and audit hardening. See the [release notes and checklist](docs/releases/1.4.0.md). These changes remain Unreleased until publication; future candidates have no assigned release date.
+broke **1.4.0** includes F6 (live status dot + three-tier savings breakdown), F7.1/F7.2 (everyday badge view + guided setup), output brevity and audit hardening. Requires **AiderDesk 0.88 or newer**. See the [release notes and upgrade guidance](docs/releases/1.4.0.md); signed publication status is shown on [GitHub Releases](https://github.com/777marvin/ext-broke/releases). The [roadmap](docs/roadmap.md) tracks future candidates, which have no assigned release date.
 
 ---
 

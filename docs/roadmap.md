@@ -11,19 +11,18 @@
 | F3 | State Snapshotting & Memory Flushing | 0.9.0 | Milestone snapshots + reversible flush operation |
 | F4 | Local Keyword Index | 0.10.0 | Offline BM25 search with budgeted snippets (`broke-search`) |
 | F5 | Mode Presets | 1.2.2 | Short/Normal/Long/Custom presets with autonomy selector |
-| F6 | Live Status & Savings Breakdown | Unreleased | Three-tier honest savings: measured, provider-reported, modeled |
-| F7.1 | Everyday Badge View | Unreleased | Plain-language state, Safe/Balanced/Maximum choices |
-| F7.2 | Guided Setup & Readiness | Unreleased | One-click setup check with Ollama/backend verification |
-| S8 | Output Brevity Directive | Unreleased | `brevity.ts` — reduce assistant verbosity while keeping code intact |
+| F6 | Live Status & Savings Breakdown | 1.4.0 | Three-tier honest savings: measured, provider-reported, modeled |
+| F7.1 | Everyday Badge View | 1.4.0 | Plain-language state, Safe/Balanced/Maximum choices |
+| F7.2 | Guided Setup & Readiness | 1.4.0 | One-click setup check with Ollama/backend verification |
+| S8 | Output Brevity Directive | 1.4.0 | `brevity.ts` — reduce assistant verbosity while keeping code intact |
 
 ## Current Focus
 
-**Active development (Unreleased):**
+**Release 1.4.0:**
 
-Release target: **1.4.0**, currently prepared as `1.4.0-dev`. See the
-[release notes and checklist](releases/1.4.0.md) for compatibility, upgrade
-notes and publication gates. The features below remain Unreleased until
-the signed release is published.
+See the [release notes and upgrade guidance](releases/1.4.0.md) for
+compatibility and publication gates. Signed publication status is available
+on [GitHub Releases](https://github.com/777marvin/ext-broke/releases).
 
 - Audit hardening: incomplete-index preservation, redirect refusal, process-safe
   update ownership, verified partial flush, resumable migration and shared index

@@ -1,20 +1,15 @@
 # Project Overview
 
-*Snapshot: release v1.3.3 (2026-09-28), the published documentation-gate
-baseline. The next release target is 1.4.0 (currently 1.4.0-dev); see the
-[release notes and checklist](releases/1.4.0.md). Development additions reviewed
-at 1.3.4-dev on 2026-10-28 include
-Unreleased AiderDesk 0.88 message-preparation support, F6's live status and
-savings breakdown, and F7.1's everyday badge view. F7.2 guided setup and
-readiness is also implemented under Unreleased. Audit hardening has local
-real-host headless and browser-fixture evidence; a complete interactive host
-GUI and non-expert usability evaluation remain separate checks. See
-[audit verification](audit-remediation.md) for its scope. The changelog records
-v1.3.3 as the first published release containing the documentation-gate work
-of v1.3.1 and v1.3.2; neither of those earlier tags was published. See
+*Snapshot: release v1.4.0 (2026-10-29). Includes AiderDesk 0.88
+message-preparation support, F6 live status and savings breakdown, F7.1's
+everyday badge view, F7.2 guided setup and readiness, output brevity and audit
+hardening. See the [release notes and upgrade guidance](releases/1.4.0.md).
+Audit hardening has real-host headless and browser-fixture evidence; a complete
+interactive host GUI and non-expert usability evaluation remain separate checks.
+See [audit verification](audit-remediation.md) for its scope,
 [CHANGELOG](../CHANGELOG.md) for release history and
-[feature status](roadmap.md) for
-remaining work.*
+[feature status](roadmap.md) for remaining work. Signed publication status is
+available on [GitHub Releases](https://github.com/777marvin/ext-broke/releases).*
 
 *This file deliberately carries no per-module line counts and no test-count
 prose: hand-maintained numbers drift silently and were already two releases
