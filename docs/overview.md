@@ -1,7 +1,9 @@
 # Project Overview
 
 *Snapshot: release v1.3.3 (2026-09-28), the published documentation-gate
-baseline. Development additions reviewed at 1.3.4-dev on 2026-10-28 include
+baseline. The next release target is 1.4.0 (currently 1.4.0-dev); see the
+[release notes and checklist](releases/1.4.0.md). Development additions reviewed
+at 1.3.4-dev on 2026-10-28 include
 Unreleased AiderDesk 0.88 message-preparation support, F6's live status and
 savings breakdown, and F7.1's everyday badge view. F7.2 guided setup and
 readiness is also implemented under Unreleased. Audit hardening has local

@@ -191,7 +191,7 @@ Full configuration reference: see [docs/features.md](docs/features.md) and the g
 
 ## Status
 
-broke is in active development. roadmap ([docs/roadmap.md](docs/roadmap.md)) documents shipped features F1–F7 and proposed candidates F8–F9. Current Unreleased work includes F6 (live status dot + three-tier savings breakdown) and F7.1/F7.2 (everyday badge view + guided setup). No delivery dates or release versions are assigned to remaining work.
+broke is in active development. The roadmap ([docs/roadmap.md](docs/roadmap.md)) documents shipped features and proposed candidates F8–F9. The next release target is **1.4.0**, with F6 (live status dot + three-tier savings breakdown), F7.1/F7.2 (everyday badge view + guided setup), output brevity and audit hardening. See the [release notes and checklist](docs/releases/1.4.0.md). These changes remain Unreleased until publication; future candidates have no assigned release date.
 
 ---
 

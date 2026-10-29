@@ -13,6 +13,12 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ## [Unreleased]
 
+Release target: **1.4.0**. New features since 1.3.3 make this a minor release,
+superseding the earlier 1.3.4 development target. Preparation retains the
+`-dev` suffix until the exact-version release commit is tagged. See the
+[release notes and checklist](docs/releases/1.4.0.md). Requires AiderDesk 0.88
+or newer; older hosts must be upgraded before updating broke.
+
 ### Fixed
 
 - Align the public README, tuning and token-saving guides with verified partial

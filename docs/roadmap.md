@@ -19,6 +19,12 @@
 ## Current Focus
 
 **Active development (Unreleased):**
+
+Release target: **1.4.0**, currently prepared as `1.4.0-dev`. See the
+[release notes and checklist](releases/1.4.0.md) for compatibility, upgrade
+notes and publication gates. The features below remain Unreleased until
+the signed release is published.
+
 - Audit hardening: incomplete-index preservation, redirect refusal, process-safe
   update ownership, verified partial flush, resumable migration and shared index
   deadlines; see [verification and release boundaries](audit-remediation.md).
