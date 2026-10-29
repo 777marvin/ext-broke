@@ -85,11 +85,7 @@ the extension remains visually native inside AiderDesk.
 
 ## Layout
 
-The badge stays compact. The dialog is a single 460 px column with a 94vw cap
-and internal scrolling. The sequence is status, everyday controls, common
-actions, advanced disclosure, then save/cancel. Controls must remain reachable
-at narrow widths; three common actions may wrap or compress without truncating
-their labels.
+The badge stays compact with an inline micro-gauge when context fill is observed. The dialog is a 540 px Precision Instrument Cockpit column with a 95vw cap and internal scrolling. The sequence is cockpit telemetry header, status and context-budget gauge card, interactive 3-step onboarding (when active), everyday controls, common actions, structured result inspector, advanced disclosure + Full Command Studio, then save/cancel. Controls must remain reachable at narrow widths; three common actions may wrap or compress without truncating their labels.
 
 ## Elevation & Depth
 
@@ -123,10 +119,19 @@ The native select is intentional: the host/operating-system popup is accepted.
 Options are outcome-focused: Safe, Balanced, Maximum savings, and Custom.
 Balanced is the recommended default.
 
-### Advanced disclosure
+### Advanced disclosure & Command Studio
 
-Uses native `details`/`summary`, starts closed, and retains all technical
-controls and command tools. It is progressive disclosure, not removal.
+Uses native `details`/`summary`, starts closed (and can also be toggled via the
+Cockpit's `Open Command Studio` button), and retains all technical controls plus
+the full **Command Studio**. Every valid `/broke` command is executable from the
+UI: one-click commands are organized by category (`Diagnostics`, `Snapshots &
+Flush`, `Search & Slice`, `Pipeline & Archives`, `Config & Updates`), and
+parameterized commands (`search`, `diff`, `snapshot`, `snapshot show`, `flush
+--undo`, `slice focus`, `truncate tool`, `config get/set`, `update <tag>`)
+provide dedicated input builders alongside a universal `/broke` command bar.
+`ConfigComponent.jsx` mirrors this capability with an embedded Interactive
+Command & Maintenance Deck and full schema coverage (`slice.*`,
+`truncate.tools`, `ui.showMessageMenu`).
 
 ### Feedback and safety
 

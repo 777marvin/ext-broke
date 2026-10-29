@@ -139,22 +139,69 @@ describe('H1 quick-command wiring (review finding: runCommand was dead)', () => 
     assert.equal(res.message, typed[0], 'the overlay sees what the chat shows');
   });
 
-  it('runCommand accepts every button command of the Quick Commands grid', async () => {
+  it('runCommand accepts every command across the Command Studio categories', async () => {
+    const { DEFAULT_CONFIG, saveConfig } = await import('../config');
+    saveConfig(DEFAULT_CONFIG);
     const host = makeHost();
     host.getTaskContext()!.addLogMessage = async () => undefined;
     const ext = new Broke();
-    const buttons = ['status', 'stats', 'why', 'estimate', 'measure', 'summarize now', 'reset', 'selftest', 'help'];
+    const commands = [
+      'status',
+      'stats',
+      'why',
+      'estimate',
+      'measure',
+      'diff',
+      'diff 4000',
+      'summarize now',
+      'reset',
+      'selftest',
+      'help',
+      'index status',
+      'index rebuild',
+      'search compressMessages',
+      'search on',
+      'search off',
+      'slice status',
+      'slice on',
+      'slice off',
+      'slice focus src/index.ts',
+      'slice focus clear',
+      'snapshot',
+      'snapshot milestone-1',
+      'snapshot list',
+      'snapshot show 1',
+      'flush',
+      'flush --yes',
+      'flush --undo 1',
+      'errors clear',
+      'truncate clear',
+      'truncate tool bash 120 12',
+      'truncate tool bash off',
+      'truncate tool bash reset',
+      'config list',
+      'config get maxContextChars',
+      'config set maxContextChars 60000',
+      'mode normal',
+      'autonomy autonomous',
+      'level truncate',
+      'brevity lite',
+      'on',
+      'off',
+      'on',
+    ];
 
-    for (const cmd of buttons) {
+    for (const cmd of commands) {
       const res = (await ext.executeUIExtensionAction('broke-status', 'runCommand', [`broke ${cmd}`], host)) as {
         ok: boolean;
         error?: string;
       };
       assert.equal(res.ok, true, `"broke ${cmd}" must be wired: ${res.error ?? ''}`);
     }
+    saveConfig(DEFAULT_CONFIG);
   });
 
-  it('runCommand refuses commands outside the allowlist BEFORE executing them', async () => {
+  it('runCommand refuses unknown commands or out-of-range arguments BEFORE executing them', async () => {
     const { getConfig, DEFAULT_CONFIG, saveConfig } = await import('../config');
     saveConfig(DEFAULT_CONFIG);
     const host = makeHost();
@@ -162,9 +209,7 @@ describe('H1 quick-command wiring (review finding: runCommand was dead)', () => 
     host.getTaskContext()!.addLogMessage = async (_level, text) => { seen.push(text ?? ''); };
     const ext = new Broke();
 
-    // A state-changing command that is NOT on the button grid: if the
-    // allowlist ever fails open, the config changes and this test catches it.
-    for (const raw of ['broke mode long', 'broke level long', 'broke flush', 'broke snapshot wipe-me', 'broke on']) {
+    for (const raw of ['broke mode bogus', 'broke level long', 'broke protect 999', 'broke diff 10', 'broke zzz-unknown']) {
       const res = (await ext.executeUIExtensionAction('broke-status', 'runCommand', [raw], host)) as {
         ok: boolean;
         error?: string;

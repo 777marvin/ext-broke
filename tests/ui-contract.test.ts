@@ -92,5 +92,15 @@ describe('vendored host UI contract (BRK-024)', () => {
     assert.match(statusBadge, /'getConfig'/, 'the overlay loads the config via the getConfig action');
     assert.match(statusBadge, /'setConfig'/, 'the overlay saves via the setConfig action');
     assert.match(statusBadge, /Context savings for every task/, 'the badge carries the plain-language settings entry point');
+    assert.match(statusBadge, /Instrument Cockpit/, 'the badge renders the Precision Instrument Cockpit header');
+    assert.match(statusBadge, /Command Studio/, 'the badge includes the full Command Studio');
+  });
+
+  it('the settings UI exposes ST-slicing, per-tool truncation, message menu toggle, and the interactive command deck', () => {
+    const configComponent = readFileSync('ConfigComponent.jsx', 'utf8');
+    assert.match(configComponent, /ST-Slicing/, 'ST-slicing section exists in ConfigComponent');
+    assert.match(configComponent, /Per-tool truncation rules/, 'truncate.tools manager exists in ConfigComponent');
+    assert.match(configComponent, /showMessageMenu/, 'ui.showMessageMenu toggle exists in ConfigComponent');
+    assert.match(configComponent, /Interactive Command &amp; Maintenance Deck/, 'interactive command deck exists in ConfigComponent');
   });
 });
