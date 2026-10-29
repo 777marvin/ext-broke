@@ -1,408 +1,228 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>broke input pipeline</title>
-  </head>
-  <body>
-    <template>
-      <style>
-        #root, #root * { box-sizing: border-box; }
-        #root {
-          --ground: #0a0c0b;
-          --surface: #121613;
-          --line: #303730;
-          --ink: #f1f0e9;
-          --muted: #969c96;
-          --quiet: #8b928c;
-          --accent: #8de0b4;
-          --warm: #c8bca8;
-          position: absolute;
-          inset: 0;
-          overflow: hidden;
-          background: var(--ground);
-          color: var(--ink);
-          font-family: Inter, Arial, sans-serif;
-          isolation: isolate;
-        }
-        #pipeline-stage, #pipeline-world, #motion-field, #flow-lines {
-          position: absolute;
-          inset: 0;
-        }
-        #pipeline-world {
-          background:
-            linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px) 0 0 / 48px 48px,
-            linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px) 0 0 / 48px 48px,
-            var(--ground);
-        }
-        .eyebrow {
-          color: var(--muted);
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-          font-weight: 600;
-          letter-spacing: .12em;
-          text-transform: uppercase;
-        }
-        #brand {
-          position: absolute;
-          top: 66px;
-          left: 82px;
-          z-index: 10;
-          display: flex;
-          align-items: baseline;
-          gap: 26px;
-        }
-        #brand-name {
-          font-size: 68px;
-          font-weight: 760;
-          letter-spacing: -.065em;
-          line-height: 1;
-        }
-        #brand-rule { width: 80px; height: 2px; background: var(--accent); }
-        #extension-label {
-          position: absolute;
-          top: 82px;
-          right: 82px;
-          z-index: 10;
-          color: var(--quiet);
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-        }
-        #call-label { position: absolute; top: 190px; left: 82px; z-index: 4; }
-        .panel {
-          position: absolute;
-          z-index: 3;
-          border: 1px solid var(--line);
-          border-radius: 18px;
-          background: var(--surface);
-        }
-        .panel-head {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          min-height: 70px;
-          padding: 0 26px;
-          border-bottom: 1px solid var(--line);
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-          font-weight: 600;
-          letter-spacing: .04em;
-        }
-        .panel-meta { color: var(--quiet); font-size: 20px; font-weight: 500; }
-        #input-panel { top: 260px; left: 82px; width: 470px; height: 570px; }
-        #output-panel { top: 260px; right: 82px; width: 470px; height: 570px; }
-        .message-stack { display: grid; gap: 13px; padding: 26px; }
-        .message {
-          position: relative;
-          display: grid;
-          grid-template-columns: 16px 1fr;
-          gap: 16px;
-          align-items: center;
-          min-height: 68px;
-          padding: 0 18px;
-          border: 1px solid #2b312c;
-          border-radius: 12px;
-          background: #181c19;
-          color: #c7cbc6;
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-        }
-        .message-dot { width: 8px; height: 8px; border-radius: 50%; background: #646b65; }
-        .message.protected {
-          border-color: color-mix(in srgb, var(--accent) 52%, #2b312c);
-          color: var(--ink);
-        }
-        .message.protected .message-dot { background: var(--accent); }
-        .message.eligible { border-style: dashed; }
-        #processor {
-          position: absolute;
-          top: 332px;
-          left: 705px;
-          z-index: 6;
-          width: 510px;
-          padding: 24px;
-          border: 1px solid #394039;
-          border-radius: 22px;
-          background: #0f1310;
-        }
-        #processor-title {
-          display: flex;
-          align-items: center;
-          gap: 14px;
-          margin-bottom: 18px;
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-          font-weight: 650;
-        }
-        #processor-mark { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
-        .stage-row {
-          display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 14px;
-          align-items: center;
-          min-height: 68px;
-          padding: 0 16px;
-          border-top: 1px solid #252b26;
-          color: #a7ada8;
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-        }
-        .stage-result {
-          color: #949a94;
-          font-size: 20px;
-          letter-spacing: .08em;
-          text-transform: uppercase;
-        }
-        #stage-summarize { border: 1px dashed #42453f; border-radius: 12px; color: var(--warm); }
-        #stage-summarize .stage-result { color: #8c8376; }
-        #flow-lines { z-index: 2; overflow: visible; pointer-events: none; }
-        .flow-path {
-          fill: none;
-          stroke: #434a44;
-          stroke-width: 2;
-          stroke-linecap: round;
-        }
-        .flow-path.accent { stroke: var(--accent); }
-        .flow-path.optional { stroke: #847b6f; stroke-dasharray: 8 10; }
-        .payload-chip {
-          position: absolute;
-          z-index: 8;
-          width: 126px;
-          height: 20px;
-          border-radius: 999px;
-          background: #777e78;
-          box-shadow: 0 0 0 1px #929993 inset;
-        }
-        .payload-chip.protected { background: var(--accent); box-shadow: none; }
-        .payload-chip.compact { width: 70px; background: #d8dbd6; box-shadow: none; }
-        #eligible-label, #protected-label, #output-label, #closing { position: absolute; z-index: 9; }
-        #eligible-label {
-          top: 858px;
-          left: 150px;
-          color: var(--muted);
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-        }
-        #protected-label {
-          top: 858px;
-          left: 705px;
-          color: var(--accent);
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-        }
-        #output-label {
-          top: 858px;
-          right: 156px;
-          color: var(--muted);
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-        }
-        #history-lane {
-          position: absolute;
-          right: 82px;
-          bottom: 72px;
-          left: 82px;
-          z-index: 4;
-          display: grid;
-          grid-template-columns: 320px 1fr 230px;
-          gap: 28px;
-          align-items: center;
-          min-height: 72px;
-          padding: 0 24px;
-          border-top: 1px solid #303630;
-          border-bottom: 1px solid #303630;
-          background: rgba(13,16,14,.96);
-        }
-        #history-title, #history-state {
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 28px;
-          letter-spacing: .08em;
-          text-transform: uppercase;
-        }
-        #history-title { color: var(--muted); }
-        #history-state { color: var(--accent); text-align: right; }
-        #history-blocks { display: flex; gap: 8px; align-items: center; }
-        .history-block { height: 15px; flex: 1; border-radius: 3px; background: #3d443e; }
-        .history-block:first-child, .history-block:nth-last-child(-n + 2) { background: var(--accent); }
-        #closing {
-          top: 382px;
-          left: 50%;
-          width: 1320px;
-          color: var(--ink);
-          text-align: center;
-        }
-        #closing-line {
-          font-size: 86px;
-          font-weight: 720;
-          letter-spacing: -.055em;
-          line-height: 1.08;
-        }
-        #closing-subline {
-          margin-top: 26px;
-          color: var(--accent);
-          font-family: "IBM Plex Mono", monospace;
-          font-size: 32px;
-        }
-      </style>
-
-      <div data-hf-id="hf-dk3p" id="root" data-composition-id="pipeline" data-width="1920" data-height="1080">
-        <div data-hf-id="hf-emk8" id="pipeline-stage" class="clip" data-start="0" data-duration="10" data-track-index="0">
-          <div data-hf-id="hf-k2so" id="pipeline-world">
-            <header data-hf-id="hf-92f4" id="brand">
-              <span data-hf-id="hf-64pg" id="brand-name">broke</span>
-              <span data-hf-id="hf-1mah" id="brand-rule" data-layout-ignore></span>
-              <span data-hf-id="hf-zf20" class="eyebrow">input pipeline</span>
-            </header>
-            <div data-hf-id="hf-hfy3" id="extension-label" data-layout-ignore>AiderDesk extension</div>
-            <div data-hf-id="hf-8da2" id="call-label" class="eyebrow">Next model call</div>
-
-            <section data-hf-id="hf-wcot" id="input-panel" class="panel">
-              <div data-hf-id="hf-95fx" class="panel-head"><span data-hf-id="hf-veax">conversation context</span><span data-hf-id="hf-ce4f" class="panel-meta" data-layout-ignore>before</span></div>
-              <div data-hf-id="hf-xopm" class="message-stack">
-                <div data-hf-id="hf-rzot" id="msg-first" class="message protected"><span data-hf-id="hf-0bp8" class="message-dot"></span><span data-hf-id="hf-mk28">first request</span></div>
-                <div data-hf-id="hf-eeug" id="msg-tool" class="message eligible"><span data-hf-id="hf-rsms" class="message-dot"></span><span data-hf-id="hf-775i">older tool output</span></div>
-                <div data-hf-id="hf-n844" id="msg-log" class="message eligible"><span data-hf-id="hf-qlpp" class="message-dot"></span><span data-hf-id="hf-ynxj">repeated test log</span></div>
-                <div data-hf-id="hf-x2ke" id="msg-reply" class="message eligible"><span data-hf-id="hf-r00q" class="message-dot"></span><span data-hf-id="hf-ozpt">older assistant reply</span></div>
-                <div data-hf-id="hf-wpty" id="msg-recent-a" class="message protected"><span data-hf-id="hf-szjv" class="message-dot"></span><span data-hf-id="hf-z139">recent turn</span></div>
-                <div data-hf-id="hf-srpx" id="msg-recent-b" class="message protected"><span data-hf-id="hf-tduw" class="message-dot"></span><span data-hf-id="hf-ae5p">latest turn</span></div>
-              </div>
-            </section>
-
-            <svg data-hf-id="hf-61j2" id="flow-lines" viewBox="0 0 1920 1080" aria-hidden="true" data-layout-ignore>
-              <path data-hf-id="hf-04nq" id="eligible-path" class="flow-path" d="M 552 544 C 630 544 650 522 705 522" />
-              <path data-hf-id="hf-wyl7" id="output-path" class="flow-path" d="M 1215 522 C 1270 522 1290 544 1368 544" />
-              <path data-hf-id="hf-r3xq" id="protected-path" class="flow-path accent" d="M 552 337 C 690 275 1230 275 1368 337" />
-              <path data-hf-id="hf-fjki" id="optional-path" class="flow-path optional" d="M 960 681 C 960 740 960 760 960 802" />
-            </svg>
-
-            <section data-hf-id="hf-muf4" id="processor" class="panel">
-              <div data-hf-id="hf-lakm" id="processor-title"><span data-hf-id="hf-90xo" id="processor-mark"></span><span data-hf-id="hf-x3ea">broke</span><span data-hf-id="hf-5mws" class="panel-meta" data-layout-ignore>beforeModelCall</span></div>
-              <div data-hf-id="hf-q02b" id="stage-clean" class="stage-row"><span data-hf-id="hf-htuv">Clean structure</span><span data-hf-id="hf-snkz" class="stage-result" data-layout-ignore>content kept</span></div>
-              <div data-hf-id="hf-keus" id="stage-trim" class="stage-row"><span data-hf-id="hf-16bh">Trim old output</span><span data-hf-id="hf-gp49" class="stage-result" data-layout-ignore>default</span></div>
-              <div data-hf-id="hf-5syj" id="stage-summarize" class="stage-row"><span data-hf-id="hf-xxfl">Summarize via local Ollama</span><span data-hf-id="hf-z9s8" class="stage-result" data-layout-ignore>optional</span></div>
-            </section>
-
-            <section data-hf-id="hf-fb52" id="output-panel" class="panel">
-              <div data-hf-id="hf-uupt" class="panel-head"><span data-hf-id="hf-puw8">model payload</span><span data-hf-id="hf-9e5q" class="panel-meta" data-layout-ignore>after</span></div>
-              <div data-hf-id="hf-jblq" class="message-stack">
-                <div data-hf-id="hf-jjog" class="message protected out-row"><span data-hf-id="hf-s6xt" class="message-dot"></span><span data-hf-id="hf-ywvc">first request</span></div>
-                <div data-hf-id="hf-fqfa" class="message out-row"><span data-hf-id="hf-sl8u" class="message-dot"></span><span data-hf-id="hf-71da">older context · compact</span></div>
-                <div data-hf-id="hf-7fd6" class="message out-row"><span data-hf-id="hf-ukrz" class="message-dot"></span><span data-hf-id="hf-x9bz">tool output · trimmed</span></div>
-                <div data-hf-id="hf-hhso" class="message protected out-row"><span data-hf-id="hf-uz30" class="message-dot"></span><span data-hf-id="hf-0zo9">recent turn</span></div>
-                <div data-hf-id="hf-gavl" class="message protected out-row"><span data-hf-id="hf-c9fw" class="message-dot"></span><span data-hf-id="hf-9n1d">latest turn</span></div>
-              </div>
-            </section>
-
-            <div data-hf-id="hf-1ud9" id="motion-field" data-layout-ignore>
-              <span data-hf-id="hf-tq3e" id="chip-old-a" class="payload-chip"></span>
-              <span data-hf-id="hf-nkdl" id="chip-old-b" class="payload-chip"></span>
-              <span data-hf-id="hf-msps" id="chip-old-c" class="payload-chip"></span>
-              <span data-hf-id="hf-wa5z" id="chip-first" class="payload-chip protected"></span>
-              <span data-hf-id="hf-mfqu" id="chip-recent" class="payload-chip protected"></span>
-              <span data-hf-id="hf-hpb5" id="chip-compact-a" class="payload-chip compact"></span>
-              <span data-hf-id="hf-lnf6" id="chip-compact-b" class="payload-chip compact"></span>
-            </div>
-
-            <div data-hf-id="hf-vpu3" id="eligible-label">eligible older context</div>
-            <div data-hf-id="hf-221c" id="protected-label">protected messages bypass compression</div>
-            <div data-hf-id="hf-gzm6" id="output-label">measured before → after</div>
-
-            <footer data-hf-id="hf-2ors" id="history-lane">
-              <span data-hf-id="hf-qid5" id="history-title">Stored task history</span>
-              <span data-hf-id="hf-tpw0" id="history-blocks" aria-hidden="true">
-                <i data-hf-id="hf-uz6c" class="history-block"></i><i data-hf-id="hf-7ir0" class="history-block"></i><i data-hf-id="hf-6btx" class="history-block"></i><i data-hf-id="hf-6q4y" class="history-block"></i><i data-hf-id="hf-8po3" class="history-block"></i><i data-hf-id="hf-93z4" class="history-block"></i><i data-hf-id="hf-7x21" class="history-block"></i><i data-hf-id="hf-8bd2" class="history-block"></i>
-              </span>
-              <span data-hf-id="hf-yklj" id="history-state">unchanged</span>
-            </footer>
-
-            <div data-hf-id="hf-qyiq" id="closing">
-              <div data-hf-id="hf-7tsd" id="closing-line">Less repeated context.</div>
-              <div data-hf-id="hf-2q2b" id="closing-subline">First request + recent turns stay protected.</div>
-            </div>
-          </div>
-        </div>
+<template>
+  <style>
+    #root, #root * { box-sizing: border-box; }
+    #root {
+      --accent: #a5f2c5;
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(165, 242, 197, 0.03) 1px, transparent 1px) 0 0 / 64px 64px,
+        linear-gradient(90deg, rgba(165, 242, 197, 0.03) 1px, transparent 1px) 0 0 / 64px 64px,
+        radial-gradient(circle at 75% 44%, rgba(165, 242, 197, 0.12), transparent 50%),
+        #0d130f;
+      color: #f7f4e8;
+      font-family: Inter, sans-serif;
+    }
+    #pipeline-scene { position: absolute; inset: 0; }
+    #pipeline-header {
+      position: absolute;
+      left: 184px;
+      right: 184px;
+      top: 112px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 20px;
+      border-bottom: 2px solid #26352c;
+    }
+    #pipeline-kicker {
+      font: 600 32px "IBM Plex Mono", monospace;
+      letter-spacing: 0.06em;
+      color: #c5d1c9;
+    }
+    #pipeline-badge {
+      padding: 8px 20px;
+      border: 2px solid var(--accent);
+      border-radius: 999px;
+      background: #122419;
+      color: var(--accent);
+      font: 700 30px "IBM Plex Mono", monospace;
+      letter-spacing: 0.03em;
+    }
+    #pipeline-title {
+      position: absolute;
+      left: 184px;
+      top: 232px;
+      margin: 0;
+      font-size: 138px;
+      line-height: 1.03;
+      font-weight: 850;
+      letter-spacing: -0.075em;
+    }
+    #pipeline-brand {
+      color: var(--accent);
+      font-size: 192px;
+      font-weight: 900;
+    }
+    #pipeline-method {
+      position: absolute;
+      left: 184px;
+      top: 618px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font: 700 40px "IBM Plex Mono", monospace;
+      letter-spacing: -0.03em;
+    }
+    .pipeline-pill {
+      padding: 10px 22px;
+      border: 2px solid #3b4c41;
+      border-radius: 10px;
+      background: #151f19;
+      color: #f7f4e8;
+    }
+    #pipeline-pill-trim {
+      border-color: var(--accent);
+      background: #172b20;
+      color: var(--accent);
+    }
+    #pipeline-arrow {
+      color: var(--accent);
+      font-size: 42px;
+    }
+    #pipeline-optional {
+      position: absolute;
+      left: 184px;
+      top: 716px;
+      font-size: 38px;
+      font-weight: 600;
+      color: #c5d1c9;
+    }
+    #pipeline-payload {
+      position: absolute;
+      left: 1096px;
+      top: 232px;
+      width: 640px;
+      height: 560px;
+    }
+    .pipeline-kept {
+      position: absolute;
+      left: 0;
+      width: 640px;
+      height: 98px;
+      padding: 0 28px;
+      border: 3px solid var(--accent);
+      border-radius: 12px;
+      background: #112118;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 40px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .pipeline-lock-tag {
+      font: 700 30px "IBM Plex Mono", monospace;
+      color: #c5d1c9;
+      letter-spacing: 0.04em;
+    }
+    #pipeline-first { top: 0; }
+    #pipeline-recent { top: 432px; }
+    #pipeline-old {
+      position: absolute;
+      top: 114px;
+      width: 640px;
+      height: 302px;
+      border-radius: 12px;
+      background: #ff947e;
+      transform-origin: 50% 0;
+    }
+    .pipeline-line {
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      height: 7px;
+      border-radius: 4px;
+      background: #5c342b;
+    }
+    #pipeline-line-a { top: 34px; }
+    #pipeline-line-b { top: 78px; }
+    #pipeline-line-c { top: 122px; }
+    #pipeline-line-d { top: 166px; }
+    #pipeline-line-e { top: 210px; }
+    #pipeline-line-f { top: 254px; }
+    #pipeline-old-label {
+      position: absolute;
+      left: 26px;
+      top: 168px;
+      padding: 8px 18px;
+      border-radius: 8px;
+      color: #0d130f;
+      background: #ff947e;
+      font-size: 42px;
+      font-weight: 800;
+      letter-spacing: -0.035em;
+    }
+    #pipeline-foot {
+      position: absolute;
+      left: 184px;
+      right: 184px;
+      top: 862px;
+      border-top: 2px solid #26352c;
+      padding-top: 26px;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 48px;
+      font-weight: 650;
+      letter-spacing: -0.03em;
+    }
+    #pipeline-foot strong { color: var(--accent); }
+    #pipeline-saved-note {
+      font: 700 32px "IBM Plex Mono", monospace;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+    }
+    #pipeline-flood {
+      position: absolute;
+      inset: 0;
+      background: #a5f2c5;
+      pointer-events: none;
+      z-index: 20;
+    }
+  </style>
+  <div data-hf-id="hf-dk3p" id="root" data-composition-id="pipeline" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-aule" id="pipeline-scene" class="clip" data-start="0" data-duration="5" data-beat="Pack lighter">
+      <div data-hf-id="hf-phdr" id="pipeline-header">
+        <div data-hf-id="hf-5kaj" id="pipeline-kicker">BEFORE THE NEXT MODEL CALL</div>
+        <div data-hf-id="hf-pbdg" id="pipeline-badge">● 113,070 CHARS REMOVED</div>
       </div>
-
-      <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
-      <script>
-        (function () {
-          "use strict";
-          window.__timelines = window.__timelines || {};
-          var root = document.getElementById("root");
-          var vars = window.__hyperframes && window.__hyperframes.getVariables ? window.__hyperframes.getVariables() : {};
-          if (vars.accent) root.style.setProperty("--accent", String(vars.accent));
-          if (vars.headline) document.getElementById("closing-line").textContent = String(vars.headline);
-
-          var tl = gsap.timeline({ paused: true });
-          var messages = ["#msg-first", "#msg-tool", "#msg-log", "#msg-reply", "#msg-recent-a", "#msg-recent-b"];
-          var paths = ["#eligible-path", "#output-path", "#protected-path", "#optional-path"];
-          paths.forEach(function (selector) {
-            var path = document.querySelector(selector);
-            var length = path.getTotalLength();
-            gsap.set(path, { strokeDasharray: length, strokeDashoffset: length });
-          });
-
-          gsap.set("#input-panel", { opacity: 0, x: -34 });
-          gsap.set(messages, { opacity: 0, x: -22 });
-          gsap.set("#processor", { opacity: 0, scale: 0.96 });
-          gsap.set("#output-panel", { opacity: 0, x: 34 });
-          gsap.set(".out-row", { opacity: 0, x: 22 });
-          gsap.set(["#eligible-label", "#protected-label", "#output-label"], { opacity: 0 });
-          gsap.set("#history-lane", { opacity: 0, y: 18 });
-          gsap.set("#closing", { opacity: 0, xPercent: -50, y: 20 });
-          gsap.set("#stage-summarize", { opacity: 0.4 });
-          gsap.set(".payload-chip", { opacity: 0 });
-
-          tl.fromTo("#brand", { opacity: 0, filter: "blur(7px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.35, ease: "power4.out" }, 0.05);
-          tl.fromTo("#extension-label", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" }, 0.18);
-          tl.fromTo("#call-label", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" }, 0.32);
-          tl.to("#input-panel", { opacity: 1, x: 0, duration: 0.48, ease: "expo.out" }, 0.35);
-          messages.forEach(function (selector, index) {
-            tl.to(selector, { opacity: 1, x: 0, duration: 0.3, ease: "power4.out" }, 0.64 + index * 0.16);
-          });
-          tl.to("#history-lane", { opacity: 1, y: 0, duration: 0.42, ease: "power4.out" }, 0.82);
-          tl.to("#eligible-label", { opacity: 1, duration: 0.25, ease: "power2.out" }, 1.75);
-          tl.fromTo(".message.eligible", { backgroundColor: "#181c19" }, { backgroundColor: "#20231f", duration: 0.5, ease: "power2.inOut" }, 1.75);
-          tl.to("#eligible-path", { strokeDashoffset: 0, duration: 0.62, ease: "power2.inOut" }, 2.2);
-          tl.to("#processor", { opacity: 1, scale: 1, duration: 0.46, ease: "expo.out" }, 2.42);
-
-          ["#chip-old-a", "#chip-old-b", "#chip-old-c"].forEach(function (selector, index) {
-            var y = 483 + index * 42;
-            tl.fromTo(selector, { opacity: 0, x: 510, y: y }, { opacity: 1, x: 764, y: 506 + index * 34, duration: 0.72, ease: "power3.inOut" }, 2.28 + index * 0.09);
-            tl.to(selector, { opacity: 0, duration: 0.14, ease: "power2.in" }, 3.08 + index * 0.08);
-          });
-
-          tl.fromTo("#stage-clean", { color: "#a7ada8", backgroundColor: "transparent" }, { color: "#f1f0e9", backgroundColor: "#1b211c", duration: 0.38, ease: "power2.out" }, 3.0);
-          tl.fromTo("#stage-trim", { color: "#a7ada8", backgroundColor: "transparent" }, { color: "#f1f0e9", backgroundColor: "#1b211c", duration: 0.38, ease: "power2.out" }, 3.72);
-          tl.to("#protected-path", { strokeDashoffset: 0, duration: 0.9, ease: "power2.inOut" }, 3.05);
-          tl.to("#protected-label", { opacity: 1, duration: 0.28, ease: "power2.out" }, 3.32);
-          tl.fromTo("#chip-first", { opacity: 0, x: 518, y: 316 }, { opacity: 1, x: 1378, y: 316, duration: 1.18, ease: "power2.inOut" }, 3.12);
-          tl.fromTo("#chip-recent", { opacity: 0, x: 518, y: 346 }, { opacity: 1, x: 1378, y: 346, duration: 1.18, ease: "power2.inOut" }, 3.26);
-          tl.to(["#chip-first", "#chip-recent"], { opacity: 0, duration: 0.16, ease: "power2.in" }, 4.43);
-          tl.to("#optional-path", { strokeDashoffset: 0, duration: 0.55, ease: "power2.inOut" }, 4.42);
-          tl.to("#stage-summarize", { opacity: 1, duration: 0.35, ease: "power2.out" }, 4.52);
-          tl.to("#output-path", { strokeDashoffset: 0, duration: 0.62, ease: "power2.inOut" }, 5.12);
-          tl.to("#output-panel", { opacity: 1, x: 0, duration: 0.48, ease: "expo.out" }, 5.28);
-
-          ["#chip-compact-a", "#chip-compact-b"].forEach(function (selector, index) {
-            tl.fromTo(selector, { opacity: 0, x: 1138, y: 520 + index * 38 }, { opacity: 1, x: 1384, y: 520 + index * 38, duration: 0.72, ease: "power3.inOut" }, 5.22 + index * 0.12);
-            tl.to(selector, { opacity: 0, duration: 0.14, ease: "power2.in" }, 6.02 + index * 0.1);
-          });
-          tl.to(".out-row", { opacity: 1, x: 0, duration: 0.36, stagger: 0.1, ease: "power4.out" }, 5.72);
-          tl.to("#output-label", { opacity: 1, duration: 0.3, ease: "power2.out" }, 5.82);
-
-          var detail = ["#input-panel", "#processor", "#output-panel", "#call-label", "#eligible-label", "#protected-label", "#output-label", "#flow-lines", "#motion-field"];
-          tl.to(detail, { opacity: 0, duration: 0.28, ease: "power2.inOut" }, 7.02);
-          tl.fromTo("#closing", { opacity: 0, xPercent: -50, y: 20, filter: "blur(8px)" }, { opacity: 1, xPercent: -50, y: 0, filter: "blur(0px)", duration: 0.42, ease: "power4.out" }, 7.36);
-          tl.to("#closing", { opacity: 1, duration: 1.55 }, 7.78);
-          tl.to("#closing", { opacity: 0, xPercent: -50, y: -10, duration: 0.25, ease: "power3.in" }, 9.48);
-          tl.to("#history-lane", { opacity: 0, y: 18, duration: 0.22, ease: "power2.in" }, 9.55);
-          tl.to("#extension-label", { opacity: 0, duration: 0.18, ease: "power2.in" }, 9.64);
-
-          tl.seek(0);
-          window.__timelines.pipeline = tl;
-        })();
-      </script>
-    </template>
-  </body>
-</html>
+      <h2 data-hf-id="hf-y6ka" id="pipeline-title"><span data-hf-id="hf-o2f1" id="pipeline-brand">broke</span><br data-hf-id="hf-x5px">packs lighter.</h2>
+      <div data-hf-id="hf-p65i" id="pipeline-method">
+        <span data-hf-id="hf-pcln" class="pipeline-pill">01 Clean</span>
+        <span data-hf-id="hf-parr" id="pipeline-arrow">→</span>
+        <span data-hf-id="hf-ptrm" id="pipeline-pill-trim" class="pipeline-pill">02 Trim · default</span>
+      </div>
+      <div data-hf-id="hf-7b1q" id="pipeline-optional">Local Ollama summaries? Optional.</div>
+      <div data-hf-id="hf-x846" id="pipeline-payload">
+        <div data-hf-id="hf-pdi8" id="pipeline-first" class="pipeline-kept"><span data-hf-id="hf-pf1">✓ First request</span><span data-hf-id="hf-pf2" class="pipeline-lock-tag">PROTECTED</span></div>
+        <div data-hf-id="hf-pfhk" id="pipeline-old" aria-hidden="true"><i data-hf-id="hf-xary" id="pipeline-line-a" class="pipeline-line"></i><i data-hf-id="hf-tcnx" id="pipeline-line-b" class="pipeline-line"></i><i data-hf-id="hf-sl04" id="pipeline-line-c" class="pipeline-line"></i><i data-hf-id="hf-g2hn" id="pipeline-line-d" class="pipeline-line"></i><i data-hf-id="hf-c4dm" id="pipeline-line-e" class="pipeline-line"></i><i data-hf-id="hf-5ynt" id="pipeline-line-f" class="pipeline-line"></i></div>
+        <div data-hf-id="hf-l8sn" id="pipeline-old-label" data-layout-allow-overlap>Older context · -32.2%</div>
+        <div data-hf-id="hf-5615" id="pipeline-recent" class="pipeline-kept"><span data-hf-id="hf-pr1">✓ Recent turns</span><span data-hf-id="hf-pr2" class="pipeline-lock-tag">PROTECTED</span></div>
+      </div>
+      <div data-hf-id="hf-rqkq" id="pipeline-foot">
+        <span data-hf-id="hf-pft1">Stored task history: <strong data-hf-id="hf-rrwr">unchanged.</strong></span>
+        <span data-hf-id="hf-pft2" id="pipeline-saved-note">PAYLOAD READY TO SEND</span>
+      </div>
+      <div data-hf-id="hf-pfld" id="pipeline-flood" aria-hidden="true" data-layout-ignore></div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    window.__timelines = window.__timelines || {};
+    var tl = gsap.timeline({ paused: true });
+    tl.fromTo('#pipeline-brand', { y: 18, opacity: 0.35 }, { y: 0, opacity: 1, duration: 0.28, ease: 'expo.out' }, 0);
+    tl.fromTo('#pipeline-payload', { y: -10 }, { y: 0, duration: 0.24, ease: 'power3.out' }, 0);
+    // Hydraulic compression: only the older-context core shrinks; protected boxes keep their dimensions.
+    tl.fromTo('#pipeline-old', { scaleY: 1, backgroundColor: '#ff947e' }, { scaleY: 0.46, backgroundColor: '#a5f2c5', duration: 0.88, ease: 'expo.inOut' }, 0.78);
+    tl.fromTo('#pipeline-recent', { y: 0 }, { y: -163, duration: 0.88, ease: 'expo.inOut' }, 0.78);
+    tl.fromTo('#pipeline-old-label', { y: 0, backgroundColor: '#ff947e' }, { y: -38, backgroundColor: '#a5f2c5', duration: 0.88, ease: 'expo.inOut' }, 0.78);
+    tl.fromTo('#pipeline-pill-trim', { scale: 1 }, { scale: 1.05, duration: 0.22, yoyo: true, repeat: 1, ease: 'power2.out' }, 0.95);
+    tl.fromTo('#pipeline-foot', { y: 14, opacity: 0.25 }, { y: 0, opacity: 1, duration: 0.35, ease: 'power3.out' }, 1.55);
+    // Causal iris colour-flood handoff at 4.82s-5.0s (global 8.02s-8.2s): solid mint expands radially from the compressed block.
+    tl.fromTo('#pipeline-flood', { clipPath: 'circle(0% at 74% 38%)' }, { clipPath: 'circle(135% at 74% 38%)', duration: 0.18, ease: 'power3.in' }, 4.82);
+    window.__timelines.pipeline = tl;
+  </script>
+</template>

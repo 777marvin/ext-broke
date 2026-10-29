@@ -1,0 +1,189 @@
+<template>
+  <style>
+    #root, #root * { box-sizing: border-box; }
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(165, 242, 197, 0.03) 1px, transparent 1px) 0 0 / 64px 64px,
+        linear-gradient(90deg, rgba(165, 242, 197, 0.03) 1px, transparent 1px) 0 0 / 64px 64px,
+        radial-gradient(circle at 75% 44%, rgba(255, 148, 126, 0.14), transparent 48%),
+        #0d130f;
+      color: #f7f4e8;
+      font-family: Inter, sans-serif;
+    }
+    #hook-scene { position: absolute; inset: 0; }
+    #hook-header {
+      position: absolute;
+      left: 184px;
+      right: 184px;
+      top: 112px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 20px;
+      border-bottom: 2px solid #26352c;
+    }
+    #hook-kicker {
+      font: 600 32px "IBM Plex Mono", monospace;
+      letter-spacing: 0.06em;
+      color: #c5d1c9;
+    }
+    #hook-meter {
+      padding: 8px 20px;
+      border: 2px solid #ff947e;
+      border-radius: 999px;
+      background: #231412;
+      color: #ff947e;
+      font: 700 30px "IBM Plex Mono", monospace;
+      letter-spacing: 0.03em;
+    }
+    #hook-title {
+      position: absolute;
+      left: 184px;
+      top: 236px;
+      margin: 0;
+      font-size: 148px;
+      line-height: 1.01;
+      font-weight: 850;
+      letter-spacing: -0.075em;
+      color: #f7f4e8;
+    }
+    #hook-word {
+      display: block;
+      color: #ff947e;
+      font-size: 188px;
+      font-weight: 900;
+      letter-spacing: -0.08em;
+    }
+    #hook-note {
+      position: absolute;
+      left: 184px;
+      top: 660px;
+      width: 780px;
+      font-size: 52px;
+      font-weight: 650;
+      line-height: 1.18;
+      letter-spacing: -0.03em;
+      color: #e9e6da;
+    }
+    #hook-stack {
+      position: absolute;
+      left: 1096px;
+      top: 218px;
+      width: 640px;
+      height: 620px;
+      padding: 20px;
+      border: 2px solid #2b3b31;
+      border-radius: 20px;
+      background: rgba(17, 23, 19, 0.92);
+    }
+    .hook-ticket {
+      position: absolute;
+      left: 24px;
+      width: 592px;
+      height: 108px;
+      border: 3px solid #0d130f;
+      border-radius: 12px;
+      background: #ff947e;
+      color: #0d130f;
+      padding: 0 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font: 700 40px "IBM Plex Mono", monospace;
+      letter-spacing: -0.04em;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+    }
+    .hook-size {
+      font: 700 32px "IBM Plex Mono", monospace;
+      padding: 4px 12px;
+      border-radius: 6px;
+      background: rgba(13, 19, 15, 0.14);
+      color: #0d130f;
+      letter-spacing: -0.02em;
+    }
+    #hook-log-a { top: 24px; }
+    #hook-log-b { top: 142px; }
+    #hook-log-c { top: 260px; }
+    #hook-log-d { top: 378px; }
+    #hook-tag {
+      position: absolute;
+      left: 28px;
+      top: 508px;
+      z-index: 4;
+      white-space: nowrap;
+      font: 700 30px "IBM Plex Mono", monospace;
+      letter-spacing: 0.02em;
+      color: #ffb7a8;
+    }
+    #hook-pressure-track {
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      top: 566px;
+      z-index: 1;
+      height: 14px;
+      border-radius: 999px;
+      background: #232f27;
+      overflow: hidden;
+    }
+    #hook-pressure-fill {
+      width: 100%;
+      height: 100%;
+      background: #ff947e;
+      transform-origin: 0 50%;
+    }
+    #hook-rule {
+      position: absolute;
+      left: 184px;
+      right: 184px;
+      top: 888px;
+      padding-top: 22px;
+      border-top: 2px solid #26352c;
+      display: flex;
+      justify-content: space-between;
+      font: 600 32px "IBM Plex Mono", monospace;
+      color: #c5d1c9;
+    }
+    #hook-rule-warn { color: #ff947e; }
+  </style>
+  <div data-hf-id="hf-ktv8" id="root" data-composition-id="hook" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-f7sg" id="hook-scene" class="clip" data-start="0" data-duration="3.2" data-beat="The baggage">
+      <div data-hf-id="hf-hdr1" id="hook-header">
+        <div data-hf-id="hf-zf0t" id="hook-kicker">LONG AI CODING SESSION · TURN #67</div>
+        <div data-hf-id="hf-mtr1" id="hook-meter">351,403 CHARS QUEUED</div>
+      </div>
+      <h1 data-hf-id="hf-4qbz" id="hook-title"><span data-hf-id="hf-iouf" data-var-text="hook">Your AI has</span><span data-hf-id="hf-40m4" id="hook-word">baggage.</span></h1>
+      <div data-hf-id="hf-q4qq" id="hook-note">Same old logs.<br data-hf-id="hf-x5px">Re-sent on every call.</div>
+      <div data-hf-id="hf-1tjv" id="hook-stack">
+        <div data-hf-id="hf-2cqr" id="hook-log-a" class="hook-ticket"><span data-hf-id="hf-la1">test output</span><span data-hf-id="hf-ls1" class="hook-size">48 KB</span></div>
+        <div data-hf-id="hf-15ca" id="hook-log-b" class="hook-ticket"><span data-hf-id="hf-lb1">test output</span><span data-hf-id="hf-ls2" class="hook-size">48 KB</span></div>
+        <div data-hf-id="hf-trwd" id="hook-log-c" class="hook-ticket"><span data-hf-id="hf-lc1">compiler log</span><span data-hf-id="hf-ls3" class="hook-size">64 KB</span></div>
+        <div data-hf-id="hf-15ik" id="hook-log-d" class="hook-ticket"><span data-hf-id="hf-ld1">old tool output</span><span data-hf-id="hf-ls4" class="hook-size">82 KB</span></div>
+        <div data-hf-id="hf-4rv8" id="hook-tag">OLDER CONTEXT · SENT EVERY TURN</div>
+        <div data-hf-id="hf-ptrk" id="hook-pressure-track" aria-hidden="true" data-layout-ignore><div data-hf-id="hf-pfl1" id="hook-pressure-fill"></div></div>
+      </div>
+      <div data-hf-id="hf-pe77" id="hook-rule">
+        <span data-hf-id="hf-hrl1">67 MESSAGES IN CONTEXT</span>
+        <span data-hf-id="hf-hrl2" id="hook-rule-warn">REDUNDANT PAYLOAD GROWING</span>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    window.__timelines = window.__timelines || {};
+    var tl = gsap.timeline({ paused: true });
+    // Frame 0 carries the hook and first log slab; each subsequent turn slams in with physical weight.
+    tl.fromTo('#hook-pressure-fill', { scaleX: 0.28 }, { scaleX: 1, duration: 1.85, ease: 'power3.out' }, 0.2);
+    tl.fromTo('#hook-log-b', { x: 96, opacity: 0, filter: 'blur(8px)' }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.26, ease: 'expo.out' }, 0.38);
+    tl.fromTo('#hook-log-c', { x: 96, opacity: 0, filter: 'blur(8px)' }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.26, ease: 'expo.out' }, 0.98);
+    tl.fromTo('#hook-log-d', { x: 96, opacity: 0, filter: 'blur(8px)' }, { x: 0, opacity: 1, filter: 'blur(0px)', duration: 0.26, ease: 'expo.out' }, 1.58);
+    tl.fromTo('#hook-word', { x: 0 }, { x: 12, duration: 0.09, yoyo: true, repeat: 1, ease: 'power2.inOut' }, 1.62);
+    tl.fromTo('#hook-meter', { scale: 1 }, { scale: 1.06, duration: 0.14, yoyo: true, repeat: 1, ease: 'power2.out' }, 1.62);
+    // Causal lock-in before the cut at 3.2s: the stack clamps into the compression chamber position.
+    tl.fromTo('#hook-stack', { y: 0, scale: 1 }, { y: 12, scale: 0.985, duration: 0.22, ease: 'power3.in' }, 2.95);
+    window.__timelines.hook = tl;
+  </script>
+</template>

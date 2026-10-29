@@ -1,59 +1,26 @@
 <!doctype html>
-<html
-  lang="en"
-  data-composition-variables='[
-    { "id": "accent", "type": "color", "label": "Accent", "default": "#8de0b4" },
-    { "id": "headline", "type": "string", "label": "Headline", "default": "Less repeated context." }
-  ]'
->
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=1920, height=1080" />
-    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
-    <style>
-      * { box-sizing: border-box; }
-      html, body {
-        width: 1920px;
-        height: 1080px;
-        margin: 0;
-        overflow: hidden;
-        background: #0a0c0b;
-      }
-      #root {
-        position: relative;
-        width: 1920px;
-        height: 1080px;
-        overflow: hidden;
-        background: #0a0c0b;
-      }
-      #pipeline { position: absolute; inset: 0; }
-    </style>
-  </head>
-  <body>
-    <div data-hf-id="hf-199x"
-      id="root"
-      data-composition-id="main"
-      data-start="0"
-      data-duration="10"
-      data-width="1920"
-      data-height="1080"
-    >
-      <div data-hf-id="hf-6fz8"
-        id="pipeline"
-        class="clip"
-        data-composition-id="pipeline"
-        data-composition-src="compositions/pipeline.html"
-        data-start="0"
-        data-duration="10"
-        data-track-index="0"
-        data-track-kind="graphics"
-        data-width="1920"
-        data-height="1080"
-      ></div>
-    </div>
-    <script>
-      window.__timelines = window.__timelines || {};
-      window.__timelines.main = gsap.timeline({ paused: true });
-    </script>
-  </body>
+<html lang="en" data-composition-variables='[{"id":"accent","type":"color","label":"Protected context","default":"#a5f2c5"},{"id":"hook","type":"string","label":"Opening hook","default":"Your AI has"}]'>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1920, height=1080">
+  <title>broke — drop the baggage</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #0d130f; }
+    #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+    .clip { position: absolute; inset: 0; }
+  </style>
+</head>
+<body>
+  <div data-hf-id="hf-ofop" id="root" data-composition-id="main" data-start="0" data-duration="14" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-1a7t" id="hook" class="clip" data-composition-id="hook" data-composition-src="compositions/hook.html" data-start="0" data-duration="3.2" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+    <div data-hf-id="hf-81ep" id="pipeline" class="clip" data-composition-id="pipeline" data-composition-src="compositions/pipeline.html" data-start="3.2" data-duration="5" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+    <div data-hf-id="hf-z3da" id="proof" class="clip" data-composition-id="proof" data-composition-src="compositions/proof.html" data-start="8.2" data-duration="5.8" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+  </div>
+  <script>
+    window.__timelines = window.__timelines || {};
+    window.__timelines.main = gsap.timeline({ paused: true });
+  </script>
+</body>
 </html>
