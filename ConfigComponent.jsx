@@ -8,6 +8,7 @@
   const [newToolKB, setNewToolKB] = React.useState('12');
   const [pendingCmd, setPendingCmd] = React.useState(null);
   const [cmdResult, setCmdResult] = React.useState(null);
+  const [executingCmd, setExecutingCmd] = React.useState(null);
   const [customCmd, setCustomCmd] = React.useState('');
 
   const revision = React.useRef(0);
@@ -106,7 +107,7 @@
 
   const runDeckCommand = async (rawCmd) => {
     const cmd = String(rawCmd ?? '').trim().replace(/^\/?broke\b\s*/i, '');
-    if (!cmd) return;
+    if (!cmd || executingCmd) return;
     const mutating = !READONLY_DECK_CMDS.has(cmd) && !cmd.startsWith('diff ') && !cmd.startsWith('search ') && !cmd.startsWith('config get ') && !cmd.startsWith('snapshot show ');
     if (mutating && pendingCmd !== cmd) {
       setPendingCmd(cmd);
@@ -115,12 +116,23 @@
     }
     setPendingCmd(null);
     setCmdResult(null);
+    setExecutingCmd(cmd);
     try {
       const res = (await executeExtensionAction('runCommand', `broke ${cmd}`)) as { ok?: boolean; message?: string; error?: string } | undefined;
-      if (res?.ok === true) setCmdResult({ ok: true, cmd, text: res.message ?? '' });
-      else setCmdResult({ ok: false, cmd, text: res?.error ?? 'Command returned no result' });
+      if (res?.ok === true) {
+        setCmdResult({ ok: true, cmd, text: res.message ?? '' });
+        const fresh = (await executeExtensionAction('getConfig')) as Record<string, unknown> | undefined;
+        if (fresh && typeof fresh === 'object') {
+          lastPublished.current = fresh;
+          publishConfig(fresh);
+        }
+      } else {
+        setCmdResult({ ok: false, cmd, text: res?.error ?? 'Command returned no result' });
+      }
     } catch {
       setCmdResult({ ok: false, cmd, text: 'Command could not be executed' });
+    } finally {
+      setExecutingCmd(null);
     }
   };
 
@@ -370,7 +382,7 @@
                       {r.enabled === false ? 'exempt (off)' : `${r.maxLines ?? truncate.maxLines ?? 200} lines / ${r.maxKB ?? truncate.maxKB ?? 20} KB`}
                     </span>
                     <div className="flex gap-2">
-                      <button type="button" onClick={() => addOrUpdateToolRule(toolName, { enabled: r.enabled === false })} style={{ padding: '4px 8px', fontSize: 11, border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4, background: '#fff', cursor: 'pointer' }}>
+                      <button type="button" onClick={() => addOrUpdateToolRule(toolName, { ...r, enabled: r.enabled === false })} style={{ padding: '4px 8px', fontSize: 11, border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4, background: '#fff', cursor: 'pointer' }}>
                         {r.enabled === false ? 'Enable' : 'Exempt'}
                       </button>
                       <button type="button" onClick={() => removeToolRule(toolName)} style={{ padding: '4px 8px', fontSize: 11, border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4, background: '#fff', cursor: 'pointer' }}>Reset</button>
@@ -387,6 +399,7 @@
               label="Tool name"
               defaultValue={newToolName}
               onChange={(e) => setNewToolName(e.target.value)}
+              onBlur={(e) => setNewToolName(e.target.value)}
             />
             <Input
               label="Tool max lines"
@@ -394,6 +407,7 @@
               min="1"
               defaultValue={newToolLines}
               onChange={(e) => setNewToolLines(e.target.value)}
+              onBlur={(e) => setNewToolLines(e.target.value)}
             />
             <Input
               label="Tool max KB"
@@ -401,6 +415,7 @@
               min="1"
               defaultValue={newToolKB}
               onChange={(e) => setNewToolKB(e.target.value)}
+              onBlur={(e) => setNewToolKB(e.target.value)}
             />
             <button
               type="button"
@@ -409,6 +424,7 @@
                 const k = Math.trunc(Number(newToolKB));
                 if (newToolName.trim() && l > 0 && k > 0) {
                   addOrUpdateToolRule(newToolName.trim(), { enabled: true, maxLines: l, maxKB: k });
+                  setNewToolName('');
                 }
               }}
               style={{ padding: '6px 12px', fontSize: 12, border: '1px solid rgba(0,0,0,0.2)', borderRadius: 5, background: '#fff', cursor: 'pointer', fontWeight: 600 }}
@@ -643,6 +659,7 @@
             <button
               key={cmd}
               type="button"
+              disabled={executingCmd !== null}
               onClick={() => void runDeckCommand(cmd)}
               style={{
                 padding: '6px 10px',
@@ -651,11 +668,12 @@
                 borderRadius: 5,
                 background: pendingCmd === cmd ? '#fff3cd' : '#ffffff',
                 color: pendingCmd === cmd ? '#7a5c00' : '#111',
-                cursor: 'pointer',
+                cursor: executingCmd !== null ? 'not-allowed' : 'pointer',
                 fontWeight: 500,
+                opacity: executingCmd !== null && executingCmd !== cmd ? 0.6 : 1,
               }}
             >
-              {pendingCmd === cmd ? `Confirm? /broke ${cmd}` : `/broke ${cmd}`}
+              {executingCmd === cmd ? `Running /broke ${cmd}...` : pendingCmd === cmd ? `Confirm? /broke ${cmd}` : `/broke ${cmd}`}
             </button>
           ))}
         </div>
@@ -673,6 +691,7 @@
           />
           <button
             type="button"
+            disabled={executingCmd !== null || !customCmd.trim()}
             onClick={() => void runDeckCommand(customCmd)}
             style={{
               padding: '6px 12px',
@@ -681,11 +700,12 @@
               borderRadius: 5,
               background: '#0066cc',
               color: '#fff',
-              cursor: 'pointer',
+              cursor: executingCmd !== null || !customCmd.trim() ? 'not-allowed' : 'pointer',
               fontWeight: 600,
+              opacity: executingCmd !== null || !customCmd.trim() ? 0.6 : 1,
             }}
           >
-            {pendingCmd && pendingCmd === customCmd.trim().replace(/^\/?broke\b\s*/i, '') ? 'Confirm Execute' : 'Execute Command'}
+            {executingCmd === customCmd.trim().replace(/^\/?broke\b\s*/i, '') ? 'Executing...' : pendingCmd && pendingCmd === customCmd.trim().replace(/^\/?broke\b\s*/i, '') ? 'Confirm Execute' : 'Execute Command'}
           </button>
         </div>
         {cmdResult ? (

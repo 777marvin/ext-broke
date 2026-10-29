@@ -13,6 +13,22 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ## [Unreleased]
 
+### Added
+
+- Precision Instrument Cockpit in `StatusBadge.jsx`: telemetry header (mode, level, autonomy, runs), live Context Budget Gauge with per-pass token breakdown, and interactive 3-step onboarding flow.
+- Full Command Studio covering 100% of `/broke` commands across diagnostics, snapshots, flush, local search, ST-slicing, pipeline modes, and configuration with 2-step confirmation for mutating actions and execution indicators.
+- Interactive Command & Maintenance Deck and per-tool truncation rules editor (`truncate.tools`) in `ConfigComponent.jsx`.
+- Schema configuration support for ST-Slicing (`slice.*`), per-tool truncation (`truncate.tools`), search ignored files (`search.includeGitIgnored`), and per-message menu toggle (`ui.showMessageMenu`).
+
+### Fixed
+
+- Preserve tool truncation limits (`maxLines`, `maxKB`) when toggling exemption state in `ConfigComponent.jsx`.
+- Fix deletion of dictionary entries (such as per-tool truncation rules) in `mergeConfigDraft` so reset actions persist cleanly.
+- Synchronize host configuration after executing commands from the settings maintenance deck in `ConfigComponent.jsx`.
+- Trigger live UI data refresh on `/broke reset` and `/broke flush` commands so the status bar badge immediately reflects cleared task stats.
+- Guard against confirmation cross-talk across parameterized command builders in `StatusBadge.jsx`.
+- Restore keyboard focus in onboarding step 2 when the readiness check completes.
+
 ### Changed
 
 - Overhaul the README HyperFrames animation into the "Your AI has baggage"

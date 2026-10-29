@@ -46,6 +46,7 @@
   const overlaySession = React.useRef(0);
   const guideButtonRef = React.useRef(null);
   const checkButtonRef = React.useRef(null);
+  const onboardingCheckButtonRef = React.useRef(null);
   const restoreCheckFocus = React.useRef(false);
   const guideRevision = React.useRef(0);
   const restoreGuideFocus = React.useRef(false);
@@ -55,6 +56,7 @@
   // commands require two-step confirmation (`pendingCommand` holds the armed command).
   const [pendingCommand, setPendingCommand] = React.useState(null);
   const [commandResult, setCommandResult] = React.useState(null);
+  const [executingCmd, setExecutingCmd] = React.useState<string | null>(null);
   const revision = React.useRef(0);
   const gearRef = React.useRef(null);
   const dialogRef = React.useRef(null);
@@ -97,8 +99,21 @@
     transition: 'border-color 0.15s, box-shadow 0.15s',
   };
 
+  const buttonStyle = {
+    padding: '7px 10px',
+    fontSize: 12,
+    border: '1px solid #cbd5e1',
+    borderRadius: 6,
+    background: '#ffffff',
+    color: '#0f172a',
+    outline: 'none',
+    boxSizing: 'border-box' as const,
+    cursor: 'pointer',
+    transition: 'border-color 0.15s, box-shadow 0.15s',
+  };
+
   const closeOverlay = () => {
-    if (savingRef.current) return;
+    if (savingRef.current || executingCmd) return;
     invalidatePreview();
     overlaySession.current++;
     setPendingCommand(null);
@@ -128,9 +143,15 @@
   React.useEffect(() => {
     if (!checkingSetup && restoreCheckFocus.current) {
       restoreCheckFocus.current = false;
-      if (overlayOpen && (document.activeElement === document.body || document.activeElement === dialogRef.current)) checkButtonRef.current?.focus();
+      if (overlayOpen) {
+        if (guideVisible && guideStep === 2 && onboardingCheckButtonRef.current) {
+          onboardingCheckButtonRef.current.focus();
+        } else if (document.activeElement === document.body || document.activeElement === dialogRef.current) {
+          checkButtonRef.current?.focus();
+        }
+      }
     }
-  }, [checkingSetup, overlayOpen]);
+  }, [checkingSetup, overlayOpen, guideVisible, guideStep]);
 
   const openOverlay = async () => {
     const request = ++revision.current;
@@ -183,7 +204,7 @@
   const checkSetup = async () => {
     if (!draftRef.current || savingRef.current || checkingSetup) return;
     const request = ++setupRequest.current;
-    restoreCheckFocus.current = document.activeElement === checkButtonRef.current;
+    restoreCheckFocus.current = document.activeElement === checkButtonRef.current || document.activeElement === onboardingCheckButtonRef.current;
     setCheckingSetup(true);
     setSetupReadiness(null);
     setOverlayError(null);
@@ -278,7 +299,7 @@
   };
 
   const runQuickCommand = async (rawCmd: string) => {
-    if (saving || previewing) return;
+    if (saving || previewing || executingCmd) return;
     const cmd = rawCmd.trim().replace(/^\/?broke\b\s*/i, '');
     if (!cmd) return;
     if (isMutatingCommand(cmd) && pendingCommand !== cmd) {
@@ -288,10 +309,14 @@
     }
     setPendingCommand(null);
     setCommandResult(null);
+    setExecutingCmd(cmd);
     try {
       const res = (await executeExtensionAction?.('runCommand', `broke ${cmd}`)) as { ok?: boolean; message?: string; error?: string } | undefined;
       if (res?.ok === true) {
         setCommandResult({ ok: true, text: res.message ?? '', cmd });
+        if (cmd === 'reset' || cmd.startsWith('reset') || cmd.startsWith('flush')) {
+          executeExtensionAction?.('refresh').catch?.(() => {});
+        }
         // If a command mutated config, sync the draft seamlessly
         if (
           cmd.startsWith('mode ') ||
@@ -320,6 +345,8 @@
       }
     } catch {
       setCommandResult({ ok: false, text: 'the command could not be run', cmd });
+    } finally {
+      setExecutingCmd(null);
     }
   };
 
@@ -805,7 +832,7 @@
                     type="button"
                     onClick={() => { guideRevision.current++; setGuideVisible(true); }}
                     disabled={saving}
-                    style={{ ...selectStyle, width: 'auto', minHeight: 34, fontWeight: 600, background: '#f8fafc' }}
+                    style={{ ...buttonStyle, minHeight: 34, fontWeight: 600, background: '#f8fafc' }}
                   >
                     Setup guide
                   </button>
@@ -813,7 +840,7 @@
                     type="button"
                     onClick={() => setAdvancedOpen((prev) => !prev)}
                     disabled={saving}
-                    style={{ ...selectStyle, width: 'auto', minHeight: 34, fontWeight: 600, color: '#0369a1', border: '1px solid #bae6fd', background: '#f0f9ff' }}
+                    style={{ ...buttonStyle, minHeight: 34, fontWeight: 600, color: '#0369a1', border: '1px solid #bae6fd', background: '#f0f9ff' }}
                   >
                     {advancedOpen ? 'Hide Command Studio' : 'Open Command Studio (All Commands)'}
                   </button>
@@ -838,7 +865,7 @@
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                       <h2 style={{ margin: 0, fontSize: 16, color: '#0f172a', fontWeight: 750 }}>Welcome to Broke</h2>
-                      <div style={{ display: 'flex', gap: 4 }}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {[
                           { step: 1, label: '1. Approach' },
                           { step: 2, label: '2. Readiness' },
@@ -893,12 +920,13 @@
                           </div>
                           <div>
                             <button
+                              ref={onboardingCheckButtonRef}
                               type="button"
                               onClick={() => void checkSetup()}
                               disabled={saving || checkingSetup}
-                              style={{ ...selectStyle, width: 'auto', padding: '5px 10px', fontWeight: 600, background: '#f0f9ff', border: '1px solid #7dd3fc', color: '#0369a1' }}
+                              style={{ ...buttonStyle, padding: '5px 10px', fontWeight: 600, background: '#f0f9ff', border: '1px solid #7dd3fc', color: '#0369a1' }}
                             >
-                              Run Readiness Check Now
+                              {checkingSetup ? 'Checking setup...' : 'Run Readiness Check Now'}
                             </button>
                           </div>
                         </div>
@@ -913,7 +941,7 @@
                               type="button"
                               onClick={() => { setAdvancedOpen(true); setCmdCategory('all'); }}
                               disabled={saving}
-                              style={{ ...selectStyle, width: 'auto', padding: '4px 9px', fontSize: 11, fontWeight: 600, background: '#0f172a', color: '#fff' }}
+                              style={{ ...buttonStyle, padding: '4px 9px', fontSize: 11, fontWeight: 600, background: '#0f172a', color: '#fff' }}
                             >
                               Explore All Commands
                             </button>
@@ -921,7 +949,7 @@
                               type="button"
                               onClick={() => void runQuickCommand('index status')}
                               disabled={saving}
-                              style={{ ...selectStyle, width: 'auto', padding: '4px 9px', fontSize: 11, fontWeight: 600 }}
+                              style={{ ...buttonStyle, padding: '4px 9px', fontSize: 11, fontWeight: 600 }}
                             >
                               Try: Check Search Index
                             </button>
@@ -929,7 +957,7 @@
                               type="button"
                               onClick={() => void runQuickCommand('snapshot list')}
                               disabled={saving}
-                              style={{ ...selectStyle, width: 'auto', padding: '4px 9px', fontSize: 11, fontWeight: 600 }}
+                              style={{ ...buttonStyle, padding: '4px 9px', fontSize: 11, fontWeight: 600 }}
                             >
                               Try: List Snapshots
                             </button>
@@ -940,10 +968,10 @@
 
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button type="button" onClick={finishGuide} disabled={saving} style={{ ...selectStyle, width: 'auto', minHeight: 38, fontWeight: 700, background: '#0066cc', color: '#fff', border: '1px solid #005bb7' }}>
+                        <button type="button" onClick={finishGuide} disabled={saving} style={{ ...buttonStyle, minHeight: 38, fontWeight: 700, background: '#0066cc', color: '#fff', border: '1px solid #005bb7' }}>
                           Got it
                         </button>
-                        <button type="button" onClick={finishGuide} disabled={saving} style={{ ...selectStyle, width: 'auto', minHeight: 38 }}>
+                        <button type="button" onClick={finishGuide} disabled={saving} style={{ ...buttonStyle, minHeight: 38 }}>
                           Skip introduction
                         </button>
                       </div>
@@ -952,7 +980,7 @@
                           type="button"
                           onClick={() => setGuideStep((s) => Math.min(3, s + 1))}
                           disabled={saving}
-                          style={{ ...selectStyle, width: 'auto', minHeight: 34, fontSize: 11, fontWeight: 600 }}
+                          style={{ ...buttonStyle, minHeight: 34, fontSize: 11, fontWeight: 600 }}
                         >
                           Next step →
                         </button>
@@ -1396,6 +1424,7 @@
                         {visibleQuickCommands.map((item) => {
                           const armed = pendingCommand === item.cmd;
                           const mutating = isMutatingCommand(item.cmd);
+                          const isRunning = executingCmd === item.cmd;
                           return (
                             <button
                               key={item.cmd}
@@ -1404,38 +1433,40 @@
                                 e.stopPropagation();
                                 void runQuickCommand(item.cmd);
                               }}
-                              disabled={saving || previewing}
+                              disabled={saving || previewing || executingCmd !== null}
                               style={{
                                 padding: '7px 9px',
                                 fontSize: 11.5,
-                                background: armed ? '#fff3cd' : '#ffffff',
-                                border: `1px solid ${armed ? '#d4a017' : '#cbd5e1'}`,
+                                background: isRunning ? '#e0f2fe' : armed ? '#fff3cd' : '#ffffff',
+                                border: `1px solid ${isRunning ? '#0284c7' : armed ? '#d4a017' : '#cbd5e1'}`,
                                 borderRadius: 6,
-                                cursor: saving || previewing ? 'not-allowed' : 'pointer',
-                                color: armed ? '#7a5c00' : '#0f172a',
+                                cursor: saving || previewing || executingCmd !== null ? 'not-allowed' : 'pointer',
+                                color: isRunning ? '#0369a1' : armed ? '#7a5c00' : '#0f172a',
                                 textAlign: 'left',
                                 fontWeight: 500,
-                                opacity: saving || previewing ? 0.5 : 1,
+                                opacity: saving || previewing || (executingCmd !== null && !isRunning) ? 0.5 : 1,
                                 transition: 'all 0.15s ease',
                                 boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
                               }}
                               onMouseEnter={(e) => {
-                                if (!saving && !previewing && !armed) {
+                                if (!saving && !previewing && !executingCmd && !armed) {
                                   e.currentTarget.style.background = '#f0f7ff';
                                   e.currentTarget.style.borderColor = '#0066cc';
                                   e.currentTarget.style.color = '#0066cc';
                                 }
                               }}
                               onMouseLeave={(e) => {
-                                if (!saving && !previewing && !armed) {
+                                if (!saving && !previewing && !executingCmd && !armed) {
                                   e.currentTarget.style.background = '#ffffff';
                                   e.currentTarget.style.borderColor = '#cbd5e1';
                                   e.currentTarget.style.color = '#0f172a';
                                 }
                               }}
-                              title={armed ? 'Click again to run this command' : mutating ? `${item.desc} - needs a second click to confirm` : item.desc}
+                              title={isRunning ? `Running /broke ${item.label}...` : armed ? 'Click again to run this command' : mutating ? `${item.desc} - needs a second click to confirm` : item.desc}
                             >
-                              {armed ? (
+                              {isRunning ? (
+                                <>Running <span style={{ fontWeight: 700 }}>/broke {item.label}...</span></>
+                              ) : armed ? (
                                 <>Confirm? <span style={{ fontWeight: 700 }}>/broke {item.label}</span></>
                               ) : (
                                 <>/broke <span style={{ fontWeight: 700 }}>{item.label}</span></>
@@ -1450,7 +1481,7 @@
                         <div style={{ fontWeight: 700, fontSize: 12, color: '#0f172a' }}>Parameterized Command Builders</div>
 
                         {/* 1. Local Project Search & Diff Digest */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
                           <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 7, padding: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
                             <span style={{ fontSize: 11, fontWeight: 650, color: '#334155' }}>Local Search (broke-search)</span>
                             <div style={{ display: 'flex', gap: 5 }}>
@@ -1466,12 +1497,12 @@
                               />
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null}
                                 onClick={() => {
                                   const q = (searchInputRef.current?.value ?? searchQuery).trim();
                                   if (q) void runQuickCommand(`search ${q}`);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', fontWeight: 650, whiteSpace: 'nowrap' }}
+                                style={{ ...buttonStyle, fontWeight: 650, whiteSpace: 'nowrap' }}
                               >
                                 Run search
                               </button>
@@ -1494,12 +1525,12 @@
                               />
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null}
                                 onClick={() => {
                                   const b = (diffInputRef.current?.value ?? diffBudget).trim();
                                   void runQuickCommand(b ? `diff ${b}` : 'diff');
                                 }}
-                                style={{ ...selectStyle, width: 'auto', fontWeight: 650, whiteSpace: 'nowrap' }}
+                                style={{ ...buttonStyle, fontWeight: 650, whiteSpace: 'nowrap' }}
                               >
                                 Run diff
                               </button>
@@ -1508,7 +1539,7 @@
                         </div>
 
                         {/* 2. Snapshots & Flush Undo */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
                           <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 7, padding: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
                             <span style={{ fontSize: 11, fontWeight: 650, color: '#334155' }}>Record Labeled Snapshot</span>
                             <div style={{ display: 'flex', gap: 5 }}>
@@ -1524,15 +1555,19 @@
                               />
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null}
                                 onClick={() => {
                                   const lbl = (snapshotLabelRef.current?.value ?? snapshotLabel).trim();
                                   const cmd = lbl ? `snapshot ${lbl}` : 'snapshot';
                                   void runQuickCommand(cmd);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', fontWeight: 650, whiteSpace: 'nowrap' }}
+                                style={{ ...buttonStyle, fontWeight: 650, whiteSpace: 'nowrap' }}
                               >
-                                {pendingCommand?.startsWith('snapshot') ? 'Confirm?' : 'Save snapshot'}
+                                {executingCmd === ((snapshotLabelRef.current?.value ?? snapshotLabel).trim() ? `snapshot ${(snapshotLabelRef.current?.value ?? snapshotLabel).trim()}` : 'snapshot')
+                                  ? 'Saving...'
+                                  : pendingCommand === ((snapshotLabelRef.current?.value ?? snapshotLabel).trim() ? `snapshot ${(snapshotLabelRef.current?.value ?? snapshotLabel).trim()}` : 'snapshot')
+                                  ? 'Confirm?'
+                                  : 'Save snapshot'}
                               </button>
                             </div>
                           </div>
@@ -1552,32 +1587,36 @@
                               />
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null}
                                 onClick={() => {
                                   const idx = (snapshotIndexRef.current?.value ?? snapshotIndex).trim() || '1';
                                   void runQuickCommand(`snapshot show ${idx}`);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', fontWeight: 650, whiteSpace: 'nowrap' }}
+                                style={{ ...buttonStyle, fontWeight: 650, whiteSpace: 'nowrap' }}
                               >
                                 Show #
                               </button>
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null}
                                 onClick={() => {
                                   const idx = (snapshotIndexRef.current?.value ?? snapshotIndex).trim() || '1';
                                   void runQuickCommand(`flush --undo ${idx}`);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', fontWeight: 650, whiteSpace: 'nowrap' }}
+                                style={{ ...buttonStyle, fontWeight: 650, whiteSpace: 'nowrap' }}
                               >
-                                {pendingCommand?.startsWith('flush --undo') ? 'Confirm undo?' : 'Undo flush #'}
+                                {executingCmd === `flush --undo ${(snapshotIndexRef.current?.value ?? snapshotIndex).trim() || '1'}`
+                                  ? 'Undoing...'
+                                  : pendingCommand === `flush --undo ${(snapshotIndexRef.current?.value ?? snapshotIndex).trim() || '1'}`
+                                  ? 'Confirm undo?'
+                                  : 'Undo flush #'}
                               </button>
                             </div>
                           </div>
                         </div>
 
                         {/* 3. ST-Slicing Focus & Per-Tool Truncation Rule */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.3fr', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
                           <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 7, padding: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
                             <span style={{ fontSize: 11, fontWeight: 650, color: '#334155' }}>ST-Slicing Focus File Path</span>
                             <div style={{ display: 'flex', gap: 5 }}>
@@ -1593,14 +1632,18 @@
                               />
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null}
                                 onClick={() => {
                                   const p = (sliceFocusRef.current?.value ?? sliceFocusPath).trim();
                                   if (p) void runQuickCommand(`slice focus ${p}`);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', fontWeight: 650, whiteSpace: 'nowrap' }}
+                                style={{ ...buttonStyle, fontWeight: 650, whiteSpace: 'nowrap' }}
                               >
-                                {pendingCommand?.startsWith('slice focus ') && pendingCommand !== 'slice focus clear' ? 'Confirm?' : 'Set focus'}
+                                {executingCmd === `slice focus ${(sliceFocusRef.current?.value ?? sliceFocusPath).trim()}`
+                                  ? 'Setting...'
+                                  : pendingCommand === `slice focus ${(sliceFocusRef.current?.value ?? sliceFocusPath).trim()}`
+                                  ? 'Confirm?'
+                                  : 'Set focus'}
                               </button>
                             </div>
                           </div>
@@ -1640,35 +1683,43 @@
                               />
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null || !(toolNameRef.current?.value ?? toolRuleName).trim()}
                                 onClick={() => {
                                   const t = (toolNameRef.current?.value ?? toolRuleName).trim();
                                   const l = (toolLinesRef.current?.value ?? toolRuleLines).trim() || '200';
                                   const k = (toolKBRef.current?.value ?? toolRuleKB).trim() || '20';
                                   if (t) void runQuickCommand(`truncate tool ${t} ${l} ${k}`);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', padding: '6px 8px', fontWeight: 650 }}
+                                style={{ ...buttonStyle, padding: '6px 8px', fontWeight: 650 }}
                               >
-                                {pendingCommand?.startsWith('truncate tool ') && !pendingCommand.endsWith(' reset') ? 'Confirm?' : 'Apply rule'}
+                                {executingCmd === `truncate tool ${(toolNameRef.current?.value ?? toolRuleName).trim()} ${(toolLinesRef.current?.value ?? toolRuleLines).trim() || '200'} ${(toolKBRef.current?.value ?? toolRuleKB).trim() || '20'}`
+                                  ? 'Applying...'
+                                  : pendingCommand === `truncate tool ${(toolNameRef.current?.value ?? toolRuleName).trim()} ${(toolLinesRef.current?.value ?? toolRuleLines).trim() || '200'} ${(toolKBRef.current?.value ?? toolRuleKB).trim() || '20'}`
+                                  ? 'Confirm?'
+                                  : 'Apply rule'}
                               </button>
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null || !(toolNameRef.current?.value ?? toolRuleName).trim()}
                                 onClick={() => {
                                   const t = (toolNameRef.current?.value ?? toolRuleName).trim();
                                   if (t) void runQuickCommand(`truncate tool ${t} reset`);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', padding: '6px 8px' }}
+                                style={{ ...buttonStyle, padding: '6px 8px' }}
                                 title="Reset tool rule to global limits"
                               >
-                                {pendingCommand?.startsWith('truncate tool ') && pendingCommand.endsWith(' reset') ? 'Confirm?' : 'Reset rule'}
+                                {executingCmd === `truncate tool ${(toolNameRef.current?.value ?? toolRuleName).trim()} reset`
+                                  ? 'Resetting...'
+                                  : pendingCommand === `truncate tool ${(toolNameRef.current?.value ?? toolRuleName).trim()} reset`
+                                  ? 'Confirm?'
+                                  : 'Reset rule'}
                               </button>
                             </div>
                           </div>
                         </div>
 
                         {/* 4. Config Path Get/Set & Version Pin Update */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
                           <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 7, padding: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
                             <span style={{ fontSize: 11, fontWeight: 650, color: '#334155' }}>Config Key Inspector (get / set)</span>
                             <div style={{ display: 'flex', gap: 4 }}>
@@ -1694,26 +1745,30 @@
                               />
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null}
                                 onClick={() => {
                                   const p = (configPathRef.current?.value ?? configPathInput).trim();
                                   if (p) void runQuickCommand(`config get ${p}`);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', padding: '6px 8px', fontWeight: 650 }}
+                                style={{ ...buttonStyle, padding: '6px 8px', fontWeight: 650 }}
                               >
                                 Get key
                               </button>
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null}
                                 onClick={() => {
                                   const p = (configPathRef.current?.value ?? configPathInput).trim();
                                   const v = (configValueRef.current?.value ?? configValueInput).trim();
                                   if (p && v) void runQuickCommand(`config set ${p} ${v}`);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', padding: '6px 8px', fontWeight: 650 }}
+                                style={{ ...buttonStyle, padding: '6px 8px', fontWeight: 650 }}
                               >
-                                {pendingCommand?.startsWith('config set ') ? 'Confirm?' : 'Set key'}
+                                {executingCmd === `config set ${(configPathRef.current?.value ?? configPathInput).trim()} ${(configValueRef.current?.value ?? configValueInput).trim()}`
+                                  ? 'Setting...'
+                                  : pendingCommand === `config set ${(configPathRef.current?.value ?? configPathInput).trim()} ${(configValueRef.current?.value ?? configValueInput).trim()}`
+                                  ? 'Confirm?'
+                                  : 'Set key'}
                               </button>
                             </div>
                           </div>
@@ -1733,14 +1788,18 @@
                               />
                               <button
                                 type="button"
-                                disabled={saving || previewing}
+                                disabled={saving || previewing || executingCmd !== null}
                                 onClick={() => {
                                   const tag = (updateTagRef.current?.value ?? updateTagInput).trim();
                                   if (tag) void runQuickCommand(`update ${tag}`);
                                 }}
-                                style={{ ...selectStyle, width: 'auto', fontWeight: 650, whiteSpace: 'nowrap' }}
+                                style={{ ...buttonStyle, fontWeight: 650, whiteSpace: 'nowrap' }}
                               >
-                                {pendingCommand?.startsWith('update ') && pendingCommand !== 'update check' ? 'Confirm?' : 'Install tag'}
+                                {executingCmd === `update ${(updateTagRef.current?.value ?? updateTagInput).trim()}`
+                                  ? 'Installing...'
+                                  : pendingCommand === `update ${(updateTagRef.current?.value ?? updateTagInput).trim()}`
+                                  ? 'Confirm?'
+                                  : 'Install tag'}
                               </button>
                             </div>
                           </div>
@@ -1774,22 +1833,26 @@
                           />
                           <button
                             type="button"
-                            disabled={saving || previewing}
+                            disabled={saving || previewing || executingCmd !== null}
                             onClick={() => {
                               const val = (customCmdRef.current?.value ?? customCmdInput).trim();
                               if (val) void runQuickCommand(val);
                             }}
                             style={{
-                              ...selectStyle,
-                              width: 'auto',
+                              ...buttonStyle,
                               background: '#0284c7',
                               color: '#ffffff',
                               border: '1px solid #0369a1',
                               fontWeight: 700,
                               whiteSpace: 'nowrap',
+                              
                             }}
                           >
-                            {pendingCommand && pendingCommand === (customCmdRef.current?.value ?? customCmdInput).trim().replace(/^\/?broke\b\s*/i, '') ? 'Confirm execute?' : 'Execute'}
+                            {executingCmd === (customCmdRef.current?.value ?? customCmdInput).trim().replace(/^\/?broke\b\s*/i, '')
+                              ? 'Executing...'
+                              : pendingCommand && pendingCommand === (customCmdRef.current?.value ?? customCmdInput).trim().replace(/^\/?broke\b\s*/i, '')
+                              ? 'Confirm execute?'
+                              : 'Execute'}
                           </button>
                         </div>
                       </div>

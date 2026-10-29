@@ -85,7 +85,7 @@ the extension remains visually native inside AiderDesk.
 
 ## Layout
 
-The badge stays compact with an inline micro-gauge when context fill is observed. The dialog is a 540 px Precision Instrument Cockpit column with a 95vw cap and internal scrolling. The sequence is cockpit telemetry header, status and context-budget gauge card, interactive 3-step onboarding (when active), everyday controls, common actions, structured result inspector, advanced disclosure + Full Command Studio, then save/cancel. Controls must remain reachable at narrow widths; three common actions may wrap or compress without truncating their labels.
+The badge stays compact, showing an inline context micro-gauge during initial observation before savings begin, while the full Cockpit modal provides continuous budget tracking. The dialog is a 540 px Precision Instrument Cockpit column with a 95vw cap and internal scrolling. The sequence is cockpit telemetry header, status and context-budget gauge card, interactive 3-step onboarding (when active), everyday controls, common actions, structured result inspector, advanced disclosure + Full Command Studio, then save/cancel. Controls must remain reachable at narrow widths; three common actions may wrap or compress without truncating their labels.
 
 ## Elevation & Depth
 

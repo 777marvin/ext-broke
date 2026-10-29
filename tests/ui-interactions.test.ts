@@ -732,6 +732,20 @@ describe('H1 quick commands in the badge overlay', () => {
     await setField('Universal broke command', 'slice status');
     await click(button('Execute'));
     assert.match(container.textContent!, /ran broke slice status/);
+
+    // 5. Verify no crosstalk: 1-click snapshot does not arm the Save snapshot button
+    const snapshotOneClick = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '/broke snapshot')!;
+    await click(snapshotOneClick);
+    assert.match(snapshotOneClick.textContent ?? '', /Confirm\?/);
+    const saveSnapshotBtn = [...container.querySelectorAll('button')].find((b) => /Save snapshot/i.test(b.textContent ?? ''));
+    assert.ok(saveSnapshotBtn, 'Save snapshot button must exist');
+    assert.doesNotMatch(saveSnapshotBtn.textContent ?? '', /Confirm\?/, '1-click snapshot must not arm parameterized button');
+
+    // 6. Running /broke reset triggers UI refresh
+    const resetOneClick = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '/broke reset')!;
+    await click(resetOneClick);
+    await click(resetOneClick);
+    assert.ok(calls.includes('refresh'), '/broke reset must trigger UI refresh');
   });
 
   it('supports ST-slicing, per-tool truncation rules, and command deck in ConfigComponent', async () => {
@@ -756,5 +770,36 @@ describe('H1 quick commands in the badge overlay', () => {
     assert.match(clearBtn.textContent ?? '', /Confirm\?/);
     await click(clearBtn);
     assert.match(container.textContent!, /ran broke errors clear/);
+    assert.ok(calls.includes('getConfig'), 'deck commands sync host config after execution');
+
+    // Add per-tool truncation rule
+    const setToolField = async (label: string, value: string) => {
+      const el = input(label);
+      assert.ok(el instanceof win.HTMLInputElement);
+      await React.act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(el, value);
+        el.dispatchEvent(new win.FocusEvent('focusout', { bubbles: true }));
+        el.dispatchEvent(new win.Event('input', { bubbles: true }));
+        el.dispatchEvent(new win.Event('change', { bubbles: true }));
+      });
+    };
+    await setToolField('Tool name', 'bash');
+    await setToolField('Tool max lines', '150');
+    await setToolField('Tool max KB', '15');
+    await click(button('Add / Update Rule'));
+    assert.deepEqual(draft.truncate.tools?.bash, { enabled: true, maxLines: 150, maxKB: 15 });
+
+    // Toggle Exempt: preserves limits (Bug 2 fix)
+    await click(button('Exempt'));
+    assert.deepEqual(draft.truncate.tools?.bash, { enabled: false, maxLines: 150, maxKB: 15 });
+
+    // Toggle Enable: preserves limits
+    await click(button('Enable'));
+    assert.deepEqual(draft.truncate.tools?.bash, { enabled: true, maxLines: 150, maxKB: 15 });
+
+    // Reset rule: deletes entry completely (Bug 1 fix)
+    await click(button('Reset'));
+    assert.equal(draft.truncate.tools?.bash, undefined);
   });
 });

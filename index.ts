@@ -1389,6 +1389,7 @@ export default class Broke implements Extension {
           clearTask(taskId);
           ext.escapeByTask.delete(taskId);
         }
+        ext.refreshUI();
         return log('broke: stats cleared for this task (incl. persisted history; summarization re-enabled)');
       }
       case 'selftest': {
