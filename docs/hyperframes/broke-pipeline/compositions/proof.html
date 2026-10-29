@@ -1,0 +1,190 @@
+<template>
+  <style>
+    #root, #root * { box-sizing: border-box; }
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(13, 19, 15, 0.045) 1px, transparent 1px) 0 0 / 64px 64px,
+        linear-gradient(90deg, rgba(13, 19, 15, 0.045) 1px, transparent 1px) 0 0 / 64px 64px,
+        #a5f2c5;
+      color: #0d130f;
+      font-family: Inter, sans-serif;
+    }
+    #proof-scene { position: absolute; inset: 0; }
+    #proof-header {
+      position: absolute;
+      left: 184px;
+      right: 184px;
+      top: 112px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 20px;
+      border-bottom: 3px solid #2b4c37;
+    }
+    #proof-kicker {
+      font: 700 32px "IBM Plex Mono", monospace;
+      letter-spacing: 0.06em;
+      color: #0d130f;
+    }
+    #proof-pill {
+      padding: 8px 20px;
+      border-radius: 999px;
+      background: #0d130f;
+      color: #a5f2c5;
+      font: 700 30px "IBM Plex Mono", monospace;
+      letter-spacing: 0.03em;
+    }
+    #proof-number {
+      position: absolute;
+      left: 176px;
+      top: 210px;
+      font-size: 248px;
+      line-height: 0.96;
+      font-weight: 900;
+      letter-spacing: -0.085em;
+      color: #0d130f;
+    }
+    #proof-unit {
+      position: absolute;
+      left: 184px;
+      top: 472px;
+      font-size: 112px;
+      line-height: 1;
+      font-weight: 850;
+      letter-spacing: -0.065em;
+      color: #0d130f;
+    }
+    #proof-evidence {
+      position: absolute;
+      left: 184px;
+      top: 658px;
+      font-size: 48px;
+      font-weight: 750;
+      line-height: 1.32;
+      letter-spacing: -0.03em;
+      color: #0d130f;
+    }
+    #proof-source {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 40px;
+      font-weight: 700;
+      color: #172a1e;
+    }
+    #proof-card {
+      position: absolute;
+      left: 1116px;
+      top: 224px;
+      width: 620px;
+      padding: 32px 36px;
+      border: 3px solid #0d130f;
+      border-radius: 20px;
+      background: rgba(247, 244, 232, 0.42);
+    }
+    #proof-brand {
+      font-size: 128px;
+      line-height: 0.95;
+      font-weight: 900;
+      letter-spacing: -0.075em;
+      color: #0d130f;
+    }
+    #proof-platform {
+      margin-top: 14px;
+      font-size: 36px;
+      font-weight: 700;
+      line-height: 1.24;
+      color: #172a1e;
+    }
+    #proof-bars {
+      margin-top: 34px;
+      width: 100%;
+    }
+    .proof-bar-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font: 700 30px "IBM Plex Mono", monospace;
+      color: #0d130f;
+      margin-bottom: 10px;
+      letter-spacing: -0.03em;
+    }
+    .proof-bar-val {
+      color: #172a1e;
+    }
+    .proof-bar {
+      height: 26px;
+      border-radius: 6px;
+      background: #0d130f;
+      transform-origin: 0 50%;
+    }
+    #proof-row-after { margin-top: 24px; }
+    #proof-after { background: #264a34; }
+    #proof-row-max { margin-top: 24px; }
+    #proof-max { background: #0d130f; }
+    #proof-cta {
+      position: absolute;
+      left: 184px;
+      right: 184px;
+      top: 908px;
+      border-top: 3px solid #2b4c37;
+      padding-top: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 34px;
+      font-weight: 750;
+      color: #0d130f;
+    }
+    #proof-repo {
+      font: 700 32px "IBM Plex Mono", monospace;
+    }
+  </style>
+  <div data-hf-id="hf-s4mz" id="root" data-composition-id="proof" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-b2dr" id="proof-scene" class="clip" data-start="0" data-duration="5.8" data-beat="The measured result" data-hold>
+      <div data-hf-id="hf-phdr" id="proof-header">
+        <div data-hf-id="hf-pc0o" id="proof-kicker">LESS TO SEND. MORE ROOM TO THINK.</div>
+        <div data-hf-id="hf-ppl1" id="proof-pill">UP TO -89.7% WITH LOCAL OLLAMA</div>
+      </div>
+      <div data-hf-id="hf-7wmb" id="proof-number">32.2%</div>
+      <div data-hf-id="hf-cyn0" id="proof-unit">less context.</div>
+      <div data-hf-id="hf-810i" id="proof-evidence">Synthetic benchmark · default mode<br data-hf-id="hf-rsrt"><span data-hf-id="hf-7kv0" id="proof-source">351,403 → 238,333 characters</span></div>
+      <div data-hf-id="hf-pcrd" id="proof-card">
+        <div data-hf-id="hf-jae2" id="proof-brand">broke</div>
+        <div data-hf-id="hf-164n" id="proof-platform">for AiderDesk<br data-hf-id="hf-x5px">Free &amp; open source</div>
+        <div data-hf-id="hf-zh8z" id="proof-bars">
+          <div data-hf-id="hf-prb1" id="proof-row-before">
+            <div data-hf-id="hf-plb1" class="proof-bar-label"><span data-hf-id="hf-pbl1">BEFORE</span><span data-hf-id="hf-pbv1" class="proof-bar-val">351,403 chars</span></div>
+            <div data-hf-id="hf-951y" id="proof-before" class="proof-bar"></div>
+          </div>
+          <div data-hf-id="hf-prb2" id="proof-row-after">
+            <div data-hf-id="hf-plb2" class="proof-bar-label"><span data-hf-id="hf-pbl2">DEFAULT (-32.2%)</span><span data-hf-id="hf-pbv2" class="proof-bar-val">238,333 chars</span></div>
+            <div data-hf-id="hf-o5sv" id="proof-after" class="proof-bar"></div>
+          </div>
+          <div data-hf-id="hf-prb3" id="proof-row-max">
+            <div data-hf-id="hf-plb3" class="proof-bar-label"><span data-hf-id="hf-pbl3">OLLAMA OPT (-89.7%)</span><span data-hf-id="hf-pbv3" class="proof-bar-val">36,140 chars</span></div>
+            <div data-hf-id="hf-m5sv" id="proof-max" class="proof-bar"></div>
+          </div>
+        </div>
+      </div>
+      <div data-hf-id="hf-zey8" id="proof-cta">
+        <span data-hf-id="hf-snel">Try it ↓ Quick Start</span>
+        <span data-hf-id="hf-5wc0" id="proof-repo">github.com/777marvin/ext-broke</span>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+    window.__timelines = window.__timelines || {};
+    var tl = gsap.timeline({ paused: true });
+    tl.fromTo('#proof-number', { y: 24, scale: 0.94 }, { y: 0, scale: 1, duration: 0.34, ease: 'expo.out', transformOrigin: '0 50%' }, 0);
+    tl.fromTo('#proof-card', { y: 18 }, { y: 0, duration: 0.32, ease: 'expo.out' }, 0);
+    tl.fromTo('#proof-after', { scaleX: 1 }, { scaleX: 238333 / 351403, duration: 0.78, ease: 'expo.inOut' }, 0.32);
+    tl.fromTo('#proof-max', { scaleX: 1 }, { scaleX: 36140 / 351403, duration: 0.88, ease: 'expo.inOut' }, 0.52);
+    tl.fromTo('#proof-cta', { opacity: 0.25, y: 10 }, { opacity: 1, y: 0, duration: 0.32, ease: 'power3.out' }, 0.95);
+    // Subtle pulse before loop restart.
+    tl.to('#proof-before', { scaleX: 1.03, duration: 0.18, yoyo: true, repeat: 1, ease: 'power2.inOut' }, 4.65);
+    window.__timelines.proof = tl;
+  </script>
+</template>

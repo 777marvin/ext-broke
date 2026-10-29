@@ -13,6 +13,15 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ## [Unreleased]
 
+### Changed
+
+- Overhaul the README HyperFrames animation into the "Your AI has baggage"
+  Precision Telemetry loop (`hook` → `pipeline` → `proof`) with kinetic payload
+  slabs, hydraulic compression of older context under protected boundaries,
+  radial colour-flood handoff, and labeled benchmark comparison bars (`-32.2%`
+  default mode, up to `-89.7%` with optional local Ollama summarization).
+  Refresh the GIF, MP4, poster image, and editable HyperFrames source.
+
 ## [1.4.0] - 2026-10-29
 
 Requires **AiderDesk 0.88 or newer**; upgrade older hosts before updating broke.

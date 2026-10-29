@@ -10,10 +10,11 @@ broke compresses eligible older conversation material before each model call, wh
 [![GitHub stars](https://img.shields.io/github/stars/777marvin/ext-broke?style=social)](https://github.com/777marvin/ext-broke/stargazers)
 
 <p align="center">
-  <img src="docs/assets/broke-pipeline.gif" alt="Animated broke pipeline: eligible older context is cleaned, trimmed, and optionally summarized locally before a smaller payload is sent to the model; the first request, recent turns, and stored task history stay protected" width="960">
+  <img src="docs/assets/broke-pipeline.gif" alt="Your AI has baggage. broke cleans and trims eligible older context while protecting the first request and recent turns. In the deterministic synthetic benchmark, the default mode sends 32.2% fewer characters (351,403 to 238,333) and optional local Ollama summarization reaches 89.7% (36,140 chars). Stored task history stays unchanged." width="960">
 </p>
 
-<p align="center"><sub>Only the next model payload is reduced. Stored task history remains unchanged.</sub></p>
+<p align="center"><sub>32.2% fewer characters in default mode (up to 89.7% with optional local Ollama summarization) in the synthetic benchmark — not a billing-savings claim. Stored task history stays unchanged.</sub><br>
+<a href="docs/assets/broke-pipeline-poster.png">Still image</a> · <a href="docs/assets/broke-pipeline.mp4">Watch the video</a> · <a href="#quick-start">Try broke</a></p>
 
 ---
 
