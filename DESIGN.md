@@ -136,7 +136,12 @@ Command & Maintenance Deck and full schema coverage (`slice.*`,
 ### Feedback and safety
 
 Action results remain inline in the dialog and use an accessible status region.
-State-changing or paid commands retain two-step confirmation. Check setup
+State-changing or paid commands retain two-step confirmation. That confirmation
+is a CLIENT-side UX hint, not a security boundary: the server-side allowlist
+(`QUICK_COMMAND_KINDS` in `index.ts`) intentionally covers every valid
+`/broke` subcommand and only rejects `unknown`/malformed input, so a crafted UI
+action can reach destructive commands (`flush --yes`, `errors clear`,
+`config set`, `update`). Check setup
 runs a metadata-only readiness check for the current draft without saving it;
 the synthetic selftest stays under advanced diagnostics and uses a stub
 summarizer. Introduction completion is a reversible presentation preference

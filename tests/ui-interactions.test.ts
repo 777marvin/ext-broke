@@ -724,7 +724,7 @@ describe('H1 quick commands in the badge overlay', () => {
     // 3. Snapshot label (mutating: 2-step confirmation)
     await setField('Snapshot label', 'before-refactor');
     await click(button('Save snapshot'));
-    assert.ok(container.querySelector('button')?.textContent !== undefined);
+    assert.doesNotMatch(container.textContent!, /ran broke snapshot before-refactor/, 'the snapshot must not run before the second click');
     await click(button('Confirm?'));
     assert.match(container.textContent!, /ran broke snapshot before-refactor/);
 

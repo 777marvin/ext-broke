@@ -222,6 +222,29 @@ describe('H1 quick-command wiring (review finding: runCommand was dead)', () => 
     assert.deepEqual(seen, [], 'a refused command never reaches the dispatcher');
   });
 
+  it('runCommand boundary (2026-10-30): every valid kind is reachable, only unknown/malformed refused', async () => {
+    const { DEFAULT_CONFIG, saveConfig } = await import('../config');
+    saveConfig(DEFAULT_CONFIG);
+    const host = makeHost();
+    host.getTaskContext()!.addLogMessage = async () => undefined;
+    const ext = new Broke();
+
+    // These were blocked by the old allowlist; they are now intentionally
+    // reachable so the UI reaches 100% of /broke. If this ever changes, that
+    // is a deliberate boundary decision and this test must change with it.
+    for (const raw of ['broke flush --yes', 'broke errors clear', 'broke config set maxContextChars 60000']) {
+      const res = (await ext.executeUIExtensionAction('broke-status', 'runCommand', [raw], host)) as { ok: boolean; error?: string };
+      assert.equal(res.ok, true, `"${raw}" must be reachable from the UI: ${res.error ?? ''}`);
+    }
+
+    // The only remaining server-side guard is unknown/malformed input.
+    for (const raw of ['broke zzz-not-a-command', 'broke mode bogus']) {
+      const res = (await ext.executeUIExtensionAction('broke-status', 'runCommand', [raw], host)) as { ok: boolean };
+      assert.equal(res.ok, false, `"${raw}" must still be refused`);
+    }
+    saveConfig(DEFAULT_CONFIG);
+  });
+
   it('runCommand refuses malformed input instead of throwing', async () => {
     const host = makeHost();
     const ext = new Broke();

@@ -124,14 +124,20 @@ const STATUS_BADGE_ID = 'broke-status';
 const MESSAGE_MENU_ID = 'broke-message-menu';
 
 /**
- * The only subcommands the badge's Quick Commands grid may execute.
+ * Subcommands the badge's Quick Commands grid and the settings deck may run.
  *
  * H1 (external review): `runCommand` was an action NOTHING implemented, so
  * the 9 buttons shipped dead in v1.2.1 and v1.2.2. The action now runs the
- * real dispatcher - but behind this allowlist, so a crafted UI payload
- * cannot turn a one-click badge into an arbitrary `/broke` command
- * (`flush`, `config set`, `snapshot`, ...). The check is on the PARSED
- * kind, not the raw string: that is what makes the boundary meaningful.
+ * real dispatcher through this allowlist; the check is on the PARSED kind,
+ * not the raw string.
+ *
+ * Boundary decision (2026-10-30): the set intentionally equals EVERY valid
+ * `BrokeCommand['kind']`, so the UI reaches 100% of `/broke` - including
+ * state-changing and destructive commands (`flush --yes`, `errors clear`,
+ * `config set`, `update`). The allowlist therefore only rejects `unknown` /
+ * malformed input; the two-step confirmation for mutating commands is a
+ * CLIENT-side UX hint, NOT a security boundary. To turn it back into a real
+ * boundary, restrict this set and restore the refusal test in ui-actions.
  */
 const QUICK_COMMAND_KINDS: ReadonlySet<BrokeCommand['kind']> = new Set<BrokeCommand['kind']>([
   'status',

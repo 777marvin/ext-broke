@@ -56,7 +56,7 @@
   // commands require two-step confirmation (`pendingCommand` holds the armed command).
   const [pendingCommand, setPendingCommand] = React.useState(null);
   const [commandResult, setCommandResult] = React.useState(null);
-  const [executingCmd, setExecutingCmd] = React.useState<string | null>(null);
+  const [executingCmd, setExecutingCmd] = React.useState(null);
   const revision = React.useRef(0);
   const gearRef = React.useRef(null);
   const dialogRef = React.useRef(null);
@@ -275,28 +275,9 @@
   const overlayBrevity = overlayCfg?.brevity ?? {};
 
   // Read-only commands execute immediately on first click; all state-changing,
-  // destructive, or paid/network commands use two-step confirmation.
-  const READONLY_COMMANDS = new Set([
-    'status',
-    'stats',
-    'why',
-    'estimate',
-    'measure',
-    'selftest',
-    'help',
-    'index status',
-    'slice status',
-    'snapshot list',
-    'config list',
-    'update check',
-  ]);
-  const isMutatingCommand = (cmd: string) => {
-    const normalized = cmd.trim().replace(/^\/?broke\b\s*/i, '');
-    if (READONLY_COMMANDS.has(normalized)) return false;
-    if (normalized.startsWith('diff') || normalized.startsWith('snapshot show ') || normalized.startsWith('config get ')) return false;
-    if (normalized.startsWith('search ') && normalized !== 'search on' && normalized !== 'search off') return false;
-    return true;
-  };
+  // destructive, or paid/network commands use two-step confirmation. The
+  // classification is shared with ConfigComponent via the injected helper.
+  const isMutatingCommand = brokeCommandIsMutating;
 
   const runQuickCommand = async (rawCmd: string) => {
     if (saving || previewing || executingCmd) return;
@@ -314,7 +295,7 @@
       const res = (await executeExtensionAction?.('runCommand', `broke ${cmd}`)) as { ok?: boolean; message?: string; error?: string } | undefined;
       if (res?.ok === true) {
         setCommandResult({ ok: true, text: res.message ?? '', cmd });
-        if (cmd === 'reset' || cmd.startsWith('reset') || cmd.startsWith('flush')) {
+        if (cmd.startsWith('reset') || cmd.startsWith('flush')) {
           executeExtensionAction?.('refresh').catch?.(() => {});
         }
         // If a command mutated config, sync the draft seamlessly

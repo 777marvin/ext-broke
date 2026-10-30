@@ -31,6 +31,7 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Changed
 
+- The badge and settings deck can now run every valid `/broke` subcommand, including previously UI-blocked state-changing and destructive ones (`flush --yes`, `errors clear`, `truncate clear`, `config set`, `update`). The server-side allowlist now only rejects unknown/malformed input; the two-step confirmation for mutating commands is a client-side UX hint, not a security boundary.
 - Overhaul the README HyperFrames animation into the "Your AI has baggage"
   Precision Telemetry loop (`hook` → `pipeline` → `proof`) with kinetic payload
   slabs, hydraulic compression of older context under protected boundaries,

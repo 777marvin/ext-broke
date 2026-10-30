@@ -89,26 +89,12 @@
     }
   };
 
-  const READONLY_DECK_CMDS = new Set([
-    'status',
-    'stats',
-    'why',
-    'estimate',
-    'measure',
-    'selftest',
-    'help',
-    'index status',
-    'slice status',
-    'snapshot list',
-    'config list',
-    'update check',
-    'diff',
-  ]);
-
   const runDeckCommand = async (rawCmd) => {
     const cmd = String(rawCmd ?? '').trim().replace(/^\/?broke\b\s*/i, '');
     if (!cmd || executingCmd) return;
-    const mutating = !READONLY_DECK_CMDS.has(cmd) && !cmd.startsWith('diff ') && !cmd.startsWith('search ') && !cmd.startsWith('config get ') && !cmd.startsWith('snapshot show ');
+    // Shared with StatusBadge via the injected helper: `search on/off` count
+    // as mutating here too, so both surfaces confirm the same commands.
+    const mutating = brokeCommandIsMutating(cmd);
     if (mutating && pendingCmd !== cmd) {
       setPendingCmd(cmd);
       setCmdResult(null);

@@ -24,3 +24,35 @@ const mergeConfigDraft = (base, latest, next) => {
   const at = (object, path) => path.reduce((value, key) => value?.[key], object);
   return owned.some((path) => at(result, path) !== at(latest, path)) ? { ...result, mode: 'custom' } : result;
 };
+
+// Shared command-safety classification, injected into both UI templates.
+// Boundary decision (2026-10-30): the badge/deck may now run EVERY valid
+// /broke subcommand. The only server-side guard is the unknown/invalid-arg
+// rejection in executeUIExtensionAction('runCommand'). The read-only split
+// below is a two-step CONFIRMATION hint only - client-side UX, not a
+// security boundary.
+const brokeReadonlyCommands = new Set([
+  'status',
+  'stats',
+  'why',
+  'estimate',
+  'measure',
+  'selftest',
+  'help',
+  'index status',
+  'slice status',
+  'snapshot list',
+  'config list',
+  'update check',
+]);
+const brokeCommandIsMutating = (raw) => {
+  const cmd = String(raw ?? '').trim().replace(/^\/?broke\b\s*/i, '');
+  if (!cmd) return true;
+  if (brokeReadonlyCommands.has(cmd)) return false;
+  if (cmd.startsWith('diff')) return false;
+  if (cmd.startsWith('snapshot show ')) return false;
+  if (cmd.startsWith('config get ')) return false;
+  if (cmd === 'search on' || cmd === 'search off') return true;
+  if (cmd.startsWith('search ')) return false;
+  return true;
+};
