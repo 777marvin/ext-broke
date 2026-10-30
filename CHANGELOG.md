@@ -28,6 +28,7 @@ has a tag but no published release (see the 1.2.1 entry).
 - Trigger live UI data refresh on `/broke reset` and `/broke flush` commands so the status bar badge immediately reflects cleared task stats.
 - Guard against confirmation cross-talk across parameterized command builders in `StatusBadge.jsx`.
 - Restore keyboard focus in onboarding step 2 when the readiness check completes.
+- Evict cached `scripts/ui-template-source.cjs` from Node's `require.cache` on extension hot-reload and read `scripts/ui-config-helper.js` dynamically so in-place updates in a running AiderDesk instance never inject a stale helper closure without `brokeCommandIsMutating` (`ReferenceError` in `ext-broke/broke-status`).
 
 ### Changed
 

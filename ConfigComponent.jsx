@@ -94,7 +94,7 @@
     if (!cmd || executingCmd) return;
     // Shared with StatusBadge via the injected helper: `search on/off` count
     // as mutating here too, so both surfaces confirm the same commands.
-    const mutating = brokeCommandIsMutating(cmd);
+    const mutating = (typeof brokeCommandIsMutating === 'function' ? brokeCommandIsMutating : () => true)(cmd);
     if (mutating && pendingCmd !== cmd) {
       setPendingCmd(cmd);
       setCmdResult(null);
