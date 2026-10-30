@@ -83,6 +83,7 @@ The first user message and recent turns are protected. Optional tool-level slici
 | ⚡ **Cache-friendly mode** | Preserves already-sent bytes to help provider prompt-cache reuse |
 | 🗜️ **Error compression** | Compiler/test output → diagnostic essence with explicit markers |
 | 📊 **Measurement ledger** | Per-run records of actual compression savings |
+| 🤝 **Multi-agent MCP & CLI** | Use `broke` search, slicing, diffs, and error compression in Claude Code, Antigravity, Codex, and Cursor |
 
 ---
 
@@ -224,6 +225,14 @@ Since 0.8.0, updates are cryptographically verified (Ed25519-signed SHA256SUMS m
 
 Runtime data lives **outside** the swappable code tree under `<extension>/../.broke-data/v1/` (`config.json`, `ledgers/`, `snapshots/`, `index/`, `errors/`; `BROKE_DATA_DIR` overrides).
 
+**Other coding agents (Claude Code, Antigravity, Codex, Cursor):**
+
+```bash
+node scripts/broke-runner.cjs install-agent <claude|antigravity|codex|cursor> --project /path/to/repo
+```
+
+See the [Multi-Agent Setup Guide](docs/agents/multi-agent-setup.md) and [SKILL.md](docs/agents/SKILL.md).
+
 ---
 
 ## Privacy & Security
@@ -247,6 +256,7 @@ Security issues: never in a public issue — follow [SECURITY.md](SECURITY.md) (
 - [docs/aiderdesk-builtin.md](docs/aiderdesk-builtin.md) — what AiderDesk saves on its own
 - [docs/local-models.md](docs/local-models.md) — local Ollama setup and measurement limits
 - [docs/roadmap.md](docs/roadmap.md) — shipped features, current focus, proposed work
+- [docs/agents/multi-agent-setup.md](docs/agents/multi-agent-setup.md) — MCP server, CLI, hooks & skills for Claude Code, Antigravity, Codex, and Cursor
 
 ---
 

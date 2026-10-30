@@ -19,6 +19,7 @@ has a tag but no published release (see the 1.2.1 entry).
 - Full Command Studio covering 100% of `/broke` commands across diagnostics, snapshots, flush, local search, ST-slicing, pipeline modes, and configuration with 2-step confirmation for mutating actions and execution indicators.
 - Interactive Command & Maintenance Deck and per-tool truncation rules editor (`truncate.tools`) in `ConfigComponent.jsx`.
 - Schema configuration support for ST-Slicing (`slice.*`), per-tool truncation (`truncate.tools`), search ignored files (`search.includeGitIgnored`), and per-message menu toggle (`ui.showMessageMenu`).
+- Multi-agent MCP server (`mcp.ts`), CLI & Claude Code hook handler (`cli.ts`), host-agnostic core (`agent-core.ts`), and zero-build Node.js (>= 22.15) bootstrap (`scripts/broke-runner.cjs`) for Claude Code, Google Antigravity, OpenAI Codex CLI, and Cursor (roadmap S5/S6). Exposes `broke_search`, `broke_slice`, `broke_diff`, `broke_compress`, allowlisted `broke_check`, and `broke_status` over stdio JSON-RPC 2.0, plus one-command installation (`install-agent <claude|antigravity|codex|cursor>`) and portable agent skill/setup docs (`docs/agents/SKILL.md`, `docs/agents/multi-agent-setup.md`).
 
 ### Fixed
 

@@ -793,7 +793,7 @@ export const FOCUS_MARKER = '[broke: focus file - full content]';
 const READ_TOOL_RE = /file_read$|read_file|^read$|^view$|open_file/i;
 const EDIT_TOOL_RE = /file_edit$|edit_file|^write$|write_file|^edit$|replace_in_file|^apply/i;
 /** Input fields that plausibly carry the target path, in priority order. */
-const PATH_KEYS = ['filePath', 'path', 'file', 'absolute_path', 'notebook_path'] as const;
+const PATH_KEYS = ['filePath', 'file_path', 'path', 'file', 'absolute_path', 'notebook_path'] as const;
 
 /** First plausible target path from a tool-call input, or null. */
 export function extractTargetPath(input: unknown): string | null {

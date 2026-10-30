@@ -39,6 +39,10 @@ surface.
 
 | File | Responsibility |
 |---|---|
+| `agent-core.ts` | Host-agnostic Multi-Agent core (S5/S6): workspace-confined search, ST-slicing, git diff digest, log/error compression (`maskSecrets` + `errors.ts` + `truncateText` + optional local Ollama), allowlisted diagnostic runner (`broke_check`), and `<agent>:<projectHash>` ledger attribution |
+| `mcp.ts` | Zero-dependency stdio JSON-RPC 2.0 MCP server exposing `broke_search`, `broke_slice`, `broke_diff`, `broke_compress`, `broke_check`, `broke_status`, and the `broke-workflow` prompt |
+| `cli.ts` | Multi-agent CLI, Claude Code `PreToolUse`/`PostToolUse` hook handler (`broke hook claude`), and one-command installer (`broke install-agent <claude\|antigravity\|codex\|cursor>`) |
+| `scripts/broke-runner.cjs` | Zero-build Node.js (>= 22.15) bootstrap using `module.registerHooks` + `module.stripTypeScriptTypes` to run `cli.ts`/`mcp.ts` without a `dist/` build step |
 | `index-coordinator.ts` | Project-index refresh, rebuild, status, search receipts and bounded project cache; host adapters retain task attribution |
 | `update-lock.ts` | Stable ownership locks with serialized acquisition, dead-owner reclamation and token-checked release; also protects legacy migration |
 | `update-lifecycle.ts` | Configuration-watcher close/reopen around updates, including failure and exception recovery |
@@ -201,3 +205,5 @@ conversation-message character counts in real runs, not provider billing data.
 - `docs/local-models.md`: local Ollama setup and measurement limits
 - `docs/roadmap.md`: shipped features, current focus, proposed candidates
 - `docs/audit-remediation.md`: dated audit verification and release boundaries
+- `docs/agents/multi-agent-setup.md`: multi-agent MCP server, CLI, hooks, and skill setup
+- `docs/agents/SKILL.md`: portable agent skill for autonomous broke usage
