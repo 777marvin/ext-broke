@@ -14,7 +14,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   ALLOWED_RUNNERS,
   agentTaskId,
@@ -28,9 +28,19 @@ import {
   type AgentCheckDeps,
   type AllowedRunner,
 } from './agent-core';
+import {
+  executeAgentInstall,
+  planAgentInstall,
+  SUPPORTED_INSTALL_AGENTS,
+  updateCodexToml,
+  type InstallAgentFsOps,
+  type InstallAgentOptions,
+  type PlannedFileWrite,
+  type SupportedInstallAgent,
+} from './agent-install';
 import { getConfig, type Config } from './config';
 import { extractErrorSummary, isCommandTool } from './errors';
-import { buildWorkflowPromptText, startMcpStdioServer } from './mcp';
+import { startMcpStdioServer } from './mcp';
 import { runtimeDir } from './paths';
 import { extractTargetPath, isEditTool, isReadTool, sameSlicePath } from './slice';
 
@@ -228,274 +238,19 @@ export async function handleClaudeHookPayload(
 }
 
 // ---------------------------------------------------------------------------
-// Multi-Agent Installer (`broke install-agent <agent>`)
+// Multi-Agent Installer (`broke install-agent <agent>`) — re-exported
 // ---------------------------------------------------------------------------
 
-export const SUPPORTED_INSTALL_AGENTS = ['claude', 'antigravity', 'codex', 'cursor'] as const;
-export type SupportedInstallAgent = (typeof SUPPORTED_INSTALL_AGENTS)[number];
-
-export interface InstallAgentOptions {
-  agent: SupportedInstallAgent;
-  targetDir: string;
-  dryRun?: boolean;
-  runnerPath?: string;
-}
-
-export interface PlannedFileWrite {
-  path: string;
-  content: string;
-  description: string;
-}
-
-function loadSkillMarkdown(): string {
-  const skillFile = join(__dirname, 'docs', 'agents', 'SKILL.md');
-  if (existsSync(skillFile)) {
-    try {
-      return readFileSync(skillFile, 'utf-8');
-    } catch {
-      // fallback below
-    }
-  }
-  return [
-    '---',
-    'name: broke',
-    'description: Token-budget context compression, BM25 keyword search (broke_search), interface slicing (broke_slice), budgeted git diffs (broke_diff), and diagnostic error compression (broke_check / broke_compress).',
-    '---',
-    '',
-    buildWorkflowPromptText('lite'),
-    '',
-  ].join('\n');
-}
-
-function mergeJsonFile(existingPath: string, patcher: (current: Record<string, unknown>) => Record<string, unknown>): string {
-  let base: Record<string, unknown> = {};
-  if (existsSync(existingPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(existingPath, 'utf-8')) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        base = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // start fresh if unreadable
-    }
-  }
-  return `${JSON.stringify(patcher(base), null, 2)}\n`;
-}
-
-const BROKE_AGENTS_MD_MARKER_START = '<!-- broke:multi-agent:start -->';
-const BROKE_AGENTS_MD_MARKER_END = '<!-- broke:multi-agent:end -->';
-
-function buildAgentsMdSection(): string {
-  return [
-    BROKE_AGENTS_MD_MARKER_START,
-    buildWorkflowPromptText('lite'),
-    BROKE_AGENTS_MD_MARKER_END,
-  ].join('\n');
-}
-
-function upsertAgentsMd(existingPath: string): string {
-  const block = buildAgentsMdSection();
-  if (!existsSync(existingPath)) {
-    return `${block}\n`;
-  }
-  const current = readFileSync(existingPath, 'utf-8');
-  const startIdx = current.indexOf(BROKE_AGENTS_MD_MARKER_START);
-  const endIdx = current.indexOf(BROKE_AGENTS_MD_MARKER_END);
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    return `${current.slice(0, startIdx)}${block}${current.slice(endIdx + BROKE_AGENTS_MD_MARKER_END.length)}`;
-  }
-  return `${current.trimEnd()}\n\n${block}\n`;
-}
-
-export function planAgentInstall(opts: InstallAgentOptions): PlannedFileWrite[] {
-  const runner = (opts.runnerPath ?? join(__dirname, 'scripts', 'broke-runner.cjs')).replace(/\\/g, '/');
-  const target = resolve(opts.targetDir);
-  const skillText = loadSkillMarkdown();
-  const writes: PlannedFileWrite[] = [];
-
-  if (opts.agent === 'claude') {
-    const mcpPath = join(target, '.mcp.json');
-    writes.push({
-      path: mcpPath,
-      description: 'Claude Code MCP server registration (.mcp.json)',
-      content: mergeJsonFile(mcpPath, (cur) => {
-        const servers =
-          cur.mcpServers && typeof cur.mcpServers === 'object' && !Array.isArray(cur.mcpServers)
-            ? (cur.mcpServers as Record<string, unknown>)
-            : {};
-        return {
-          ...cur,
-          mcpServers: {
-            ...servers,
-            broke: {
-              command: 'node',
-              args: [runner, 'mcp', '--agent', 'claude'],
-            },
-          },
-        };
-      }),
-    });
-
-    const settingsPath = join(target, '.claude', 'settings.json');
-    const hookCmd = `node "${runner}" hook claude`;
-    writes.push({
-      path: settingsPath,
-      description: 'Claude Code PreToolUse/PostToolUse hooks (.claude/settings.json)',
-      content: mergeJsonFile(settingsPath, (cur) => {
-        const hooks =
-          cur.hooks && typeof cur.hooks === 'object' && !Array.isArray(cur.hooks)
-            ? (cur.hooks as Record<string, unknown>)
-            : {};
-        return {
-          ...cur,
-          hooks: {
-            ...hooks,
-            PreToolUse: [
-              {
-                matcher: 'Read|Edit|Write|MultiEdit',
-                hooks: [{ type: 'command', command: hookCmd }],
-              },
-            ],
-            PostToolUse: [
-              {
-                matcher: 'Bash',
-                hooks: [{ type: 'command', command: hookCmd }],
-              },
-            ],
-          },
-        };
-      }),
-    });
-
-    writes.push({
-      path: join(target, '.claude', 'skills', 'broke', 'SKILL.md'),
-      description: 'Claude Code broke skill (.claude/skills/broke/SKILL.md)',
-      content: skillText,
-    });
-  } else if (opts.agent === 'antigravity') {
-    const mcpPath = join(target, '.gemini', 'antigravity', 'mcp_config.json');
-    writes.push({
-      path: mcpPath,
-      description: 'Antigravity MCP server config (.gemini/antigravity/mcp_config.json)',
-      content: mergeJsonFile(mcpPath, (cur) => {
-        const servers =
-          cur.mcpServers && typeof cur.mcpServers === 'object' && !Array.isArray(cur.mcpServers)
-            ? (cur.mcpServers as Record<string, unknown>)
-            : {};
-        return {
-          ...cur,
-          mcpServers: {
-            ...servers,
-            broke: {
-              command: 'node',
-              args: [runner, 'mcp', '--agent', 'antigravity'],
-            },
-          },
-        };
-      }),
-    });
-
-    writes.push({
-      path: join(target, '.gemini', 'antigravity', 'skills', 'broke', 'SKILL.md'),
-      description: 'Antigravity broke skill (.gemini/antigravity/skills/broke/SKILL.md)',
-      content: skillText,
-    });
-
-    const agentsMdPath = join(target, 'AGENTS.md');
-    writes.push({
-      path: agentsMdPath,
-      description: 'Project AGENTS.md broke workflow section',
-      content: upsertAgentsMd(agentsMdPath),
-    });
-  } else if (opts.agent === 'codex') {
-    const tomlPath = join(target, '.codex', 'config.toml');
-    const tomlSnippet = [
-      '# broke MCP server configuration for OpenAI Codex CLI',
-      '[mcp_servers.broke]',
-      'command = "node"',
-      `args = ["${runner}", "mcp", "--agent", "codex"]`,
-      '',
-    ].join('\n');
-    writes.push({
-      path: tomlPath,
-      description: 'Codex CLI MCP config (.codex/config.toml)',
-      content: tomlSnippet,
-    });
-
-    const agentsMdPath = join(target, 'AGENTS.md');
-    writes.push({
-      path: agentsMdPath,
-      description: 'Project AGENTS.md broke workflow section',
-      content: upsertAgentsMd(agentsMdPath),
-    });
-  } else if (opts.agent === 'cursor') {
-    const mcpPath = join(target, '.cursor', 'mcp.json');
-    writes.push({
-      path: mcpPath,
-      description: 'Cursor MCP server config (.cursor/mcp.json)',
-      content: mergeJsonFile(mcpPath, (cur) => {
-        const servers =
-          cur.mcpServers && typeof cur.mcpServers === 'object' && !Array.isArray(cur.mcpServers)
-            ? (cur.mcpServers as Record<string, unknown>)
-            : {};
-        return {
-          ...cur,
-          mcpServers: {
-            ...servers,
-            broke: {
-              command: 'node',
-              args: [runner, 'mcp', '--agent', 'cursor'],
-            },
-          },
-        };
-      }),
-    });
-
-    writes.push({
-      path: join(target, '.cursor', 'rules', 'broke.mdc'),
-      description: 'Cursor rule (.cursor/rules/broke.mdc)',
-      content: [
-        '---',
-        'description: broke context-budget workflow (search, slice, diff, diagnostic compression)',
-        'alwaysApply: true',
-        '---',
-        '',
-        buildWorkflowPromptText('lite'),
-        '',
-      ].join('\n'),
-    });
-  }
-
-  return writes;
-}
-
-export function executeAgentInstall(opts: InstallAgentOptions): { ok: boolean; text: string; files: string[] } {
-  const planned = planAgentInstall(opts);
-  if (opts.dryRun) {
-    return {
-      ok: true,
-      files: planned.map((p) => p.path),
-      text: [
-        `broke install-agent ${opts.agent} (dry-run) - ${planned.length} file(s) would be written:`,
-        ...planned.map((p) => `  - ${p.path} (${p.description})`),
-      ].join('\n'),
-    };
-  }
-
-  for (const item of planned) {
-    mkdirSync(dirname(item.path), { recursive: true });
-    writeFileSync(item.path, item.content, 'utf-8');
-  }
-
-  return {
-    ok: true,
-    files: planned.map((p) => p.path),
-    text: [
-      `broke install-agent ${opts.agent} complete - wrote ${planned.length} file(s):`,
-      ...planned.map((p) => `  - ${p.path} (${p.description})`),
-    ].join('\n'),
-  };
-}
+export {
+  executeAgentInstall,
+  planAgentInstall,
+  SUPPORTED_INSTALL_AGENTS,
+  updateCodexToml,
+  type InstallAgentFsOps,
+  type InstallAgentOptions,
+  type PlannedFileWrite,
+  type SupportedInstallAgent,
+};
 
 // ---------------------------------------------------------------------------
 // CLI Argument Dispatcher

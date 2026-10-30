@@ -33,7 +33,7 @@ Preview what will be written with `--dry-run`, then run without `--dry-run` to i
 # Claude Code (.mcp.json + .claude/settings.json hooks + .claude/skills/broke/SKILL.md)
 node /path/to/broke/scripts/broke-runner.cjs install-agent claude --project /path/to/your-project
 
-# Google Antigravity (.gemini/antigravity/mcp_config.json + skill + AGENTS.md section)
+# Google Antigravity (.agents/mcp_config.json + .agents/skills/broke/SKILL.md + AGENTS.md section)
 node /path/to/broke/scripts/broke-runner.cjs install-agent antigravity --project /path/to/your-project
 
 # OpenAI Codex CLI (.codex/config.toml + AGENTS.md section)
@@ -42,6 +42,10 @@ node /path/to/broke/scripts/broke-runner.cjs install-agent codex --project /path
 # Cursor (.cursor/mcp.json + .cursor/rules/broke.mdc)
 node /path/to/broke/scripts/broke-runner.cjs install-agent cursor --project /path/to/your-project
 ```
+
+The installer (`agent-install.ts`) performs non-destructive targeted upserts:
+- **Existing settings survive:** Codex `.codex/config.toml` edits only `mcp_servers.broke.command` and `mcp_servers.broke.args` via TOML AST source ranges (preserving model settings, comments, unrelated MCP servers, custom `broke` keys, and CRLF/LF line endings). JSON files preserve unrelated servers/settings, and Claude `.claude/settings.json` upserts only `broke`-owned hook entries while preserving foreign guards, formatters, and hook properties.
+- **Pre-write validation & atomic rollback:** Unreadable or malformed JSON (comments are not accepted in JSON files), invalid or ambiguous TOML constructs, or corrupted `AGENTS.md` marker blocks abort planning before any target file is written (including `--dry-run`). Writes use temporary sibling files in the target directory and roll back previously modified or newly created files on failure, retaining recovery copies if rollback restoration itself fails.
 
 ---
 
@@ -55,13 +59,13 @@ Register the MCP server via the Claude CLI:
 claude mcp add broke -- node /path/to/broke/scripts/broke-runner.cjs mcp --agent claude
 ```
 
-Optional automatic hooks in `.claude/settings.json`:
+Optional automatic hooks in `.claude/settings.json` (emitted in direct execution form with `"command": "node"` and `"args": ["/path/to/broke/scripts/broke-runner.cjs", "hook", "claude"]`, avoiding shell interpolation of runner paths):
 - **`PreToolUse` (`Read|Edit|Write|MultiEdit`):** Tracks the last edited file as focus and, when `slice.enabled` is set to `true` in `config.json`, intercepts full-file reads of large `.ts/.tsx/.js/.jsx/.py` files to return their compact interface view first. Ranged reads (`offset`/`limit`) and the active focus file always pass through untouched.
 - **`PostToolUse` (`Bash`):** Extracts the diagnostic essence of oversized compiler/test failures (`>= errors.minChars`) and archives the redacted log when `errors.archive` is enabled.
 
 ### 2. Google Antigravity
 
-Add `broke` to `.gemini/antigravity/mcp_config.json` and copy [SKILL.md](SKILL.md) to `.gemini/antigravity/skills/broke/SKILL.md`:
+Add `broke` to `.agents/mcp_config.json` and copy [SKILL.md](SKILL.md) to `.agents/skills/broke/SKILL.md` (existing files under legacy `.gemini/antigravity/` paths are left untouched and are not automatically deleted):
 
 ```json
 {

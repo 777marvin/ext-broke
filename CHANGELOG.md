@@ -23,6 +23,7 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Fixed
 
+- Extract the multi-agent installer into `agent-install.ts` (re-exported from `cli.ts`) to preserve existing project configuration across `claude`, `antigravity`, `codex`, and `cursor`: update Codex `.codex/config.toml` via `toml-eslint-parser` AST source ranges without overwriting model settings, comments, unrelated MCP servers, custom `broke` keys, or CRLF line endings; upsert only `broke`-owned Claude Code hook entries using direct `command: "node"` + `args` array execution (avoiding shell interpolation of literal runner paths) while preserving foreign hooks and custom properties; target Antigravity's workspace discovery paths (`.agents/mcp_config.json` and `.agents/skills/broke/SKILL.md`) without deleting legacy `.gemini/antigravity` files; abort planning with zero writes on invalid JSON, TOML, or `AGENTS.md` marker blocks; and replace files atomically via temporary siblings with rollback and retained recovery copies on restoration failure.
 - Preserve tool truncation limits (`maxLines`, `maxKB`) when toggling exemption state in `ConfigComponent.jsx`.
 - Fix deletion of dictionary entries (such as per-tool truncation rules) in `mergeConfigDraft` so reset actions persist cleanly.
 - Synchronize host configuration after executing commands from the settings maintenance deck in `ConfigComponent.jsx`.
