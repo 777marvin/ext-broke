@@ -51,6 +51,17 @@ export interface JsonRpcResponse {
   };
 }
 
+export const SUPPORTED_MCP_VERSIONS = ['2024-11-05'] as const;
+export type SupportedMcpVersion = (typeof SUPPORTED_MCP_VERSIONS)[number];
+export const DEFAULT_MCP_VERSION: SupportedMcpVersion = '2024-11-05';
+
+export function negotiateMcpProtocolVersion(requested?: string | null): SupportedMcpVersion {
+  if (typeof requested === 'string' && (SUPPORTED_MCP_VERSIONS as readonly string[]).includes(requested)) {
+    return requested as SupportedMcpVersion;
+  }
+  return DEFAULT_MCP_VERSION;
+}
+
 export interface McpSessionState {
   root: string;
   agentId: string;
@@ -233,11 +244,19 @@ export function buildWorkflowPromptText(brevityOverride?: 'off' | 'lite' | 'full
 }
 
 export async function handleMcpMessage(
-  msg: JsonRpcRequest,
+  msg: JsonRpcRequest | unknown,
   session: McpSessionState,
   deps: AgentCheckDeps = {},
 ): Promise<JsonRpcResponse | null> {
-  if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
+  if (Array.isArray(msg)) {
+    return {
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32600, message: 'Invalid Request: batch requests are not supported' },
+    };
+  }
+
+  if (!msg || typeof msg !== 'object' || (msg as JsonRpcRequest).jsonrpc !== '2.0' || typeof (msg as JsonRpcRequest).method !== 'string') {
     return {
       jsonrpc: '2.0',
       id: (msg as { id?: string | number | null })?.id ?? null,
@@ -245,34 +264,34 @@ export async function handleMcpMessage(
     };
   }
 
+  const req = msg as JsonRpcRequest;
+
   // Notifications have no `id` and expect no response.
-  if (msg.id === undefined) {
+  if (req.id === undefined) {
     return null;
   }
 
   const reply = (result: unknown): JsonRpcResponse => ({
     jsonrpc: '2.0',
-    id: msg.id ?? null,
+    id: req.id ?? null,
     result,
   });
 
   const fail = (code: number, message: string, data?: unknown): JsonRpcResponse => ({
     jsonrpc: '2.0',
-    id: msg.id ?? null,
+    id: req.id ?? null,
     error: { code, message, ...(data !== undefined ? { data } : {}) },
   });
 
   try {
-    switch (msg.method) {
+    switch (req.method) {
       case 'initialize': {
-        const params = (msg.params ?? {}) as {
+        const params = (req.params ?? {}) as {
           protocolVersion?: string;
           clientInfo?: { name?: string };
-           initializationOptions?: { root?: string };
+          initializationOptions?: { root?: string };
         };
-        if (typeof params.protocolVersion === 'string' && params.protocolVersion) {
-          session.protocolVersion = params.protocolVersion;
-        }
+        session.protocolVersion = negotiateMcpProtocolVersion(params.protocolVersion);
         if (params.clientInfo?.name && session.agentId === 'mcp') {
           session.agentId = normalizeAgentId(params.clientInfo.name);
         }
@@ -299,7 +318,7 @@ export async function handleMcpMessage(
         return reply({ prompts: MCP_PROMPTS });
 
       case 'prompts/get': {
-        const params = (msg.params ?? {}) as { name?: string; arguments?: Record<string, string> };
+        const params = (req.params ?? {}) as { name?: string; arguments?: Record<string, string> };
         if (params.name !== 'broke-workflow') {
           return fail(-32602, `Unknown prompt: ${String(params.name)}`);
         }
@@ -323,7 +342,7 @@ export async function handleMcpMessage(
       }
 
       case 'tools/call': {
-        const params = (msg.params ?? {}) as { name?: string; arguments?: unknown };
+        const params = (req.params ?? {}) as { name?: string; arguments?: unknown };
         const toolName = params.name;
         const rawArgs = params.arguments ?? {};
         const config = getConfig();
@@ -383,7 +402,7 @@ export async function handleMcpMessage(
       }
 
       default:
-        return fail(-32601, `Method not found: ${msg.method}`);
+        return fail(-32601, `Method not found: ${req.method}`);
     }
   } catch (err) {
     return fail(-32603, err instanceof Error ? err.message : String(err));
