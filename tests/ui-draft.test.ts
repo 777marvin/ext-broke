@@ -29,4 +29,34 @@ describe('AUD-09 shared synchronous configuration drafts', () => {
     assert.equal(result.truncate.archive, true);
     assert.equal(result.mode, 'custom');
   });
+
+  it('allows explicit deletion of dictionary entries (e.g. truncate.tools reset) without dropping siblings', () => {
+    const base = {
+      ...DEFAULT_CONFIG,
+      truncate: {
+        ...DEFAULT_CONFIG.truncate,
+        tools: {
+          bash: { enabled: true, maxLines: 120, maxKB: 12 },
+          grep: { enabled: false },
+        },
+      },
+    };
+    const latest = { ...base };
+    // Handler removes 'bash' while keeping 'grep'
+    const next = {
+      ...base,
+      truncate: {
+        ...base.truncate,
+        tools: { grep: { enabled: false } },
+      },
+    };
+    const result = reducer(base, latest, next);
+    assert.deepEqual(result.truncate.tools, { grep: { enabled: false } });
+
+    // An unrelated subsequent edit doesn't revive 'bash'
+    const nextUnrelated = { ...base, cache: { ...base.cache, escapeHatch: false } };
+    const result2 = reducer(base, result, nextUnrelated);
+    assert.deepEqual(result2.truncate.tools, { grep: { enabled: false } });
+    assert.equal(result2.cache.escapeHatch, false);
+  });
 });

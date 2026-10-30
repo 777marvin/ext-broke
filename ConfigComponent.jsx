@@ -3,6 +3,14 @@
   const { Select, Checkbox, Input, Tooltip } = ui;
   const [presetError, setPresetError] = React.useState(null);
   const [previewing, setPreviewing] = React.useState(false);
+  const [newToolName, setNewToolName] = React.useState('');
+  const [newToolLines, setNewToolLines] = React.useState('120');
+  const [newToolKB, setNewToolKB] = React.useState('12');
+  const [pendingCmd, setPendingCmd] = React.useState(null);
+  const [cmdResult, setCmdResult] = React.useState(null);
+  const [executingCmd, setExecutingCmd] = React.useState(null);
+  const [customCmd, setCustomCmd] = React.useState('');
+
   const revision = React.useRef(0);
   const currentConfig = React.useRef(config);
   const lastPublished = React.useRef(config);
@@ -51,8 +59,10 @@
   const cfg = config ?? {};
   const summarize = cfg.summarize ?? {};
   const truncate = cfg.truncate ?? {};
+  const truncateTools = truncate.tools ?? {};
   const brevity = cfg.brevity ?? {};
   const errors = cfg.errors ?? {};
+  const sliceCfg = cfg.slice ?? {};
   const uiCfg = cfg.ui ?? {};
   const statsCfg = cfg.stats ?? {};
   const searchCfg = cfg.search ?? {};
@@ -79,11 +89,71 @@
     }
   };
 
+  const runDeckCommand = async (rawCmd) => {
+    const cmd = String(rawCmd ?? '').trim().replace(/^\/?broke\b\s*/i, '');
+    if (!cmd || executingCmd) return;
+    // Shared with StatusBadge via the injected helper: `search on/off` count
+    // as mutating here too, so both surfaces confirm the same commands.
+    const mutating = brokeCommandIsMutating(cmd);
+    if (mutating && pendingCmd !== cmd) {
+      setPendingCmd(cmd);
+      setCmdResult(null);
+      return;
+    }
+    setPendingCmd(null);
+    setCmdResult(null);
+    setExecutingCmd(cmd);
+    try {
+      const res = (await executeExtensionAction('runCommand', `broke ${cmd}`)) as { ok?: boolean; message?: string; error?: string } | undefined;
+      if (res?.ok === true) {
+        setCmdResult({ ok: true, cmd, text: res.message ?? '' });
+        const fresh = (await executeExtensionAction('getConfig')) as Record<string, unknown> | undefined;
+        if (fresh && typeof fresh === 'object') {
+          lastPublished.current = fresh;
+          publishConfig(fresh);
+        }
+      } else {
+        setCmdResult({ ok: false, cmd, text: res?.error ?? 'Command returned no result' });
+      }
+    } catch {
+      setCmdResult({ ok: false, cmd, text: 'Command could not be executed' });
+    } finally {
+      setExecutingCmd(null);
+    }
+  };
+
+  const addOrUpdateToolRule = (toolName, rule) => {
+    const clean = String(toolName ?? '').trim();
+    if (!clean || clean === '__proto__' || clean === 'constructor' || clean === 'prototype') return;
+    updateConfig({
+      ...config,
+      truncate: {
+        ...truncate,
+        tools: {
+          ...truncateTools,
+          [clean]: rule,
+        },
+      },
+    });
+  };
+
+  const removeToolRule = (toolName) => {
+    const nextTools = { ...truncateTools };
+    delete nextTools[toolName];
+    updateConfig({
+      ...config,
+      truncate: {
+        ...truncate,
+        tools: nextTools,
+      },
+    });
+  };
+
   return (
     <div className="flex flex-col gap-5" onChangeCapture={invalidatePreview}>
       <p style={{ fontSize: '12px', color: '#333' }}>
         Compresses the input context before it reaches the model - on every model call, not only at the built-in
-        emergency threshold. Everything here can also be changed from the chat: <span style={{ fontFamily: 'monospace' }}>/broke help</span>.
+        emergency threshold. Everything here can also be changed from the chat (<span style={{ fontFamily: 'monospace' }}>/broke help</span>) or launched directly in the <strong>Interactive Command Deck</strong> below.
       </p>
 
       <section className="flex flex-col gap-2" aria-label="Mode settings">
@@ -252,7 +322,7 @@
         </p>
       </div>
 
-      {/* 4 - Truncation limits */}
+      {/* 4 - Truncation limits & Per-tool overrides */}
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">Truncation limits (old tool outputs)</p>
         <div className="flex gap-4">
@@ -283,6 +353,107 @@
             1, 365)}
           </div>
         ) : null}
+
+        {/* Per-tool truncation overrides manager */}
+        <div style={{ marginTop: 8, padding: 10, border: '1px solid rgba(0,0,0,0.12)', borderRadius: 6 }}>
+          <p className="text-xs font-medium" style={{ marginBottom: 6 }}>Per-tool truncation rules (truncate.tools)</p>
+          {Object.keys(truncateTools).length > 0 ? (
+            <div className="flex flex-col gap-2" style={{ marginBottom: 8 }}>
+              {Object.entries(truncateTools).map(([toolName, rule]) => {
+                const r = (rule ?? {}) as { enabled?: boolean; maxLines?: number; maxKB?: number };
+                return (
+                  <div key={toolName} className="flex items-center justify-between gap-2" style={{ fontSize: 12, padding: '4px 8px', background: 'rgba(0,0,0,0.03)', borderRadius: 4 }}>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{toolName}</span>
+                    <span>
+                      {r.enabled === false ? 'exempt (off)' : `${r.maxLines ?? truncate.maxLines ?? 200} lines / ${r.maxKB ?? truncate.maxKB ?? 20} KB`}
+                    </span>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => addOrUpdateToolRule(toolName, { ...r, enabled: r.enabled === false })} style={{ padding: '4px 8px', fontSize: 11, border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4, background: '#fff', cursor: 'pointer' }}>
+                        {r.enabled === false ? 'Enable' : 'Exempt'}
+                      </button>
+                      <button type="button" onClick={() => removeToolRule(toolName)} style={{ padding: '4px 8px', fontSize: 11, border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4, background: '#fff', cursor: 'pointer' }}>Reset</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>No per-tool overrides configured — global limits apply to all tools.</p>
+          )}
+          <div className="flex gap-2 items-end">
+            <Input
+              label="Tool name"
+              defaultValue={newToolName}
+              onChange={(e) => setNewToolName(e.target.value)}
+              onBlur={(e) => setNewToolName(e.target.value)}
+            />
+            <Input
+              label="Tool max lines"
+              type="number"
+              min="1"
+              defaultValue={newToolLines}
+              onChange={(e) => setNewToolLines(e.target.value)}
+              onBlur={(e) => setNewToolLines(e.target.value)}
+            />
+            <Input
+              label="Tool max KB"
+              type="number"
+              min="1"
+              defaultValue={newToolKB}
+              onChange={(e) => setNewToolKB(e.target.value)}
+              onBlur={(e) => setNewToolKB(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const l = Math.trunc(Number(newToolLines));
+                const k = Math.trunc(Number(newToolKB));
+                if (newToolName.trim() && l > 0 && k > 0) {
+                  addOrUpdateToolRule(newToolName.trim(), { enabled: true, maxLines: l, maxKB: k });
+                  setNewToolName('');
+                }
+              }}
+              style={{ padding: '6px 12px', fontSize: 12, border: '1px solid rgba(0,0,0,0.2)', borderRadius: 5, background: '#fff', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Add / Update Rule
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 4b - ST-Slicing (F2) */}
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium">ST-Slicing (interface views for large file reads)</p>
+        <Checkbox
+          label="Enable ST-slicing (rewrites large file reads into interface views in stored history)"
+          checked={sliceCfg.enabled ?? false}
+          onChange={(checked) => updateConfig({ ...config, slice: { ...sliceCfg, enabled: checked } })}
+        />
+        <Select
+          label="Slice parser"
+          value={sliceCfg.parser ?? 'heuristic'}
+          onChange={(value) => updateConfig({ ...config, slice: { ...sliceCfg, parser: value } })}
+          options={[
+            { value: 'heuristic', label: 'Heuristic - fast signature & declaration extraction (v1)' },
+            { value: 'ast', label: 'AST - reserved for web-tree-sitter (v2)' },
+          ]}
+        />
+        <div className="flex gap-4">
+          {numberField('Slice min file chars', sliceCfg.minChars ?? 4000, (n) =>
+            updateConfig({ ...config, slice: { ...sliceCfg, minChars: n } }),
+          )}
+          {numberField('Slice view cap chars', sliceCfg.maxChars ?? 20000, (n) =>
+            updateConfig({ ...config, slice: { ...sliceCfg, maxChars: n } }),
+          )}
+        </div>
+        <Checkbox
+          label="Derive slice focus automatically from edit-tool calls and updated files"
+          checked={sliceCfg.focusAuto ?? true}
+          onChange={(checked) => updateConfig({ ...config, slice: { ...sliceCfg, focusAuto: checked } })}
+        />
+        <p style={{ fontSize: '12px', color: '#333', marginTop: '8px' }}>
+          Files smaller than the minimum pass through untouched; the active focus file always returns in full.
+        </p>
       </div>
 
       {/* 5 - Summarizer */}
@@ -354,6 +525,11 @@
           checked={searchCfg.enabled ?? true}
           onChange={(checked) => updateConfig({ ...config, search: { ...searchCfg, enabled: checked } })}
         />
+        <Checkbox
+          label="Include git-ignored files in the local search index (dot-paths & secrets stay excluded)"
+          checked={searchCfg.includeGitIgnored ?? false}
+          onChange={(checked) => updateConfig({ ...config, search: { ...searchCfg, includeGitIgnored: checked } })}
+        />
         <div className="flex gap-4">
           {numberField('Max results per query', searchCfg.maxResults ?? 8, (n) =>
             updateConfig({ ...config, search: { ...searchCfg, maxResults: n } }),
@@ -386,6 +562,11 @@
           label="Show the 💸 saved-tokens badge in the task status bar"
           checked={uiCfg.showStatusBadge ?? true}
           onChange={(checked) => updateConfig({ ...config, ui: { ...uiCfg, showStatusBadge: checked } })}
+        />
+        <Checkbox
+          label="Show 'broke: why' in the per-message dropdown menu (AiderDesk 0.85+)"
+          checked={uiCfg.showMessageMenu ?? false}
+          onChange={(checked) => updateConfig({ ...config, ui: { ...uiCfg, showMessageMenu: checked } })}
         />
         <Checkbox
           label="Record every compression run to measure.jsonl"
@@ -431,6 +612,109 @@
           Snapshots are small JSON milestones; only the destructive flush writes raw history (undo file), and only when
           this switch is on. Every option here is also reachable via <span style={{ fontFamily: 'monospace' }}>/broke config get|set</span>.
         </p>
+      </div>
+
+      {/* 9 - Interactive Command & Maintenance Deck */}
+      <div className="flex flex-col gap-2" style={{ padding: 12, border: '1px solid rgba(0,0,0,0.14)', borderRadius: 8, background: '#f8fafc' }}>
+        <p className="text-sm font-medium">Interactive Command &amp; Maintenance Deck</p>
+        <p style={{ fontSize: '12px', color: '#333' }}>
+          Run any Broke diagnostic, maintenance, or lifecycle command directly from Settings (mutating actions require a second click to confirm):
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {[
+            'status',
+            'stats',
+            'why',
+            'estimate',
+            'measure',
+            'diff',
+            'index status',
+            'index rebuild',
+            'slice status',
+            'snapshot list',
+            'summarize now',
+            'errors clear',
+            'truncate clear',
+            'config list',
+            'selftest',
+            'update check',
+            'update',
+            'reset',
+            'help',
+          ].map((cmd) => (
+            <button
+              key={cmd}
+              type="button"
+              disabled={executingCmd !== null}
+              onClick={() => void runDeckCommand(cmd)}
+              style={{
+                padding: '6px 10px',
+                fontSize: 12,
+                border: pendingCmd === cmd ? '1px solid #d4a017' : '1px solid rgba(0,0,0,0.18)',
+                borderRadius: 5,
+                background: pendingCmd === cmd ? '#fff3cd' : '#ffffff',
+                color: pendingCmd === cmd ? '#7a5c00' : '#111',
+                cursor: executingCmd !== null ? 'not-allowed' : 'pointer',
+                fontWeight: 500,
+                opacity: executingCmd !== null && executingCmd !== cmd ? 0.6 : 1,
+              }}
+            >
+              {executingCmd === cmd ? `Running /broke ${cmd}...` : pendingCmd === cmd ? `Confirm? /broke ${cmd}` : `/broke ${cmd}`}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2 items-end" style={{ marginTop: 6 }}>
+          <Input
+            label="Run custom /broke command"
+            defaultValue={customCmd}
+            onChange={(e) => setCustomCmd(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && customCmd.trim()) {
+                e.preventDefault();
+                void runDeckCommand(customCmd.trim());
+              }
+            }}
+          />
+          <button
+            type="button"
+            disabled={executingCmd !== null || !customCmd.trim()}
+            onClick={() => void runDeckCommand(customCmd)}
+            style={{
+              padding: '6px 12px',
+              fontSize: 12,
+              border: '1px solid #005bb7',
+              borderRadius: 5,
+              background: '#0066cc',
+              color: '#fff',
+              cursor: executingCmd !== null || !customCmd.trim() ? 'not-allowed' : 'pointer',
+              fontWeight: 600,
+              opacity: executingCmd !== null || !customCmd.trim() ? 0.6 : 1,
+            }}
+          >
+            {executingCmd === customCmd.trim().replace(/^\/?broke\b\s*/i, '') ? 'Executing...' : pendingCmd && pendingCmd === customCmd.trim().replace(/^\/?broke\b\s*/i, '') ? 'Confirm Execute' : 'Execute Command'}
+          </button>
+        </div>
+        {cmdResult ? (
+          <pre
+            role="status"
+            style={{
+              marginTop: 8,
+              padding: 10,
+              fontSize: 11,
+              fontFamily: 'monospace',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              background: cmdResult.ok ? '#f0fdf4' : '#fef2f2',
+              border: `1px solid ${cmdResult.ok ? '#bbf7d0' : '#fecaca'}`,
+              borderRadius: 6,
+              color: cmdResult.ok ? '#14532d' : '#7f1d1d',
+              maxHeight: 220,
+              overflowY: 'auto',
+            }}
+          >
+            {cmdResult.text}
+          </pre>
+        ) : null}
       </div>
     </div>
   );

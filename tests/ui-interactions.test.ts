@@ -671,4 +671,135 @@ describe('H1 quick commands in the badge overlay', () => {
     assert.doesNotMatch(quick('reset').textContent ?? '', /Confirm\?/, 'state does not survive a close');
     assert.doesNotMatch(container.textContent!, /ran broke/, 'the stale result is gone too');
   });
+
+  it('supports interactive 3-step onboarding with readiness check and Command Studio launch', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {}, false);
+    await open();
+
+    assert.match(container.textContent!, /Step 1: Choose your operating approach/);
+    await click(button('2. Readiness'));
+    assert.match(container.textContent!, /Step 2: Verify readiness in one click/);
+    await click(button('Run Readiness Check Now'));
+    assert.ok(calls.includes('getSetupReadiness'), 'onboarding step 2 triggers setup readiness check');
+
+    await click(button('3. Command Studio'));
+    assert.match(container.textContent!, /Step 3: Every command is clickable in the UI/);
+    await click(button('Try: Check Search Index'));
+    assert.match(container.textContent!, /ran broke index status/);
+
+    await click(button('Explore All Commands'));
+    const advanced = [...container.querySelectorAll('details')].find((node) =>
+      /Advanced settings and diagnostics/i.test(node.querySelector('summary')?.textContent ?? ''),
+    );
+    assert.equal(advanced?.open, true, 'Explore All Commands opens the Command Studio disclosure');
+  });
+
+  it('executes parameterized commands and universal commands from the Command Studio', async () => {
+    await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'));
+    await open();
+
+    await click(button('Open Command Studio (All Commands)'));
+
+    const setField = async (ariaLabel: string, value: string) => {
+      const el = container.querySelector(`input[aria-label="${ariaLabel}"]`) as HTMLInputElement;
+      assert.ok(el, `missing input: ${ariaLabel}`);
+      await React.act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(el, value);
+        el.dispatchEvent(new win.Event('input', { bubbles: true }));
+        el.dispatchEvent(new win.Event('change', { bubbles: true }));
+      });
+    };
+
+    // 1. Search query (read-only: runs on first click)
+    await setField('Search query', 'compressMessages');
+    await click(button('Run search'));
+    assert.match(container.textContent!, /ran broke search compressMessages/);
+
+    // 2. Diff budget (read-only: runs on first click)
+    await setField('Diff char budget', '4500');
+    await click(button('Run diff'));
+    assert.match(container.textContent!, /ran broke diff 4500/);
+
+    // 3. Snapshot label (mutating: 2-step confirmation)
+    await setField('Snapshot label', 'before-refactor');
+    await click(button('Save snapshot'));
+    assert.doesNotMatch(container.textContent!, /ran broke snapshot before-refactor/, 'the snapshot must not run before the second click');
+    await click(button('Confirm?'));
+    assert.match(container.textContent!, /ran broke snapshot before-refactor/);
+
+    // 4. Universal command bar (read-only vs mutating)
+    await setField('Universal broke command', 'slice status');
+    await click(button('Execute'));
+    assert.match(container.textContent!, /ran broke slice status/);
+
+    // 5. Verify no crosstalk: 1-click snapshot does not arm the Save snapshot button
+    const snapshotOneClick = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '/broke snapshot')!;
+    await click(snapshotOneClick);
+    assert.match(snapshotOneClick.textContent ?? '', /Confirm\?/);
+    const saveSnapshotBtn = [...container.querySelectorAll('button')].find((b) => /Save snapshot/i.test(b.textContent ?? ''));
+    assert.ok(saveSnapshotBtn, 'Save snapshot button must exist');
+    assert.doesNotMatch(saveSnapshotBtn.textContent ?? '', /Confirm\?/, '1-click snapshot must not arm parameterized button');
+
+    // 6. Running /broke reset triggers UI refresh
+    const resetOneClick = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '/broke reset')!;
+    await click(resetOneClick);
+    await click(resetOneClick);
+    assert.ok(calls.includes('refresh'), '/broke reset must trigger UI refresh');
+  });
+
+  it('supports ST-slicing, per-tool truncation rules, and command deck in ConfigComponent', async () => {
+    await mount(false, applyPreset(DEFAULT_CONFIG, 'normal'));
+
+    // Toggle ST-slicing
+    await click(input('Enable ST-slicing'));
+    assert.equal(draft.slice.enabled, true);
+
+    // Toggle message menu
+    await click(input("Show 'broke: why' in the per-message dropdown menu"));
+    assert.equal(draft.ui.showMessageMenu, true);
+
+    // Run read-only command in the settings maintenance deck
+    const indexStatusBtn = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '/broke index status')!;
+    await click(indexStatusBtn);
+    assert.match(container.textContent!, /ran broke index status/);
+
+    // Run mutating command (2-step confirm) in the settings maintenance deck
+    const clearBtn = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '/broke errors clear')!;
+    await click(clearBtn);
+    assert.match(clearBtn.textContent ?? '', /Confirm\?/);
+    await click(clearBtn);
+    assert.match(container.textContent!, /ran broke errors clear/);
+    assert.ok(calls.includes('getConfig'), 'deck commands sync host config after execution');
+
+    // Add per-tool truncation rule
+    const setToolField = async (label: string, value: string) => {
+      const el = input(label);
+      assert.ok(el instanceof win.HTMLInputElement);
+      await React.act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(el, value);
+        el.dispatchEvent(new win.FocusEvent('focusout', { bubbles: true }));
+        el.dispatchEvent(new win.Event('input', { bubbles: true }));
+        el.dispatchEvent(new win.Event('change', { bubbles: true }));
+      });
+    };
+    await setToolField('Tool name', 'bash');
+    await setToolField('Tool max lines', '150');
+    await setToolField('Tool max KB', '15');
+    await click(button('Add / Update Rule'));
+    assert.deepEqual(draft.truncate.tools?.bash, { enabled: true, maxLines: 150, maxKB: 15 });
+
+    // Toggle Exempt: preserves limits (Bug 2 fix)
+    await click(button('Exempt'));
+    assert.deepEqual(draft.truncate.tools?.bash, { enabled: false, maxLines: 150, maxKB: 15 });
+
+    // Toggle Enable: preserves limits
+    await click(button('Enable'));
+    assert.deepEqual(draft.truncate.tools?.bash, { enabled: true, maxLines: 150, maxKB: 15 });
+
+    // Reset rule: deletes entry completely (Bug 1 fix)
+    await click(button('Reset'));
+    assert.equal(draft.truncate.tools?.bash, undefined);
+  });
 });
