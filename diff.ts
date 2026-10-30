@@ -32,6 +32,13 @@ export interface DiffFileInput {
    * imposed, and rendering it as a size would invent a measurement.
    */
   notRead?: boolean;
+  /**
+   * Set when the file was intentionally omitted before reading/diffing its
+   * content (for example, protected sensitive path, symlink/workspace
+   * boundary escape, or pre-read size limit). Distinct from both readable
+   * diffs and binary/unreadable errors.
+   */
+  omittedReason?: string;
 }
 
 export interface DiffDigest {
@@ -91,6 +98,10 @@ function renderBlock(input: DiffFileInput, available: number): { block: string; 
     const block = `${header}\n  (not read - broke stops after ${fmt(MAX_DIFF_FILES_READ)} diffs per run)`;
     return { block, length: block.length + 1 };
   }
+  if (input.omittedReason) {
+    const block = `${header}\n  (omitted - ${input.omittedReason})`;
+    return { block, length: block.length + 1 };
+  }
   // An empty diff is the host's documented signal for "binary file" or "the
   // diff could not be read". It is NOT a size of zero and must never be
   // rendered as one - a file with no changes and a file whose content cannot
@@ -121,7 +132,8 @@ export function formatDiffDigest(files: readonly DiffFileInput[], budgetChars: n
   // measurement that was never taken. A never-read file is a third bucket
   // again: broke did not ask, so it is not a size and not the file's fault.
   const notRead = files.filter((f) => f.notRead === true);
-  const attempted = files.filter((f) => f.notRead !== true);
+  const omitted = files.filter((f) => f.notRead !== true && Boolean(f.omittedReason));
+  const attempted = files.filter((f) => f.notRead !== true && !f.omittedReason);
   const readable = attempted.filter((f) => f.diff.trim().length > 0);
   const unreadable = attempted.length - readable.length;
   const diffChars = readable.reduce((sum, f) => sum + f.diff.length, 0);
@@ -143,10 +155,11 @@ export function formatDiffDigest(files: readonly DiffFileInput[], budgetChars: n
   const sizeParts: string[] = [];
   if (readable.length > 0) {
     sizeParts.push(`${fmt(diffChars)} chars of diff across ${fmt(readable.length)} readable file${readable.length === 1 ? '' : 's'}`);
-  } else if (notRead.length < files.length) {
+  } else if (attempted.length > 0) {
     sizeParts.push('no readable diff text');
   }
   if (unreadable > 0) sizeParts.push(`${fmt(unreadable)} binary or unreadable (size unknown)`);
+  if (omitted.length > 0) sizeParts.push(`${fmt(omitted.length)} omitted (protected or size-limited)`);
   if (notRead.length > 0) sizeParts.push(`${fmt(notRead.length)} not read (per-run read cap)`);
   const header =
     `broke diff - ${fmt(files.length)} changed file${files.length === 1 ? '' : 's'}, ` +

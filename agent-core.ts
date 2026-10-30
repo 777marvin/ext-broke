@@ -7,8 +7,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { buildBrevityDirective } from './brevity';
 import { formatMeasure } from './commands';
 import { maskSecrets, truncateText } from './compress';
@@ -28,7 +28,7 @@ import {
   saveErrorOutput,
 } from './errors';
 import { IndexCoordinator } from './index-coordinator';
-import { forwardSlash, isSafeWorkspaceFile, projectHash } from './indexer';
+import { forwardSlash, isSafeWorkspaceFile, isSafeWorkspaceRelPath, projectHash } from './indexer';
 import { isRemoteOllamaHost, ollamaGenerate, type OllamaGenerateResult } from './local';
 import { checkSetupReadiness } from './setup';
 import {
@@ -352,71 +352,280 @@ export interface AgentDiffInput {
   budgetChars?: number;
 }
 
-function collectGitDiffFiles(root: string): DiffFileInput[] | null {
+const MAX_UNTRACKED_DIFF_BYTES = 256 * 1024;
+
+interface GitStatusEntry {
+  status: string;
+  destRepoPath: string;
+  origRepoPath?: string;
+}
+
+function toWorkspaceRelPath(repoRelPath: string, wsPrefix: string): string | null {
+  if (!wsPrefix) return repoRelPath;
+  const prefixWithSlash = `${wsPrefix}/`;
+  if (repoRelPath.startsWith(prefixWithSlash)) {
+    return repoRelPath.slice(prefixWithSlash.length);
+  }
+  if (process.platform === 'win32' && repoRelPath.toLowerCase().startsWith(prefixWithSlash.toLowerCase())) {
+    return repoRelPath.slice(prefixWithSlash.length);
+  }
+  return null;
+}
+
+type WorkspaceCandidateCheck =
+  | { ok: true; existsOnDisk: true; canonicalFile: string; size: number }
+  | { ok: true; existsOnDisk: false }
+  | { ok: false; omittedReason: string };
+
+function inspectWorkspaceCandidate(canonicalWorkspace: string, wsRelPath: string): WorkspaceCandidateCheck {
+  if (!isSafeWorkspaceRelPath(wsRelPath)) {
+    return { ok: false, omittedReason: 'protected or sensitive path' };
+  }
+
+  const candidateAbs = join(canonicalWorkspace, ...wsRelPath.split('/'));
+  let lst: ReturnType<typeof lstatSync> | null = null;
   try {
-    const statusOut = execFileSync('git', ['status', '--porcelain', '-z', '-uall'], {
-      cwd: root,
-      encoding: 'utf-8',
-      timeout: 10_000,
-      windowsHide: true,
-      maxBuffer: 16 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const tokens = statusOut.split('\0').filter((t) => t.length > 0);
-    const entries: { status: string; path: string }[] = [];
-    for (let i = 0; i < tokens.length; i++) {
-      const token = tokens[i];
+    lst = lstatSync(candidateAbs);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT') {
+      return { ok: false, omittedReason: 'unreadable or unsafe workspace path' };
+    }
+    lst = null;
+  }
+
+  if (lst !== null) {
+    if (!isSafeWorkspaceFile(canonicalWorkspace, wsRelPath)) {
+      return {
+        ok: false,
+        omittedReason: lst.isSymbolicLink() ? 'symlink or unsafe target path' : 'protected or non-regular path',
+      };
+    }
+    try {
+      const canonicalFile = realpathSync(candidateAbs);
+      const st = statSync(canonicalFile);
+      if (!st.isFile()) {
+        return { ok: false, omittedReason: 'non-regular file' };
+      }
+      return { ok: true, existsOnDisk: true, canonicalFile, size: st.size };
+    } catch {
+      return { ok: false, omittedReason: 'unreadable or unsafe workspace path' };
+    }
+  }
+
+  // Deleted path: ensure the nearest existing ancestor still resolves inside canonicalWorkspace.
+  let currentDir = dirname(candidateAbs);
+  while (currentDir && currentDir !== canonicalWorkspace) {
+    const parentDir = dirname(currentDir);
+    if (parentDir === currentDir) {
+      return { ok: false, omittedReason: 'outside workspace boundary' };
+    }
+    try {
+      lstatSync(currentDir);
+      const canonicalAncestor = realpathSync(currentDir);
+      const relAncestor = relative(canonicalWorkspace, canonicalAncestor);
+      if (relAncestor.startsWith('..') || isAbsolute(relAncestor)) {
+        return { ok: false, omittedReason: 'outside workspace boundary' };
+      }
+      const normAncestor = forwardSlash(relAncestor);
+      if (normAncestor && !isSafeWorkspaceRelPath(normAncestor)) {
+        return { ok: false, omittedReason: 'protected or sensitive path' };
+      }
+      break;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== 'ENOENT') {
+        return { ok: false, omittedReason: 'unreadable or unsafe workspace path' };
+      }
+    }
+    currentDir = parentDir;
+  }
+
+  return { ok: true, existsOnDisk: false };
+}
+
+function analyzeUnifiedPatch(patch: string): { additions: number; deletions: number; binary: boolean } {
+  let additions = 0;
+  let deletions = 0;
+  let binary = false;
+  let inHunk = false;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('diff --git ') || line.startsWith('diff --cc ') || line.startsWith('diff --combined ')) {
+      inHunk = false;
+      continue;
+    }
+    if (!inHunk) {
+      if (line.startsWith('Binary files ') || line.startsWith('GIT binary patch')) {
+        binary = true;
+      } else if (line.startsWith('@@ ') || line.startsWith('@@@ ')) {
+        inHunk = true;
+      }
+      continue;
+    }
+    if (line.startsWith('+')) {
+      additions += 1;
+    } else if (line.startsWith('-')) {
+      deletions += 1;
+    } else if (!line.startsWith(' ') && !line.startsWith('\\') && line.length > 0) {
+      inHunk = false;
+      if (line.startsWith('Binary files ') || line.startsWith('GIT binary patch')) {
+        binary = true;
+      }
+    }
+  }
+  return { additions, deletions, binary };
+}
+
+function collectGitDiffFiles(canonicalWorkspace: string): DiffFileInput[] | null {
+  try {
+    const topRaw = execFileSync(
+      'git',
+      ['-c', 'core.quotepath=false', 'rev-parse', '--show-toplevel'],
+      {
+        cwd: canonicalWorkspace,
+        encoding: 'utf-8',
+        timeout: 10_000,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    ).trim();
+    if (!topRaw) return null;
+
+    const canonicalGitTop = realpathSync(topRaw);
+    const rawWsRel = relative(canonicalGitTop, canonicalWorkspace);
+    if (rawWsRel.startsWith('..') || isAbsolute(rawWsRel)) {
+      return null;
+    }
+    const wsPrefix = rawWsRel ? forwardSlash(rawWsRel) : '';
+
+    const statusOut = execFileSync(
+      'git',
+      ['-c', 'core.quotepath=false', 'status', '--porcelain', '-z', '-uall'],
+      {
+        cwd: canonicalGitTop,
+        encoding: 'utf-8',
+        timeout: 10_000,
+        windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
+
+    const rawTokens = statusOut.split('\0');
+    if (rawTokens.length > 0 && rawTokens[rawTokens.length - 1] === '') {
+      rawTokens.pop();
+    }
+
+    const rawEntries: GitStatusEntry[] = [];
+    const activeDestRepoPaths = new Set<string>();
+    for (let i = 0; i < rawTokens.length; i++) {
+      const token = rawTokens[i];
+      if (token.length < 4 || token[2] !== ' ') continue;
       const status = token.slice(0, 2);
-      const filePath = token.slice(3);
-      if (!filePath) continue;
-      entries.push({ status, path: filePath });
-      // Rename/copy entries in porcelain -z have a second NUL-terminated path for the original name.
+      const destRepoPath = token.slice(3);
+      if (!destRepoPath || status === '!!') continue;
+      activeDestRepoPaths.add(destRepoPath);
       if (status.includes('R') || status.includes('C')) {
+        const origRepoPath = rawTokens[i + 1] ?? '';
         i += 1;
+        rawEntries.push({ status, destRepoPath, origRepoPath });
+      } else {
+        rawEntries.push({ status, destRepoPath });
       }
     }
 
-    if (entries.length === 0) return [];
+    if (rawEntries.length === 0) return [];
 
-    // Fetch numstat for tracked changes in one call (staged + unstaged vs HEAD, fallback to working tree).
-    const numstatMap = new Map<string, { additions: number; deletions: number; binary: boolean }>();
-    const parseNumstat = (args: string[]): void => {
-      try {
-        const out = execFileSync('git', args, {
-          cwd: root,
-          encoding: 'utf-8',
-          timeout: 10_000,
-          windowsHide: true,
-          maxBuffer: 16 * 1024 * 1024,
-          stdio: ['ignore', 'pipe', 'ignore'],
-        });
-        for (const rec of out.split('\0')) {
-          if (!rec.trim()) continue;
-          const parts = rec.split('\t');
-          if (parts.length < 3) continue;
-          const [addRaw, delRaw, p] = parts;
-          if (!p) continue;
-          const binary = addRaw === '-' || delRaw === '-';
-          const additions = binary ? 0 : Number.parseInt(addRaw, 10) || 0;
-          const deletions = binary ? 0 : Number.parseInt(delRaw, 10) || 0;
-          numstatMap.set(p, { additions, deletions, binary });
+    let headResolved = false;
+    let hasHead = false;
+    let emptyTreeOid = '';
+    const ensureStagedBase = (): { hasHead: boolean; emptyTreeOid: string } => {
+      if (!headResolved) {
+        headResolved = true;
+        try {
+          execFileSync('git', ['rev-parse', '--verify', 'HEAD'], {
+            cwd: canonicalGitTop,
+            encoding: 'utf-8',
+            timeout: 5_000,
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'ignore'],
+          });
+          hasHead = true;
+        } catch {
+          hasHead = false;
+          emptyTreeOid = execFileSync('git', ['hash-object', '-t', 'tree', '--stdin'], {
+            cwd: canonicalGitTop,
+            input: '',
+            encoding: 'utf-8',
+            timeout: 5_000,
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'ignore'],
+          }).trim();
         }
-      } catch {
-        // Empty repo without HEAD or git error - handled per file below.
       }
+      return { hasHead, emptyTreeOid };
     };
-    parseNumstat(['diff', '--numstat', '-z']);
-    parseNumstat(['diff', '--cached', '--numstat', '-z']);
 
+    const relativeFlags = wsPrefix ? [`--relative=${wsPrefix}`] : [];
     const results: DiffFileInput[] = [];
-    for (let idx = 0; idx < entries.length; idx++) {
-      const { status, path: relPath } = entries[idx];
-      const num = numstatMap.get(relPath);
-      if (idx >= MAX_DIFF_FILES_READ) {
+    let readsAttempted = 0;
+
+    for (const entry of rawEntries) {
+      const { status, destRepoPath, origRepoPath } = entry;
+      const destWsPath = toWorkspaceRelPath(destRepoPath, wsPrefix);
+      const origWsPath = origRepoPath !== undefined ? toWorkspaceRelPath(origRepoPath, wsPrefix) : undefined;
+
+      // Skip changes completely outside the configured workspace.
+      if (destWsPath === null && (origWsPath === undefined || origWsPath === null)) {
+        continue;
+      }
+
+      // Cross-boundary rename/copy (one side inside workspace, one side outside): omit without diffing.
+      if (origRepoPath !== undefined && (destWsPath === null || origWsPath === null)) {
+        const visibleWsPath = destWsPath ?? origWsPath ?? destRepoPath;
         results.push({
-          path: relPath,
-          additions: num?.additions ?? 0,
-          deletions: num?.deletions ?? 0,
+          path: visibleWsPath,
+          additions: 0,
+          deletions: 0,
+          diff: '',
+          omittedReason: 'outside workspace boundary',
+        });
+        continue;
+      }
+
+      const wsRelPath = destWsPath!;
+      const destCheck = inspectWorkspaceCandidate(canonicalWorkspace, wsRelPath);
+      if (!destCheck.ok) {
+        results.push({
+          path: wsRelPath,
+          additions: 0,
+          deletions: 0,
+          diff: '',
+          omittedReason: destCheck.omittedReason,
+        });
+        continue;
+      }
+
+      if (origWsPath !== undefined && origWsPath !== null) {
+        const origCheck = inspectWorkspaceCandidate(canonicalWorkspace, origWsPath);
+        if (!origCheck.ok) {
+          results.push({
+            path: wsRelPath,
+            additions: 0,
+            deletions: 0,
+            diff: '',
+            omittedReason: origCheck.omittedReason,
+          });
+          continue;
+        }
+      }
+
+      if (readsAttempted >= MAX_DIFF_FILES_READ) {
+        results.push({
+          path: wsRelPath,
+          additions: 0,
+          deletions: 0,
           diff: '',
           notRead: true,
         });
@@ -424,81 +633,183 @@ function collectGitDiffFiles(root: string): DiffFileInput[] | null {
       }
 
       if (status === '??') {
-        // Untracked file: build a synthetic unified diff if it's a safe, readable text file.
-        const safe = resolveConfinedWorkspaceFile(root, relPath);
-        if (!safe.ok) {
-          results.push({ path: relPath, additions: 0, deletions: 0, diff: '' });
+        if (!destCheck.existsOnDisk) {
+          results.push({ path: wsRelPath, additions: 0, deletions: 0, diff: '' });
           continue;
         }
+        // Check size BEFORE reading untracked content into memory.
+        if (destCheck.size > MAX_UNTRACKED_DIFF_BYTES) {
+          results.push({
+            path: wsRelPath,
+            additions: 0,
+            deletions: 0,
+            diff: '',
+            omittedReason: 'exceeds 256 KB untracked read limit',
+          });
+          continue;
+        }
+        readsAttempted += 1;
         try {
-          const buf = readFileSync(safe.absPath);
-          if (buf.includes(0) || buf.length > 256 * 1024) {
-            results.push({ path: relPath, additions: 0, deletions: 0, diff: '' });
+          const buf = readFileSync(destCheck.canonicalFile);
+          if (buf.length > MAX_UNTRACKED_DIFF_BYTES) {
+            results.push({
+              path: wsRelPath,
+              additions: 0,
+              deletions: 0,
+              diff: '',
+              omittedReason: 'exceeds 256 KB untracked read limit',
+            });
             continue;
           }
-          const text = buf.toString('utf-8');
-          const lines = text.split('\n');
+          if (buf.includes(0)) {
+            results.push({ path: wsRelPath, additions: 0, deletions: 0, diff: '' });
+            continue;
+          }
+          const rawText = maskSecrets(buf.toString('utf-8')).replace(/\r\n/g, '\n');
+          if (rawText.length === 0) {
+            const emptyUntrackedDiff = ['[untracked]', 'new file mode 100644', '--- /dev/null', `+++ b/${wsRelPath}`].join('\n');
+            results.push({
+              path: wsRelPath,
+              additions: 0,
+              deletions: 0,
+              diff: emptyUntrackedDiff,
+            });
+            continue;
+          }
+          const contentLines = rawText.endsWith('\n') ? rawText.slice(0, -1).split('\n') : rawText.split('\n');
           const diffBody = [
-            `--- /dev/null`,
-            `+++ b/${relPath}`,
-            `@@ -0,0 +1,${lines.length} @@`,
-            ...lines.map((l) => `+${l}`),
+            '[untracked]',
+            '--- /dev/null',
+            `+++ b/${wsRelPath}`,
+            `@@ -0,0 +1,${contentLines.length} @@`,
+            ...contentLines.map((l) => `+${l}`),
           ].join('\n');
           results.push({
-            path: relPath,
-            additions: lines.length,
+            path: wsRelPath,
+            additions: contentLines.length,
             deletions: 0,
             diff: diffBody,
           });
         } catch {
-          results.push({ path: relPath, additions: 0, deletions: 0, diff: '' });
+          results.push({ path: wsRelPath, additions: 0, deletions: 0, diff: '' });
         }
         continue;
       }
 
-      if (num?.binary) {
-        results.push({ path: relPath, additions: 0, deletions: 0, diff: '' });
-        continue;
-      }
+      readsAttempted += 1;
+      const indexStatus = status[0];
+      const worktreeStatus = status[1];
+      let stagedRaw = '';
+      let unstagedRaw = '';
+      let readError = false;
 
-      let diffText = '';
-      try {
-        diffText = execFileSync('git', ['diff', '--', relPath], {
-          cwd: root,
-          encoding: 'utf-8',
-          timeout: 5_000,
-          windowsHide: true,
-          maxBuffer: 4 * 1024 * 1024,
-          stdio: ['ignore', 'pipe', 'ignore'],
-        });
-        if (!diffText.trim()) {
-          diffText = execFileSync('git', ['diff', '--cached', '--', relPath], {
-            cwd: root,
+      if (indexStatus !== ' ') {
+        try {
+          const base = ensureStagedBase();
+          const stagedPathspecs =
+            indexStatus === 'R' && origRepoPath && !activeDestRepoPaths.has(origRepoPath)
+              ? [origRepoPath, destRepoPath]
+              : [destRepoPath];
+          const stagedArgs = [
+            '--literal-pathspecs',
+            '-c',
+            'core.quotepath=false',
+            'diff',
+            '--cached',
+            '-M',
+            '--no-ext-diff',
+            '--no-textconv',
+            ...relativeFlags,
+            ...(base.hasHead ? [] : [base.emptyTreeOid]),
+            '--',
+            ...stagedPathspecs,
+          ];
+          stagedRaw = execFileSync('git', stagedArgs, {
+            cwd: canonicalGitTop,
             encoding: 'utf-8',
             timeout: 5_000,
             windowsHide: true,
             maxBuffer: 4 * 1024 * 1024,
             stdio: ['ignore', 'pipe', 'ignore'],
           });
+        } catch {
+          readError = true;
+          stagedRaw = '';
         }
-      } catch {
-        diffText = '';
       }
 
-      const addCount =
-        num?.additions ??
-        diffText.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).length;
-      const delCount =
-        num?.deletions ??
-        diffText.split('\n').filter((l) => l.startsWith('-') && !l.startsWith('---')).length;
+      if (worktreeStatus !== ' ') {
+        try {
+          const unstagedArgs = [
+            '--literal-pathspecs',
+            '-c',
+            'core.quotepath=false',
+            'diff',
+            '--no-ext-diff',
+            '--no-textconv',
+            ...relativeFlags,
+            '--',
+            destRepoPath,
+          ];
+          unstagedRaw = execFileSync('git', unstagedArgs, {
+            cwd: canonicalGitTop,
+            encoding: 'utf-8',
+            timeout: 5_000,
+            windowsHide: true,
+            maxBuffer: 4 * 1024 * 1024,
+            stdio: ['ignore', 'pipe', 'ignore'],
+          });
+        } catch {
+          readError = true;
+          unstagedRaw = '';
+        }
+      }
+
+      const stagedStats = stagedRaw.trim() ? analyzeUnifiedPatch(stagedRaw) : null;
+      const unstagedStats = unstagedRaw.trim() ? analyzeUnifiedPatch(unstagedRaw) : null;
+
+      // Pure binary or failed diff -> empty diff so formatDiffDigest marks binary/unreadable.
+      const hasReadableLayer =
+        (stagedStats !== null && !stagedStats.binary) || (unstagedStats !== null && !unstagedStats.binary);
+      if (!hasReadableLayer) {
+        if (readError || stagedStats?.binary || unstagedStats?.binary) {
+          results.push({ path: wsRelPath, additions: 0, deletions: 0, diff: '' });
+          continue;
+        }
+      }
+
+      const sections: string[] = [];
+      let totalAdd = 0;
+      let totalDel = 0;
+
+      if (stagedStats !== null) {
+        if (stagedStats.binary) {
+          sections.push('[staged]\n(binary diff omitted)');
+        } else {
+          totalAdd += stagedStats.additions;
+          totalDel += stagedStats.deletions;
+          sections.push(`[staged]\n${maskSecrets(stagedRaw.trimEnd())}`);
+        }
+      }
+
+      if (unstagedStats !== null) {
+        if (unstagedStats.binary) {
+          sections.push('[unstaged]\n(binary diff omitted)');
+        } else {
+          totalAdd += unstagedStats.additions;
+          totalDel += unstagedStats.deletions;
+          sections.push(`[unstaged]\n${maskSecrets(unstagedRaw.trimEnd())}`);
+        }
+      }
 
       results.push({
-        path: relPath,
-        additions: addCount,
-        deletions: delCount,
-        diff: diffText,
+        path: wsRelPath,
+        additions: totalAdd,
+        deletions: totalDel,
+        diff: sections.join('\n\n'),
       });
     }
+
     return results;
   } catch {
     return null;
@@ -519,11 +830,34 @@ export function runAgentDiff(
       diffChars: 0,
     };
   }
+  let canonicalWorkspace: string;
+  try {
+    canonicalWorkspace = realpathSync(root);
+    if (!statSync(canonicalWorkspace).isDirectory()) {
+      return {
+        ok: false,
+        text: 'broke diff - project root is not a directory.',
+        files: 0,
+        shown: 0,
+        elided: 0,
+        diffChars: 0,
+      };
+    }
+  } catch {
+    return {
+      ok: false,
+      text: 'broke diff - project root does not exist.',
+      files: 0,
+      shown: 0,
+      elided: 0,
+      diffChars: 0,
+    };
+  }
   const budget = Math.min(
     MAX_DIFF_BUDGET_CHARS,
     Math.max(MIN_DIFF_BUDGET_CHARS, input.budgetChars ?? DEFAULT_DIFF_BUDGET_CHARS),
   );
-  const files = collectGitDiffFiles(root);
+  const files = collectGitDiffFiles(canonicalWorkspace);
   if (files === null) {
     return {
       ok: false,
