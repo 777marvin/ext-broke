@@ -529,41 +529,71 @@ function analyzeUnifiedPatch(patch: string): { additions: number; deletions: num
   return { additions, deletions, binary };
 }
 
-function collectGitDiffFiles(canonicalWorkspace: string): DiffFileInput[] | null {
-  try {
-    const topRaw = execFileSync(
-      'git',
-      ['-c', 'core.quotepath=false', 'rev-parse', '--show-toplevel'],
-      {
-        cwd: canonicalWorkspace,
-        encoding: 'utf-8',
-        timeout: 10_000,
-        windowsHide: true,
-        maxBuffer: 1024 * 1024,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      },
-    ).trim();
-    if (!topRaw) return null;
+type CollectDiffResult =
+  | { ok: true; files: DiffFileInput[] }
+  | { ok: false; error: string };
 
-    const canonicalGitTop = realpathSync(topRaw);
+function collectGitDiffFiles(canonicalWorkspace: string): CollectDiffResult {
+  try {
+    let topRaw: string;
+    try {
+      topRaw = execFileSync(
+        'git',
+        ['-c', 'safe.directory=*', '-c', 'core.quotepath=false', 'rev-parse', '--show-toplevel'],
+        {
+          cwd: canonicalWorkspace,
+          encoding: 'utf-8',
+          timeout: 10_000,
+          windowsHide: true,
+          maxBuffer: 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      ).trim();
+    } catch (err: unknown) {
+      const stderr = (err as { stderr?: Buffer | string })?.stderr?.toString()?.trim();
+      const msg = stderr || (err instanceof Error ? err.message : String(err));
+      return { ok: false, error: `rev-parse failed: ${msg}` };
+    }
+    if (!topRaw) return { ok: false, error: 'git rev-parse returned empty output' };
+
+    let canonicalGitTop: string;
+    try {
+      canonicalGitTop = realpathSync(topRaw);
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        error: `realpath of git top "${topRaw}" failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
     const rawWsRel = relative(canonicalGitTop, canonicalWorkspace);
     if (rawWsRel.startsWith('..') || isAbsolute(rawWsRel)) {
-      return null;
+      return {
+        ok: false,
+        error: `workspace "${canonicalWorkspace}" is not inside git root "${canonicalGitTop}" (rawWsRel: "${rawWsRel}")`,
+      };
     }
     const wsPrefix = rawWsRel ? forwardSlash(rawWsRel) : '';
 
-    const statusOut = execFileSync(
-      'git',
-      ['-c', 'core.quotepath=false', 'status', '--porcelain', '-z', '-uall'],
-      {
-        cwd: canonicalGitTop,
-        encoding: 'utf-8',
-        timeout: 10_000,
-        windowsHide: true,
-        maxBuffer: 16 * 1024 * 1024,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      },
-    );
+    let statusOut: string;
+    try {
+      statusOut = execFileSync(
+        'git',
+        ['-c', 'safe.directory=*', '-c', 'core.quotepath=false', 'status', '--porcelain', '-z', '-uall'],
+        {
+          cwd: canonicalGitTop,
+          encoding: 'utf-8',
+          timeout: 10_000,
+          windowsHide: true,
+          maxBuffer: 16 * 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+    } catch (err: unknown) {
+      const stderr = (err as { stderr?: Buffer | string })?.stderr?.toString()?.trim();
+      const msg = stderr || (err instanceof Error ? err.message : String(err));
+      return { ok: false, error: `status failed: ${msg}` };
+    }
 
     const rawTokens = statusOut.split('\0');
     if (rawTokens.length > 0 && rawTokens[rawTokens.length - 1] === '') {
@@ -588,7 +618,7 @@ function collectGitDiffFiles(canonicalWorkspace: string): DiffFileInput[] | null
       }
     }
 
-    if (rawEntries.length === 0) return [];
+    if (rawEntries.length === 0) return { ok: true, files: [] };
 
     let headResolved = false;
     let hasHead = false;
@@ -597,24 +627,28 @@ function collectGitDiffFiles(canonicalWorkspace: string): DiffFileInput[] | null
       if (!headResolved) {
         headResolved = true;
         try {
-          execFileSync('git', ['rev-parse', '--verify', 'HEAD'], {
+          execFileSync('git', ['-c', 'safe.directory=*', 'rev-parse', '--verify', 'HEAD'], {
             cwd: canonicalGitTop,
             encoding: 'utf-8',
             timeout: 5_000,
             windowsHide: true,
-            stdio: ['ignore', 'pipe', 'ignore'],
+            stdio: ['ignore', 'pipe', 'pipe'],
           });
           hasHead = true;
         } catch {
           hasHead = false;
-          emptyTreeOid = execFileSync('git', ['hash-object', '-t', 'tree', '--stdin'], {
-            cwd: canonicalGitTop,
-            input: '',
-            encoding: 'utf-8',
-            timeout: 5_000,
-            windowsHide: true,
-            stdio: ['ignore', 'pipe', 'ignore'],
-          }).trim();
+          emptyTreeOid = execFileSync(
+            'git',
+            ['-c', 'safe.directory=*', 'hash-object', '-t', 'tree', '--stdin'],
+            {
+              cwd: canonicalGitTop,
+              input: '',
+              encoding: 'utf-8',
+              timeout: 5_000,
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            },
+          ).trim();
         }
       }
       return { hasHead, emptyTreeOid };
@@ -766,6 +800,8 @@ function collectGitDiffFiles(canonicalWorkspace: string): DiffFileInput[] | null
           const stagedArgs = [
             '--literal-pathspecs',
             '-c',
+            'safe.directory=*',
+            '-c',
             'core.quotepath=false',
             'diff',
             '--cached',
@@ -783,7 +819,7 @@ function collectGitDiffFiles(canonicalWorkspace: string): DiffFileInput[] | null
             timeout: 5_000,
             windowsHide: true,
             maxBuffer: 4 * 1024 * 1024,
-            stdio: ['ignore', 'pipe', 'ignore'],
+            stdio: ['ignore', 'pipe', 'pipe'],
           });
         } catch {
           readError = true;
@@ -795,6 +831,8 @@ function collectGitDiffFiles(canonicalWorkspace: string): DiffFileInput[] | null
         try {
           const unstagedArgs = [
             '--literal-pathspecs',
+            '-c',
+            'safe.directory=*',
             '-c',
             'core.quotepath=false',
             'diff',
@@ -810,7 +848,7 @@ function collectGitDiffFiles(canonicalWorkspace: string): DiffFileInput[] | null
             timeout: 5_000,
             windowsHide: true,
             maxBuffer: 4 * 1024 * 1024,
-            stdio: ['ignore', 'pipe', 'ignore'],
+            stdio: ['ignore', 'pipe', 'pipe'],
           });
         } catch {
           readError = true;
@@ -863,9 +901,10 @@ function collectGitDiffFiles(canonicalWorkspace: string): DiffFileInput[] | null
       });
     }
 
-    return results;
-  } catch {
-    return null;
+    return { ok: true, files: results };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: msg };
   }
 }
 
@@ -910,18 +949,18 @@ export function runAgentDiff(
     MAX_DIFF_BUDGET_CHARS,
     Math.max(MIN_DIFF_BUDGET_CHARS, input.budgetChars ?? DEFAULT_DIFF_BUDGET_CHARS),
   );
-  const files = collectGitDiffFiles(canonicalWorkspace);
-  if (files === null) {
+  const diffResult = collectGitDiffFiles(canonicalWorkspace);
+  if (!diffResult.ok) {
     return {
       ok: false,
-      text: 'broke diff - could not read git worktree status (not a git repository or git unavailable).',
+      text: `broke diff - could not read git worktree status (${diffResult.error}).`,
       files: 0,
       shown: 0,
       elided: 0,
       diffChars: 0,
     };
   }
-  const digest = formatDiffDigest(files, budget);
+  const digest = formatDiffDigest(diffResult.files, budget);
   return { ok: true, ...digest };
 }
 

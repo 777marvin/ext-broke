@@ -54,7 +54,7 @@ function writeRepoFile(root: string, relPath: string, content: string | Buffer):
 }
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, {
+  return execFileSync('git', ['-c', 'safe.directory=*', ...args], {
     cwd,
     encoding: 'utf-8',
     windowsHide: true,
@@ -178,7 +178,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       );
 
       const res = runAgentDiff(ws.repoDir, { budgetChars: 25_000 });
-      assert.equal(res.ok, true);
+      assert.equal(res.ok, true, res.text);
 
       for (const forbidden of [
         'SYNTH_ENV_OLD_111',
@@ -257,7 +257,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       }
 
       const res = runAgentDiff(ws.repoDir, { budgetChars: 20_000 });
-      assert.equal(res.ok, true);
+      assert.equal(res.ok, true, res.text);
 
       for (const forbidden of [
         'SYNTH_RENAME_FROM_ENV_OLD',
@@ -339,7 +339,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       );
 
       const mixed = runAgentDiff(ws.repoDir, { budgetChars: 10_000 });
-      assert.equal(mixed.ok, true);
+      assert.equal(mixed.ok, true, mixed.text);
       assert.equal(mixed.files, 1);
       assert.match(mixed.text, /\[staged\]/, 'expected explicit [staged] section label');
       assert.match(mixed.text, /\[unstaged\]/, 'expected explicit [unstaged] section label');
@@ -366,7 +366,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       writeRepoFile(wsCancel.repoDir, 'cancel.ts', 'export const one = 1;\n');
 
       const cancelRes = runAgentDiff(wsCancel.repoDir, { budgetChars: 10_000 });
-      assert.equal(cancelRes.ok, true);
+      assert.equal(cancelRes.ok, true, cancelRes.text);
       assert.equal(cancelRes.files, 1);
       assert.match(cancelRes.text, /\[staged\]/);
       assert.match(cancelRes.text, /\[unstaged\]/);
@@ -420,7 +420,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       git(ws.repoDir, ['mv', 'sub/from-inside.ts', 'moved-out-of-sub.ts']);
 
       const res = runAgentDiff(subDir, { budgetChars: 25_000 });
-      assert.equal(res.ok, true);
+      assert.equal(res.ok, true, res.text);
 
       // Internal workspace files must be shown with workspace-relative paths (not `sub/...`, not `binary or unreadable`)
       assert.doesNotMatch(res.text, /binary or unreadable/i, `internal files must be readable:\n${res.text}`);
@@ -462,7 +462,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       const wsAlias = join(ws.baseDir, 'sub-link');
       symlinkSync(subDir, wsAlias, process.platform === 'win32' ? 'junction' : 'dir');
       const aliasRes = runAgentDiff(wsAlias, { budgetChars: 25_000 });
-      assert.equal(aliasRes.ok, true);
+      assert.equal(aliasRes.ok, true, aliasRes.text);
       assert.equal(aliasRes.text, res.text);
     } finally {
       ws.cleanup();
@@ -487,7 +487,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       git(unbornWs.repoDir, ['add', '-f', '.env']);
 
       const unbornRes = runAgentDiff(unbornWs.repoDir, { budgetChars: 15_000 });
-      assert.equal(unbornRes.ok, true);
+      assert.equal(unbornRes.ok, true, unbornRes.text);
       assert.doesNotMatch(unbornRes.text, /binary or unreadable/i);
       assert.match(unbornRes.text, /staged-only\.ts \(\+1\/-0\)[\s\S]*\[staged\][\s\S]*\+export const first = 1;/);
       assert.match(unbornRes.text, /both-layers\.ts \(\+3\/-1\)/);
@@ -513,7 +513,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       writeRepoFile(specialWs.repoDir, untrackedSpecial, 'export const u = "ok";\n');
 
       const specialRes = runAgentDiff(specialWs.repoDir, { budgetChars: 15_000 });
-      assert.equal(specialRes.ok, true);
+      assert.equal(specialRes.ok, true, specialRes.text);
       assert.doesNotMatch(specialRes.text, /binary or unreadable/i);
       assert.doesNotMatch(specialRes.text, /\\303|\\360/, 'expected raw UTF-8 paths without octal quoting');
       assert.ok(specialRes.text.includes(trackedSpecial), `expected ${trackedSpecial} in output:\n${specialRes.text}`);
@@ -561,7 +561,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
         'protected .env must never be read via readFileSync',
       );
 
-      assert.equal(res.ok, true);
+      assert.equal(res.ok, true, res.text);
       assert.equal(res.files, 2);
       assert.equal(res.diffChars, 0, 'omitted files must not contribute to measured diffChars');
       assert.doesNotMatch(res.text, /no updated files/i);
@@ -590,7 +590,7 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       }
 
       const tightBudgetRes = runAgentDiff(capWs.repoDir, { budgetChars: 600 });
-      assert.equal(tightBudgetRes.ok, true);
+      assert.equal(tightBudgetRes.ok, true, tightBudgetRes.text);
       assert.equal(tightBudgetRes.files, MAX_DIFF_FILES_READ + 5);
       assert.ok(tightBudgetRes.elided > 0, 'budget must elide excess file blocks');
       assert.match(tightBudgetRes.text, /2 binary or unreadable/i);

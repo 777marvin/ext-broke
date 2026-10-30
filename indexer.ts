@@ -288,7 +288,9 @@ function gitCandidateFiles(root: string, includeGitIgnored: boolean, timeout: nu
   try {
     const out = execFileSync(
       'git',
-      includeGitIgnored ? ['ls-files', '-co', '-z'] : ['ls-files', '-co', '--exclude-standard', '-z'],
+      includeGitIgnored
+        ? ['-c', 'safe.directory=*', 'ls-files', '-co', '-z']
+        : ['-c', 'safe.directory=*', 'ls-files', '-co', '--exclude-standard', '-z'],
       {
         cwd: root,
         timeout,

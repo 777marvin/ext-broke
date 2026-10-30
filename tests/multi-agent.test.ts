@@ -185,18 +185,18 @@ describe('agent-core: workspace confinement, search, slice, diff, compress, chec
   it('produces a token-budgeted git diff digest for modified and untracked files', () => {
     const tmp = makeTempProject();
     try {
-      execFileSync('git', ['init'], { cwd: tmp.dir, stdio: 'ignore' });
-      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: tmp.dir, stdio: 'ignore' });
-      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: tmp.dir, stdio: 'ignore' });
+      execFileSync('git', ['-c', 'safe.directory=*', 'init'], { cwd: tmp.dir, stdio: 'ignore' });
+      execFileSync('git', ['-c', 'safe.directory=*', 'config', 'user.email', 'test@example.com'], { cwd: tmp.dir, stdio: 'ignore' });
+      execFileSync('git', ['-c', 'safe.directory=*', 'config', 'user.name', 'Test'], { cwd: tmp.dir, stdio: 'ignore' });
       writeFileSync(join(tmp.dir, 'tracked.ts'), 'export const a = 1;\n', 'utf-8');
-      execFileSync('git', ['add', 'tracked.ts'], { cwd: tmp.dir, stdio: 'ignore' });
-      execFileSync('git', ['commit', '-m', 'init'], { cwd: tmp.dir, stdio: 'ignore' });
+      execFileSync('git', ['-c', 'safe.directory=*', 'add', 'tracked.ts'], { cwd: tmp.dir, stdio: 'ignore' });
+      execFileSync('git', ['-c', 'safe.directory=*', 'commit', '-m', 'init'], { cwd: tmp.dir, stdio: 'ignore' });
 
       writeFileSync(join(tmp.dir, 'tracked.ts'), 'export const a = 2;\nexport const b = 3;\n', 'utf-8');
       writeFileSync(join(tmp.dir, 'untracked.ts'), 'export const fresh = true;\n', 'utf-8');
 
       const diffRes = runAgentDiff(tmp.dir, { budgetChars: 4000 });
-      assert.equal(diffRes.ok, true);
+      assert.equal(diffRes.ok, true, diffRes.text);
       assert.equal(diffRes.files, 2);
       assert.match(diffRes.text, /tracked\.ts/);
       assert.match(diffRes.text, /untracked\.ts/);
