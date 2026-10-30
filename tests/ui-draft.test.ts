@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { DEFAULT_CONFIG, type Config } from '../config';
 import { applyPreset } from '../presets';
@@ -58,5 +60,38 @@ describe('AUD-09 shared synchronous configuration drafts', () => {
     const result2 = reducer(base, result, nextUnrelated);
     assert.deepEqual(result2.truncate.tools, { grep: { enabled: false } });
     assert.equal(result2.cache.escapeHatch, false);
+  });
+
+  it('evicts stale require.cache entries for ui-template-source.cjs so hot-reload after an update never omits brokeCommandIsMutating', async () => {
+    const req = createRequire(join(__dirname, '..', 'index.ts'));
+    const helperResolved = req.resolve('./scripts/ui-template-source.cjs');
+    const previousCacheEntry = req.cache[helperResolved];
+    try {
+      // Simulate AiderDesk's jiti loader holding a v1.4.0 cached CJS module in require.cache
+      // across an in-place extension update (`npx @aiderdesk/extensions install -g ...`).
+      req.cache[helperResolved] = {
+        id: helperResolved,
+        filename: helperResolved,
+        loaded: true,
+        exports: {
+          composeUiTemplate: (source: string) =>
+            source.replace('/* BROKE_CONFIG_DRAFT_HELPER */', 'const mergeConfigDraft = () => ({});'),
+        },
+      } as unknown as NodeJS.Module;
+
+      const BrokeExtension = (await import(`../index.ts?hotreload=${Date.now()}`)).default;
+      const ext = new BrokeExtension();
+      const components = ext.getUIComponents({} as never);
+      const badge = components.find((c: { id: string }) => c.id === 'broke-status');
+      assert.ok(badge, 'broke-status UI component must be registered');
+      assert.match(
+        badge.jsx,
+        /const brokeCommandIsMutating\s*=/,
+        'fresh ui-config-helper.js must be injected even when require.cache had a stale v1.4.0 entry',
+      );
+    } finally {
+      if (previousCacheEntry) req.cache[helperResolved] = previousCacheEntry;
+      else delete req.cache[helperResolved];
+    }
   });
 });

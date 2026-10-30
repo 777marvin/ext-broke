@@ -1,4 +1,5 @@
 import { readFileSync, watch, type FSWatcher } from 'node:fs';
+import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
 import type {
   AfterCommitEvent,
@@ -100,7 +101,20 @@ import { composeUiTemplate } from './scripts/ui-template-source.cjs';
 // A missing template must not prevent the extension from loading at all.
 function loadTemplate(path: string): string {
   try {
-    return composeUiTemplate(readFileSync(join(__dirname, path), 'utf-8'));
+    // AiderDesk's jiti loader sets `moduleCache: false` for `.ts` files on hot-reload,
+    // but delegates `.cjs` imports (`./scripts/ui-template-source.cjs`) to Node's
+    // native `require.cache`. Evict any cached `.cjs` entry before composing so an
+    // in-place update or hot-reload never injects a stale `ui-config-helper.js` closure.
+    let compose = composeUiTemplate;
+    try {
+      const req = createRequire(join(__dirname, 'index.ts'));
+      delete req.cache[req.resolve('./scripts/ui-template-source.cjs')];
+      const fresh = req('./scripts/ui-template-source.cjs') as { composeUiTemplate?: typeof composeUiTemplate };
+      if (typeof fresh?.composeUiTemplate === 'function') compose = fresh.composeUiTemplate;
+    } catch {
+      // Fall back to the imported composer if CJS cache eviction is unavailable.
+    }
+    return compose(readFileSync(join(__dirname, path), 'utf-8'));
   } catch {
     return '';
   }

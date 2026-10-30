@@ -277,7 +277,7 @@
   // Read-only commands execute immediately on first click; all state-changing,
   // destructive, or paid/network commands use two-step confirmation. The
   // classification is shared with ConfigComponent via the injected helper.
-  const isMutatingCommand = brokeCommandIsMutating;
+  const isMutatingCommand = typeof brokeCommandIsMutating === 'function' ? brokeCommandIsMutating : () => true;
 
   const runQuickCommand = async (rawCmd: string) => {
     if (saving || previewing || executingCmd) return;
