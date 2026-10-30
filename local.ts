@@ -39,23 +39,60 @@ const STATUS_TIMEOUT_MS = 3_000;
  * the task" rule forbids). Non-ok responses throw with the status and a
  * snippet of the error body.
  */
+function raceWithSignal<T>(
+  readPromise: Promise<T>,
+  signal: AbortSignal,
+  timeoutMs: number,
+  body?: ReadableStream<Uint8Array> | null,
+): Promise<T> {
+  if (signal.aborted) {
+    body?.cancel?.().catch(() => {});
+    return Promise.reject(new DOMException(`timeout after ${timeoutMs} ms`, 'AbortError'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      body?.cancel?.().catch(() => {});
+      reject(new DOMException(`timeout after ${timeoutMs} ms`, 'AbortError'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    readPromise.then(
+      (val) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(val);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
 async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, { ...init, redirect: 'error', signal: controller.signal });
     if (!res.ok) {
-      const text = await res.text();
+      const text = await raceWithSignal(res.text(), controller.signal, timeoutMs, res.body);
       throw new Error(`HTTP ${res.status}${text ? `: ${text.slice(0, 300)}` : ''}`);
     }
-    return (await res.json()) as T;
+    return await raceWithSignal(res.json() as Promise<T>, controller.signal, timeoutMs, res.body);
   } finally {
     clearTimeout(timer);
   }
 }
 
+function isAbortOrTimeout(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { name?: string; message?: string; cause?: unknown };
+  if (e.name === 'AbortError' || e.name === 'TimeoutError' || e.message === 'terminated') return true;
+  if (e.cause && isAbortOrTimeout(e.cause)) return true;
+  return false;
+}
+
 function errorMessage(err: unknown, timeoutMs: number): string {
-  if (err instanceof Error && err.name === 'AbortError') return `timeout after ${timeoutMs} ms`;
+  if (isAbortOrTimeout(err)) return `timeout after ${timeoutMs} ms`;
   return err instanceof Error ? err.message : String(err);
 }
 

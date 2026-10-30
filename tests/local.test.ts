@@ -122,6 +122,17 @@ describe('ollamaGenerate', () => {
     assert.ok(Date.now() - startAt < 5000, 'a stalled generation must fail fast, not hang');
   });
 
+  it('maps stalled body stream abort to exact timeout message', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"response":"partial');
+    });
+    const url = await start(server);
+    const r = await ollamaGenerate(url, 'm', 'p', 800, 150);
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'Ollama timeout after 150 ms');
+  });
+
   it('maps HTTP errors with the established message shape', async () => {
     const server = createServer((_req, res) => {
       res.statusCode = 404;
