@@ -40,6 +40,7 @@ surface.
 | File | Responsibility |
 |---|---|
 | `agent-core.ts` | Host-agnostic Multi-Agent core (S5/S6): workspace-confined search, ST-slicing, git diff digest, log/error compression (`maskSecrets` + `errors.ts` + `truncateText` + optional local Ollama), allowlisted diagnostic runner (`broke_check`), and `<agent>:<projectHash>` ledger attribution |
+| `runner-policy.ts` | Diagnostic runner option validation policy (`validateRunnerArgs`): per-runner allowlist schemas for tsc, pytest, vitest, jest, npm-*, cargo-check, and go-test with canonical workspace containment, symlink/traversal rejection, safe output-target directory checks, and integer ranges |
 | `agent-install.ts` | Multi-agent project installer (`planAgentInstall`, `executeAgentInstall`, `updateCodexToml`): AST source-range updates for Codex `.codex/config.toml` (`toml-eslint-parser`), strict JSON/hook upserts preserving foreign Claude hooks and settings, direct-exec hook entries (`command: "node"` + `args`), Antigravity `.agents/` workspace targets, pre-write validation, and atomic temporary-sibling writes with rollback and recovery copies |
 | `mcp.ts` | Zero-dependency stdio JSON-RPC 2.0 MCP server exposing `broke_search`, `broke_slice`, `broke_diff`, `broke_compress`, `broke_check`, `broke_status`, and the `broke-workflow` prompt |
 | `cli.ts` | Multi-agent CLI dispatcher, cross-invocation focus store, Claude Code `PreToolUse`/`PostToolUse` hook handler (`broke hook claude`), and re-exported installer entry points (`broke install-agent <claude\|antigravity\|codex\|cursor>`) |

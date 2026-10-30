@@ -291,8 +291,13 @@ export async function runCli(
 ): Promise<{ exitCode: number; output: string }> {
   const cmd = argv[0] ?? 'help';
   const rest = argv.slice(1);
-  const root = readFlag(rest, '--root') ?? readFlag(rest, '--project') ?? io.cwd ?? process.cwd();
-  const agentId = normalizeAgentId(readFlag(rest, '--agent') ?? process.env.BROKE_AGENT_ID ?? 'cli');
+  const flagsSection = rest.includes('--') ? rest.slice(0, rest.indexOf('--')) : rest;
+  const root =
+    readFlag(flagsSection, '--root') ??
+    (cmd === 'install-agent' ? readFlag(flagsSection, '--project') : undefined) ??
+    io.cwd ??
+    process.cwd();
+  const agentId = normalizeAgentId(readFlag(flagsSection, '--agent') ?? process.env.BROKE_AGENT_ID ?? 'cli');
 
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
     return { exitCode: 0, output: formatCliHelp() };
@@ -374,17 +379,42 @@ export async function runCli(
   }
 
   if (cmd === 'check') {
-    const runner = rest[0] as AllowedRunner | undefined;
+    const dashDashIdx = rest.indexOf('--');
+    let runner: AllowedRunner | undefined;
+    let extra: string[] = [];
+    let summarize = false;
+
+    if (dashDashIdx !== -1) {
+      const beforeDashDash = rest.slice(0, dashDashIdx);
+      const afterDashDash = rest.slice(dashDashIdx + 1);
+      runner = beforeDashDash.find(
+        (a, i) => !a.startsWith('--') && (i === 0 || !['--root', '--agent'].includes(beforeDashDash[i - 1])),
+      ) as AllowedRunner | undefined;
+      summarize = beforeDashDash.includes('--summarize');
+      extra = afterDashDash;
+    } else {
+      runner = rest.find(
+        (a, i) => !a.startsWith('--') && (i === 0 || !['--root', '--agent'].includes(rest[i - 1])),
+      ) as AllowedRunner | undefined;
+      summarize = rest.includes('--summarize');
+      if (runner) {
+        const runnerIdx = rest.indexOf(runner);
+        const candidateArgs = [...rest.slice(0, runnerIdx), ...rest.slice(runnerIdx + 1)];
+        extra = candidateArgs.filter(
+          (a, i, arr) =>
+            !['--root', '--agent', '--summarize'].includes(a) &&
+            (i === 0 || !['--root', '--agent'].includes(arr[i - 1])),
+        );
+      }
+    }
+
     if (!runner || !ALLOWED_RUNNERS.includes(runner)) {
       return {
         exitCode: 1,
         output: `broke check: specify one of ${ALLOWED_RUNNERS.join(', ')}`,
       };
     }
-    const extra = rest
-      .slice(1)
-      .filter((a, i, arr) => !['--root', '--project', '--agent', '--summarize'].includes(a) && (i === 0 || !['--root', '--project', '--agent'].includes(arr[i - 1])));
-    const summarize = rest.includes('--summarize');
+
     const res = await runAgentCheck(root, { runner, args: extra, summarize }, agentId, getConfig(), io.deps);
     return { exitCode: res.exitCode, output: res.text };
   }

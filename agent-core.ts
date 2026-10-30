@@ -6,7 +6,7 @@
  * ExtensionContext.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { buildBrevityDirective } from './brevity';
@@ -1074,6 +1074,9 @@ export async function runAgentCompress(
 // 5. Safe Allowlisted Diagnostic Runner (broke_check)
 // ---------------------------------------------------------------------------
 
+import { validateRunnerArgs } from './runner-policy';
+export { validateRunnerArgs } from './runner-policy';
+
 export const ALLOWED_RUNNERS = [
   'tsc',
   'pytest',
@@ -1105,39 +1108,8 @@ const RUNNER_SPECS: Record<AllowedRunner, RunnerCommandSpec> = {
   'npm-check-docs': { cmd: 'npm', baseArgs: ['run', 'check:docs'], allowExtraArgs: false },
   'npm-check-files': { cmd: 'npm', baseArgs: ['run', 'check:files'], allowExtraArgs: false },
   'cargo-check': { cmd: 'cargo', baseArgs: ['check'], allowExtraArgs: true },
-  'go-test': { cmd: 'go', baseArgs: ['test', './...'], allowExtraArgs: true },
+  'go-test': { cmd: 'go', baseArgs: ['test'], allowExtraArgs: true },
 };
-
-/**
- * Validate extra arguments passed to an allowlisted diagnostic runner:
- * - No shell metacharacters, newlines, or control characters
- * - No parent directory traversal (`..`) or absolute paths outside root
- * - No dangerous execution flags (`--eval`, `-c`, `--Config`, `--require`, etc.)
- */
-export function validateRunnerArgs(args: readonly string[]): { ok: true; safeArgs: string[] } | { ok: false; reason: string } {
-  if (args.length > 16) {
-    return { ok: false, reason: 'too many arguments (max 16)' };
-  }
-  const forbiddenFlagRe = /^(-c|--eval|-e|--import|--require|--loader|--prefix|--userconfig|--globalconfig|--init-module|--eval)/i;
-  const metaRe = /[;&|`$<>()\r\n\0]/;
-  const safeArgs: string[] = [];
-  for (const arg of args) {
-    if (typeof arg !== 'string' || arg.length === 0 || arg.length > 200) {
-      return { ok: false, reason: 'invalid or oversized argument' };
-    }
-    if (metaRe.test(arg)) {
-      return { ok: false, reason: `argument contains forbidden metacharacters: ${arg}` };
-    }
-    if (forbiddenFlagRe.test(arg)) {
-      return { ok: false, reason: `argument flag is not allowed in broke_check: ${arg}` };
-    }
-    if (arg.includes('..') || isAbsolute(arg)) {
-      return { ok: false, reason: `path traversal or absolute path is not allowed in broke_check args: ${arg}` };
-    }
-    safeArgs.push(arg);
-  }
-  return { ok: true, safeArgs };
-}
 
 export interface AgentCheckInput {
   runner: AllowedRunner;
@@ -1163,23 +1135,30 @@ function defaultExecRunner(cmd: string, args: string[], cwd: string): { exitCode
       bin = `${cmd}.cmd`;
     }
   }
-  try {
-    const stdout = execFileSync(bin, finalArgs, {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 60_000,
-      windowsHide: true,
-      maxBuffer: 32 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { exitCode: 0, output: stdout };
-  } catch (err) {
-    const e = err as { status?: number; stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
-    const out = typeof e.stdout === 'string' ? e.stdout : Buffer.isBuffer(e.stdout) ? e.stdout.toString('utf-8') : '';
-    const errOut = typeof e.stderr === 'string' ? e.stderr : Buffer.isBuffer(e.stderr) ? e.stderr.toString('utf-8') : '';
-    const combined = [out, errOut].filter(Boolean).join('\n') || (e.message ?? String(err));
-    return { exitCode: typeof e.status === 'number' ? e.status : 1, output: combined };
+  const res = spawnSync(bin, finalArgs, {
+    cwd,
+    encoding: 'utf-8',
+    timeout: 60_000,
+    windowsHide: true,
+    maxBuffer: 32 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  if (res.error) {
+    const err = res.error as NodeJS.ErrnoException;
+    if (err.code === 'ETIMEDOUT') {
+      return { exitCode: 124, output: 'ETIMEDOUT: runner timed out after 60000ms' };
+    }
+    return {
+      exitCode: typeof res.status === 'number' ? res.status : 127,
+      output: `${bin} failed to start (${err.message})`,
+    };
   }
+
+  const out = typeof res.stdout === 'string' ? res.stdout : '';
+  const errOut = typeof res.stderr === 'string' ? res.stderr : '';
+  const combined = [out, errOut].filter(Boolean).join('\n');
+  return { exitCode: typeof res.status === 'number' ? res.status : 0, output: combined };
 }
 
 export async function runAgentCheck(
@@ -1210,13 +1189,20 @@ export async function runAgentCheck(
       savedChars: 0,
     };
   }
-  const validated = validateRunnerArgs(extra);
+  const validated = validateRunnerArgs(input.runner, extra, root);
   if (!validated.ok) {
     return { ok: false, exitCode: 1, text: `broke-check: ${validated.reason}`, savedChars: 0 };
   }
 
   const execFn = deps.execRunner ?? defaultExecRunner;
-  const fullArgs = [...spec.baseArgs, ...validated.safeArgs];
+  let runnerArgs = [...validated.safeArgs];
+  if (input.runner === 'go-test') {
+    const hasPackageTarget = runnerArgs.some((a) => !a.startsWith('-'));
+    if (!hasPackageTarget) {
+      runnerArgs.push('./...');
+    }
+  }
+  const fullArgs = [...spec.baseArgs, ...runnerArgs];
   const { exitCode, output } = execFn(spec.cmd, fullArgs, root);
   const compressed = await runAgentCompress(
     root,
