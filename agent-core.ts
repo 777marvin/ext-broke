@@ -147,7 +147,7 @@ export function recordAgentCompression(
   current.lastRunAt = Date.now();
   persistStats(current, statsPath);
 
-  if (config.stats.measure && saved > 0) {
+  if (config.stats.measure && (saved > 0 || metrics.summarizeCalls > 0)) {
     const rec: RunRecord = {
       kind: 'run',
       taskId,
@@ -940,6 +940,7 @@ export interface AgentCompressDeps {
   generateOllama?: typeof ollamaGenerate;
   errorsDir?: string;
   telemetryPaths?: TelemetryPaths;
+  recordTelemetry?: boolean;
 }
 
 export interface AgentCompressOutput {
@@ -1072,29 +1073,36 @@ export async function runAgentCompress(
     const gen = deps.generateOllama ?? ollamaGenerate;
     const promptInput = current.slice(0, 28_000);
     const prompt = `${LOG_SUMMARY_PROMPT}\n\n<log>\n${promptInput}\n</log>`;
-    const ollamaRes: OllamaGenerateResult = await gen(
-      config.summarize.ollamaUrl,
-      config.summarize.localModel,
-      prompt,
-      512,
-    );
-    if (ollamaRes.ok && ollamaRes.text) {
-      const capped = ollamaRes.text.trim().slice(0, config.summarize.maxSummaryChars);
-      const framed = `… [broke: local Ollama summary (${config.summarize.localModel})${archiveSuffix}]\n${capped}`;
-      if (framed.length < current.length) {
-        summarizeChars = current.length - framed.length;
-        summarizeCalls = 1;
-        summarizer = 'local';
-        summarizerInputChars = prompt.length;
+    summarizer = 'local';
+    summarizeCalls = 1;
+    summarizerInputChars = prompt.length;
+
+    try {
+      const ollamaRes: OllamaGenerateResult = await gen(
+        config.summarize.ollamaUrl,
+        config.summarize.localModel,
+        prompt,
+        512,
+      );
+      if (ollamaRes.ok && ollamaRes.text) {
         summarizerOutputChars = ollamaRes.text.length;
-        current = framed;
+        const capped = ollamaRes.text.trim().slice(0, config.summarize.maxSummaryChars);
+        const framed = `… [broke: local Ollama summary (${config.summarize.localModel})${archiveSuffix}]\n${capped}`;
+        if (framed.length < current.length) {
+          summarizeChars = current.length - framed.length;
+          current = framed;
+        }
       }
+    } catch {
+      // Failed results and thrown exceptions fall back to existing deterministic text.
+      // Attempt accounting is preserved, summarizerOutputChars remains 0.
     }
   }
 
   const charsAfter = current.length;
   const savedChars = Math.max(0, charsBefore - charsAfter);
-  if (savedChars > 0) {
+  const recordTelemetry = deps.recordTelemetry ?? true;
+  if (recordTelemetry && (savedChars > 0 || summarizeCalls > 0)) {
     recordAgentCompression(
       taskId,
       {
