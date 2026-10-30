@@ -160,6 +160,20 @@ agents that never search pay a small constant cost; `/broke search off`
 index on disk for later re-enabling. `/broke index [rebuild] | status` and
 `/broke search <query>` cover control and manual use without an agent.
 
+## Multi-agent MCP, CLI & hooks (S5 / S6)
+
+Outside AiderDesk, broke runs as a zero-build stdio MCP server (`mcp.ts`),
+CLI and Claude Code `PreToolUse`/`PostToolUse` hook handler (`cli.ts`), backed by
+the host-agnostic `agent-core.ts` module and launched without a build step via
+`node scripts/broke-runner.cjs` (Node.js ≥ 22.15). External agents use
+**pre-ingestion compression** (`broke_search`, `broke_slice`, `broke_diff`,
+`broke_compress`, allowlisted `broke_check`, and `broke_status`) while sharing
+the same `config.json` and appending `<agent>:<projectHash>` records to
+`stats.jsonl` and `measure.jsonl` with the same strict separation between
+measured reductions and modeled counterfactuals. See
+[docs/agents/multi-agent-setup.md](agents/multi-agent-setup.md) and
+[docs/agents/SKILL.md](agents/SKILL.md).
+
 ## Security notes
 
 The summarize pass condenses conversation content (tool outputs, web

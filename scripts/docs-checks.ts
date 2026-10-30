@@ -53,6 +53,8 @@ export const LINK_CHECKED = [
   'docs/aiderdesk-builtin.md',
   'docs/roadmap.md',
   'docs/audit-remediation.md',
+  'docs/agents/multi-agent-setup.md',
+  'docs/agents/SKILL.md',
 ];
 
 /** Files in which a release claim must point at a real tag. */

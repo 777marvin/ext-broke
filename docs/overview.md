@@ -39,6 +39,12 @@ surface.
 
 | File | Responsibility |
 |---|---|
+| `agent-core.ts` | Host-agnostic Multi-Agent core (S5/S6): workspace-confined search, ST-slicing, git diff digest, log/error compression (`maskSecrets` + `errors.ts` + `truncateText` + optional local Ollama), allowlisted diagnostic runner (`broke_check`), and `<agent>:<projectHash>` ledger attribution |
+| `runner-policy.ts` | Diagnostic runner option validation policy (`validateRunnerArgs`): per-runner allowlist schemas for tsc, pytest, vitest, jest, npm-*, cargo-check, and go-test with canonical workspace containment, symlink/traversal rejection, safe output-target directory checks, and integer ranges |
+| `agent-install.ts` | Multi-agent project installer (`planAgentInstall`, `executeAgentInstall`, `updateCodexToml`): AST source-range updates for Codex `.codex/config.toml` (`toml-eslint-parser`), strict JSON/hook upserts preserving foreign Claude hooks and settings, direct-exec hook entries (`command: "node"` + `args`), Antigravity `.agents/` workspace targets, pre-write validation, and atomic temporary-sibling writes with rollback and recovery copies |
+| `mcp.ts` | Zero-build stdio JSON-RPC 2.0 MCP server exposing `broke_search`, `broke_slice`, `broke_diff`, `broke_compress`, `broke_check`, `broke_status`, and the `broke-workflow` prompt |
+| `cli.ts` | Multi-agent CLI dispatcher, cross-invocation focus store, Claude Code `PreToolUse`/`PostToolUse` hook handler (`broke hook claude`), and re-exported installer entry points (`broke install-agent <claude\|antigravity\|codex\|cursor>`) |
+| `scripts/broke-runner.cjs` | Zero-build Node.js (>= 22.15) bootstrap using `module.registerHooks` + `module.stripTypeScriptTypes` to run `cli.ts`/`mcp.ts` without a `dist/` build step |
 | `index-coordinator.ts` | Project-index refresh, rebuild, status, search receipts and bounded project cache; host adapters retain task attribution |
 | `update-lock.ts` | Stable ownership locks with serialized acquisition, dead-owner reclamation and token-checked release; also protects legacy migration |
 | `update-lifecycle.ts` | Configuration-watcher close/reopen around updates, including failure and exception recovery |
@@ -192,7 +198,7 @@ conversation-message character counts in real runs, not provider billing data.
   and the dev loop for uncommitted changes (`/broke update` refuses git
   checkouts by design)
 - Runtime deps: AiderDesk >= 0.88, Node >= 22 (see `engines` in
-  package.json), `zod`; Ollama for `summarize via local`
+  package.json), `zod`, `toml-eslint-parser`; Ollama for `summarize via local`
 
 ## Docs
 
@@ -201,3 +207,5 @@ conversation-message character counts in real runs, not provider billing data.
 - `docs/local-models.md`: local Ollama setup and measurement limits
 - `docs/roadmap.md`: shipped features, current focus, proposed candidates
 - `docs/audit-remediation.md`: dated audit verification and release boundaries
+- `docs/agents/multi-agent-setup.md`: multi-agent MCP server, CLI, hooks, and skill setup
+- `docs/agents/SKILL.md`: portable agent skill for autonomous broke usage

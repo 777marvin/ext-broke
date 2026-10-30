@@ -4,6 +4,9 @@
   "description": "Token budget extension for AiderDesk: progressive input compression (structural + truncation + summarization), local-model (Ollama) summarization offload, and token-saving workflows",
   "private": true,
   "main": "index.ts",
+  "bin": {
+    "broke": "scripts/broke-runner.cjs"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/777marvin/ext-broke.git"
@@ -22,6 +25,8 @@
     "check:files": "tsx scripts/check-files.ts",
     "bench": "tsx scripts/bench.ts",
     "measure": "tsx scripts/measure.ts",
+    "mcp": "node scripts/broke-runner.cjs mcp",
+    "cli": "node scripts/broke-runner.cjs",
     "validate:ui": "node scripts/validate-extension-ui.mjs ConfigComponent.jsx StatusBadge.jsx MessageMenuItem.jsx"
   },
   "keywords": [
@@ -38,6 +43,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "toml-eslint-parser": "0.10.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {

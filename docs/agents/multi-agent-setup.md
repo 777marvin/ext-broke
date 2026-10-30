@@ -1,0 +1,106 @@
+# Multi-Agent Setup Guide (Claude Code, Antigravity, Codex, Cursor)
+
+`broke` is built for [AiderDesk](../../README.md), where it compresses older conversation context in-flight before each model call. Its core token-saving engines — **BM25 search** (`indexer.ts`), **ST-slicing** (`slice.ts`), **token-budgeted git diffs** (`diff.ts`), **stack-trace/log compression** (`errors.ts`), and **local Ollama summarization** (`local.ts`) — also run as a **zero-build MCP server, CLI, and hook bridge** for other coding agents (Node.js >= 22.15).
+
+---
+
+## Architecture: Pre-Ingestion Compression
+
+External coding agents (Claude Code, Google Antigravity, OpenAI Codex CLI, Cursor) manage their own conversation history and provider prompt caches. Rewriting already-sent messages in those hosts is either unsupported or would invalidate their prompt cache.
+
+Instead, `broke`'s multi-agent bridge applies **pre-ingestion compression** — shrinking search results, file reads, diffs, and test/compiler logs *before* they enter the model's context window:
+
+| Capability | MCP Tool | CLI Command | Claude Code Hook |Savings Category (F6) |
+|---|---|---|---|---|
+| **Offline BM25 Search** | `broke_search` | `broke search <query>` | — | Modeled counterfactual (`estimates.search`) |
+| **ST-Slicing (Interface View)** | `broke_slice` | `broke slice <path> [symbol]` | `PreToolUse` (`Read`, when `slice.enabled=true`) | Modeled counterfactual (`savedChars.slice`) |
+| **Budgeted Git Diff** | `broke_diff` | `broke diff [chars]` | — | Budgeted digest |
+| **Allowlisted Check Runner** | `broke_check` | `broke check <runner>` | — | Measured reduction (`error` / `truncate` / `summarize`) |
+| **Log / Error Compression** | `broke_compress` | `broke compress --file <log>` | `PostToolUse` (`Bash`, when `errors.enabled=true`) | Measured reduction (`error` / `truncate` / `summarize`) |
+| **Readiness & Ledger Status** | `broke_status` | `broke status [measure]` | — | Diagnostic |
+
+All agents share the same configuration (`config.json`) and append to the same privacy-preserving ledgers (`ledgers/stats.jsonl` and `ledgers/measure.jsonl`) under `<extension>/../.broke-data/v1/` (or `BROKE_DATA_DIR`), scoped by `<agent>:<projectHash>` (for example `claude:75529654f1060bc0` or `antigravity:75529654f1060bc0`).
+
+---
+
+## Quick Setup (One-Command Installer)
+
+Requires **Node.js ≥ 22.15** (uses Node's built-in `module.registerHooks` and `module.stripTypeScriptTypes` — no build step or global `tsx` installation needed).
+
+Preview what will be written with `--dry-run`, then run without `--dry-run` to install into a project directory:
+
+```bash
+# Claude Code (.mcp.json + .claude/settings.json hooks + .claude/skills/broke/SKILL.md)
+node /path/to/broke/scripts/broke-runner.cjs install-agent claude --project /path/to/your-project
+
+# Google Antigravity (.agents/mcp_config.json + .agents/skills/broke/SKILL.md + AGENTS.md section)
+node /path/to/broke/scripts/broke-runner.cjs install-agent antigravity --project /path/to/your-project
+
+# OpenAI Codex CLI (.codex/config.toml + AGENTS.md section)
+node /path/to/broke/scripts/broke-runner.cjs install-agent codex --project /path/to/your-project
+
+# Cursor (.cursor/mcp.json + .cursor/rules/broke.mdc)
+node /path/to/broke/scripts/broke-runner.cjs install-agent cursor --project /path/to/your-project
+```
+
+The installer (`agent-install.ts`) performs non-destructive targeted upserts:
+- **Existing settings survive:** Codex `.codex/config.toml` edits only `mcp_servers.broke.command` and `mcp_servers.broke.args` via TOML AST source ranges (preserving model settings, comments, unrelated MCP servers, custom `broke` keys, and CRLF/LF line endings). JSON files preserve unrelated servers/settings, and Claude `.claude/settings.json` upserts only `broke`-owned hook entries while preserving foreign guards, formatters, and hook properties.
+- **Pre-write validation & atomic rollback:** Unreadable or malformed JSON (comments are not accepted in JSON files), invalid or ambiguous TOML constructs, or corrupted `AGENTS.md` marker blocks abort planning before any target file is written (including `--dry-run`). Writes use temporary sibling files in the target directory and roll back previously modified or newly created files on failure, retaining recovery copies if rollback restoration itself fails.
+
+---
+
+## Manual Configuration by Agent
+
+### 1. Claude Code
+
+Register the MCP server via the Claude CLI:
+
+```bash
+claude mcp add broke -- node /path/to/broke/scripts/broke-runner.cjs mcp --agent claude
+```
+
+Optional automatic hooks in `.claude/settings.json` (emitted in direct execution form with `"command": "node"` and `"args": ["/path/to/broke/scripts/broke-runner.cjs", "hook", "claude"]`, avoiding shell interpolation of runner paths):
+- **`PreToolUse` (`Read|Edit|Write|MultiEdit`):** Tracks the last edited file as focus and, when `slice.enabled` is set to `true` in `config.json`, intercepts full-file reads of large `.ts/.tsx/.js/.jsx/.py` files to return their compact interface view first. Ranged reads (`offset`/`limit`) and the active focus file always pass through untouched.
+- **`PostToolUse` (`Bash`):** Extracts the diagnostic essence of oversized compiler/test failures (`>= errors.minChars`) and returns `updatedToolOutput` directly without duplicating context into `additionalContext`, running unattended summarizer calls, or modifying shared ledgers (`summarize: false`, `recordTelemetry: false`). Interrupted and image outputs pass through unmodified.
+- **`PostToolUseFailure` (`Bash`):** Emits supplementary diagnostics via `additionalContext` for command execution failures without claiming replacement of the original failure output or mutating shared telemetry.
+
+### 2. Google Antigravity
+
+Add `broke` to `.agents/mcp_config.json` and copy [SKILL.md](SKILL.md) to `.agents/skills/broke/SKILL.md` (existing files under legacy `.gemini/antigravity/` paths are left untouched and are not automatically deleted):
+
+```json
+{
+  "mcpServers": {
+    "broke": {
+      "command": "node",
+      "args": ["/path/to/broke/scripts/broke-runner.cjs", "mcp", "--agent", "antigravity"]
+    }
+  }
+}
+```
+
+### 3. OpenAI Codex CLI
+
+Add the MCP server to `.codex/config.toml` (or `~/.codex/config.toml`) and include the workflow section in `AGENTS.md`:
+
+```toml
+[mcp_servers.broke]
+command = "node"
+args = ["/path/to/broke/scripts/broke-runner.cjs", "mcp", "--agent", "codex"]
+```
+
+### 4. Cursor
+
+Add `.cursor/mcp.json` and `.cursor/rules/broke.mdc` via `install-agent cursor`.
+
+---
+
+## Security & Boundaries
+
+- **Workspace confinement (`SEC-001`):** `broke_slice`, `broke_search`, `broke_diff`, and `broke_compress` resolve canonical paths (`realpathSync`) and refuse symlinks or paths outside the configured project root, dot-directories, skipped build/vendor directories, and sensitive files (`.env*`, private keys, credentials). In nested monorepo workspaces, `broke_diff` resolves Git's top-level directory separately from the canonical workspace root, restricts output to workspace-relative entries, checks both sides of renames and deleted paths against `isSafeWorkspaceRelPath`, checks untracked file sizes (`<= 256 KB`) via `stat.size` before reading, and reports filtered or cross-boundary entries explicitly as omitted rather than unreadable or empty diffs.
+- **Explicit diff layers (`broke_diff`):** Staged (`[staged]`), unstaged (`[unstaged]`), and untracked (`[untracked]`) changes are collected and labeled independently — preserving mixed and net-canceling staged/unstaged layers as well as unborn repositories without `HEAD` — with hunk line counts derived directly from each displayed comparison and Git invoked with `--literal-pathspecs`, `-c core.quotepath=false`, `--no-ext-diff`, and `--no-textconv`.
+- **Consistent slice budgets (`broke_slice`):** Every slice return path — including small files below `slice.minChars`, unchanged views, symbol-focused slicing, and full interface extraction — enforces the requested `maxChars` character cap, counts truncation notices inside the budget without rounding up to a 1 KB minimum, preserves UTF-16 surrogate pairs during truncation, and reports `keptChars === text.length` consistently.
+- **No arbitrary shell execution & runner policy (`runner-policy.ts`):** `broke_check` only executes a fixed allowlist of diagnostic runners (`tsc`, `pytest`, `vitest`, `jest`, `npm-test`, `npm-typecheck`, `npm-check-docs`, `npm-check-files`, `cargo-check`, `go-test`) without shell interpolation, enforcing per-runner option schemas, integer bounds (e.g. `--maxfail` and `-count` between 1 and 100), canonical workspace containment on input paths and output targets (e.g. `--junitxml`), and an explicit `--` forwarding boundary. Both stdout and stderr are captured and retained on successful runs. This allowlist restricts diagnostic runner parameters to prevent accidental workspace escapes and argument injection; running repository test/compiler suites inherently executes repository code and is not an operating-system sandbox.
+- **Secret masking:** All outputs processed by `broke_compress` and `broke_check`, as well as permitted patch text in `broke_diff`, pass through best-effort `maskSecrets()` before formatting, archiving, or local Ollama summarization.
+- **Independent summarizer workload accounting:** When local summarization is attempted during `broke_compress`, model call attempts, input prompt sizes, and response sizes are tracked in telemetry unconditionally. Shorter output acceptance controls only output replacement and claimed `summarizeChars` savings; rejected longer responses, empty responses, and connection failures retain deterministic output, preserve attempt accounting without fabricated response sizes, persist zero-savings measurement records when measurement is enabled, and support complete suppression via `recordTelemetry: false`.
+- **Honest MCP protocol negotiation (`mcp.ts`):** The stdio MCP server explicitly negotiates and implements protocol version `2024-11-05` only. Requests with unrecognized or future protocol versions (e.g. `2025-03-26` or synthetic versions) negotiate down to `2024-11-05` rather than echoing unimplemented versions. Batch JSON-RPC requests are explicitly rejected with `-32600` (`id: null`) per the `2024-11-05` specification.

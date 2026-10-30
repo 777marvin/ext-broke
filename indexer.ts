@@ -236,13 +236,30 @@ export function forwardSlash(p: string): string {
 }
 
 /**
+ * Syntactic workspace-relative path check: confined relative path that does not
+ * traverse dot-segments, skipped directories (node_modules, .git, .aider-desk,
+ * dist, build, vendor), or conventionally sensitive basenames (.env*, private
+ * keys, credentials). Used for deleted/renamed paths that no longer exist on
+ * disk and as the syntactic half of `isSafeWorkspaceFile`.
+ */
+export function isSafeWorkspaceRelPath(relPath: unknown): relPath is string {
+  return (
+    isConfinedRelPath(relPath) &&
+    !hasDotSegment(relPath) &&
+    !hasSkipDirSegment(relPath) &&
+    !sensitiveBasename(relPath) &&
+    !skippedPath(relPath)
+  );
+}
+
+/**
  * SEC-001: Strict workspace confinement check.
  * Verifies that relPath is syntactically confined AND resolves to an actual
  * regular file strictly inside the project root on disk (symlink / realpath containment).
  * Also enforces that the canonical target does not point to sensitive or skipped paths.
  */
 export function isSafeWorkspaceFile(root: string, relPath: unknown): relPath is string {
-  if (!isConfinedRelPath(relPath)) return false;
+  if (!isSafeWorkspaceRelPath(relPath)) return false;
   try {
     const canonicalRoot = realpathSync(root);
     const abs = join(root, ...relPath.split('/'));
@@ -250,7 +267,7 @@ export function isSafeWorkspaceFile(root: string, relPath: unknown): relPath is 
     const rel = relative(canonicalRoot, canonicalFile);
     if (rel.startsWith('..') || isAbsolute(rel)) return false;
     const normRel = forwardSlash(rel);
-    if (hasDotSegment(normRel) || hasSkipDirSegment(normRel) || sensitiveBasename(normRel) || skippedPath(normRel)) {
+    if (!isSafeWorkspaceRelPath(normRel)) {
       return false;
     }
     const st = statSync(canonicalFile);
@@ -271,7 +288,9 @@ function gitCandidateFiles(root: string, includeGitIgnored: boolean, timeout: nu
   try {
     const out = execFileSync(
       'git',
-      includeGitIgnored ? ['ls-files', '-co', '-z'] : ['ls-files', '-co', '--exclude-standard', '-z'],
+      includeGitIgnored
+        ? ['-c', 'safe.directory=*', 'ls-files', '-co', '-z']
+        : ['-c', 'safe.directory=*', 'ls-files', '-co', '--exclude-standard', '-z'],
       {
         cwd: root,
         timeout,

@@ -60,7 +60,20 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --import tsx --test tests/update.test.ts tests/update-lock.test.ts tests/update-lifecycle.test.ts tests/paths.test.ts tests/indexer.test.ts tests/flush.test.ts
+      - run: node --import tsx --test tests/update.test.ts tests/update-lock.test.ts tests/update-lifecycle.test.ts tests/paths.test.ts tests/indexer.test.ts tests/flush.test.ts tests/multi-agent.test.ts tests/pr33-install.test.ts tests/pr33-core.test.ts tests/pr33-runner.test.ts tests/pr33-hooks-telemetry.test.ts tests/pr33-mcp.test.ts
+
+  runner-smoke-22-15:
+    name: Zero-build runner smoke (Node 22.15 floor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.15.0'
+          cache: npm
+      - run: npm ci
+      - run: node scripts/broke-runner.cjs help
+      - run: node --import tsx --test tests/pr33-install.test.ts tests/pr33-mcp.test.ts
 
   coverage:
     name: Coverage gate (branch thresholds, critical modules)

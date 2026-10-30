@@ -33,8 +33,8 @@ on [GitHub Releases](https://github.com/777marvin/ext-broke/releases).
 **Proposed (no release date):**
 - F8: Internal benchmark methodology "that tells the truth"
 - F9: User-run measurement flow beyond `npm run bench`
-- S5: Agent-facing skill/rule for autonomous broke usage
-- S6: Agent tool surface evaluation (which capabilities become tools?)
+- S5/S6 (in 1.4.1-dev): Multi-agent MCP bridge (`mcp.ts`), CLI/hooks (`cli.ts`), and agent skill (`docs/agents/SKILL.md`) for Claude Code, Antigravity, Codex, and Cursor
+
 - S7: Subagent behavior investigation (hooks, stats attribution)
 
 ## Version Reality
