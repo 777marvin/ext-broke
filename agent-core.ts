@@ -246,6 +246,87 @@ export interface AgentSliceOutput {
   savedChars: number;
 }
 
+function safeSliceHead(str: string, maxLen: number): string {
+  if (maxLen <= 0) return '';
+  if (str.length <= maxLen) return str;
+  let cut = maxLen;
+  const lastCode = str.charCodeAt(cut - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    cut -= 1;
+  }
+  return str.slice(0, cut);
+}
+
+function safeSliceTail(str: string, maxLen: number): string {
+  if (maxLen <= 0) return '';
+  if (str.length <= maxLen) return str;
+  let start = str.length - maxLen;
+  const firstCode = str.charCodeAt(start);
+  if (firstCode >= 0xdc00 && firstCode <= 0xdfff) {
+    start += 1;
+  }
+  return str.slice(start);
+}
+
+function capSliceOutput(
+  candidateText: string,
+  maxChars: number,
+  originalChars: number,
+  initialSliced: boolean,
+): AgentSliceOutput {
+  if (candidateText.length <= maxChars) {
+    const text = candidateText;
+    const keptChars = text.length;
+    const savedChars = initialSliced ? Math.max(0, originalChars - text.length) : 0;
+    return {
+      ok: true,
+      sliced: initialSliced,
+      text,
+      originalChars,
+      keptChars,
+      savedChars,
+    };
+  }
+
+  const removedChars = candidateText.length - maxChars;
+  let marker = `\n… [broke: truncated ${removedChars.toLocaleString('en-US')} chars - budget exceeded]\n`;
+  if (marker.length >= maxChars) {
+    marker = '\n… [broke: truncated]\n';
+  }
+  if (marker.length >= maxChars) {
+    const text = safeSliceHead(candidateText, maxChars);
+    const keptChars = text.length;
+    const savedChars = Math.max(0, originalChars - keptChars);
+    return {
+      ok: true,
+      sliced: true,
+      text,
+      originalChars,
+      keptChars,
+      savedChars,
+    };
+  }
+
+  const budget = maxChars - marker.length;
+  const headTarget = Math.min(Math.ceil(budget * 0.6), budget);
+  const head = safeSliceHead(candidateText, headTarget);
+  const remainingBudget = maxChars - marker.length - head.length;
+  const tail = safeSliceTail(candidateText, remainingBudget);
+
+  const text = `${head}${marker}${tail}`;
+  const keptChars = text.length;
+  const savedChars = Math.max(0, originalChars - keptChars);
+
+  return {
+    ok: true,
+    sliced: true,
+    text,
+    originalChars,
+    keptChars,
+    savedChars,
+  };
+}
+
 export function runAgentSlice(
   root: string,
   input: AgentSliceInput,
@@ -282,16 +363,14 @@ export function runAgentSlice(
   }
 
   const originalChars = source.length;
-  const maxChars = input.maxChars ?? config.slice.maxChars;
+  const maxChars = Math.max(1, input.maxChars ?? config.slice.maxChars);
   if (originalChars < config.slice.minChars && !input.symbol) {
-    return {
-      ok: true,
-      sliced: false,
-      text: `[broke: file is ${originalChars.toLocaleString('en-US')} chars (< minChars ${config.slice.minChars.toLocaleString('en-US')}) - full content]\n${source}`,
-      originalChars,
-      keptChars: originalChars,
-      savedChars: 0,
-    };
+    const candidate = `[broke: file is ${originalChars.toLocaleString('en-US')} chars (< minChars ${config.slice.minChars.toLocaleString('en-US')}) - full content]\n${source}`;
+    const result = capSliceOutput(candidate, maxChars, originalChars, false);
+    if (result.savedChars > 0) {
+      recordAgentCounterfactual(agentTaskId(agentId, root), 'slice', result.savedChars, paths);
+    }
+    return result;
   }
 
   const focus = input.symbol
@@ -302,46 +381,20 @@ export function runAgentSlice(
 
   const view = sliceWithFocus(source, lang, focus, resolved.relPath);
   if (view.keptLines === view.originalLines && view.text === source) {
-    return {
-      ok: true,
-      sliced: false,
-      text: `${FOCUS_MARKER}\n${source}`,
-      originalChars,
-      keptChars: originalChars,
-      savedChars: 0,
-    };
-  }
-
-  if (view.text.length > maxChars) {
-    const truncated = truncateText(view.text, config.truncate.maxLines, Math.max(1, Math.floor(maxChars / 1024)));
-    const text = `${sliceMarker(view)}\n${truncated.kept}`;
-    const savedChars = Math.max(0, originalChars - text.length);
-    if (savedChars > 0) {
-      recordAgentCounterfactual(agentTaskId(agentId, root), 'slice', savedChars, paths);
+    const candidate = `${FOCUS_MARKER}\n${source}`;
+    const result = capSliceOutput(candidate, maxChars, originalChars, false);
+    if (result.savedChars > 0) {
+      recordAgentCounterfactual(agentTaskId(agentId, root), 'slice', result.savedChars, paths);
     }
-    return {
-      ok: true,
-      sliced: true,
-      text,
-      originalChars,
-      keptChars: text.length,
-      savedChars,
-    };
+    return result;
   }
 
-  const text = `${sliceMarker(view)}\n${view.text}`;
-  const savedChars = Math.max(0, originalChars - text.length);
-  if (savedChars > 0) {
-    recordAgentCounterfactual(agentTaskId(agentId, root), 'slice', savedChars, paths);
+  const candidate = `${sliceMarker(view)}\n${view.text}`;
+  const result = capSliceOutput(candidate, maxChars, originalChars, true);
+  if (result.savedChars > 0) {
+    recordAgentCounterfactual(agentTaskId(agentId, root), 'slice', result.savedChars, paths);
   }
-  return {
-    ok: true,
-    sliced: true,
-    text,
-    originalChars,
-    keptChars: text.length,
-    savedChars,
-  };
+  return result;
 }
 
 // ---------------------------------------------------------------------------

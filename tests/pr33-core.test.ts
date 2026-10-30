@@ -11,7 +11,7 @@ import fs, {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, it, mock } from 'node:test';
-import { runAgentDiff } from '../agent-core';
+import { runAgentDiff, runAgentSlice } from '../agent-core';
 import { MAX_DIFF_FILES_READ } from '../diff';
 import { isSafeWorkspaceFile, isSafeWorkspaceRelPath } from '../indexer';
 
@@ -598,6 +598,111 @@ describe('PR #33 Package B: Protected and Complete Git Diffs', () => {
       assert.match(tightBudgetRes.text, /not shown - raise the budget/i);
     } finally {
       capWs.cleanup();
+    }
+  });
+});
+describe('PR #33 Package D: Consistent Slice Budgets (Finding 10)', () => {
+  function makeSliceWorkspace(): { dir: string; cleanup: () => void } {
+    const dir = mkdtempSync(join(tmpdir(), 'broke-pr33-slice-'));
+    return {
+      dir,
+      cleanup: () => {
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {
+          // ignore cleanup errors
+        }
+      },
+    };
+  }
+
+  it('enforces maxChars on 8,000-exported-constant unchanged view (Finding 10)', () => {
+    const ws = makeSliceWorkspace();
+    try {
+      const lines = Array.from({ length: 8000 }, (_, i) => `export const c${i} = ${i};`);
+      const fullSource = lines.join('\n');
+      writeFileSync(join(ws.dir, 'constants.ts'), fullSource, 'utf-8');
+
+      const result = runAgentSlice(ws.dir, { path: 'constants.ts', maxChars: 500 });
+      assert.equal(result.ok, true);
+      assert.ok(result.text.length <= 500, `text.length (${result.text.length}) must be <= 500`);
+      assert.equal(result.keptChars, result.text.length, 'keptChars must match final text length');
+      assert.equal(result.sliced, true, 'truncated unchanged view must be marked sliced');
+      assert.match(result.text, /broke: truncated/);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it('enforces maxChars on small files below minChars and keeps fitting files complete', () => {
+    const ws = makeSliceWorkspace();
+    try {
+      const smallSource = 'export function hello(): string {\n  return "world";\n}\n';
+      writeFileSync(join(ws.dir, 'small.ts'), smallSource, 'utf-8');
+
+      // Fits within default budget: remains complete and unmodified
+      const fitResult = runAgentSlice(ws.dir, { path: 'small.ts' });
+      assert.equal(fitResult.ok, true);
+      assert.equal(fitResult.sliced, false);
+      assert.equal(fitResult.keptChars, fitResult.text.length);
+      assert.ok(fitResult.text.includes(smallSource));
+
+      // Tight budget: must be capped and truncated with accurate keptChars
+      const cappedResult = runAgentSlice(ws.dir, { path: 'small.ts', maxChars: 60 });
+      assert.equal(cappedResult.ok, true);
+      assert.ok(cappedResult.text.length <= 60, `text.length (${cappedResult.text.length}) must be <= 60`);
+      assert.equal(cappedResult.keptChars, cappedResult.text.length);
+      assert.equal(cappedResult.sliced, true);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it('enforces maxChars on symbol focus with large body', () => {
+    const ws = makeSliceWorkspace();
+    try {
+      const lines: string[] = [
+        'export interface ComputeOptions { iterations: number; }',
+        'export function irrelevant(opts: ComputeOptions): number { return 1; }',
+        'export function targetFunc(opts: ComputeOptions): number {',
+      ];
+      for (let i = 0; i < 30; i++) {
+        lines.push(`  const x${i} = opts.iterations + ${i} + "${'a'.repeat(25)}";`);
+      }
+      lines.push('  return opts.iterations;', '}', '');
+      writeFileSync(join(ws.dir, 'funcs.ts'), lines.join('\n'), 'utf-8');
+
+      const result = runAgentSlice(ws.dir, { path: 'funcs.ts', symbol: 'targetFunc', maxChars: 300 });
+      assert.equal(result.ok, true);
+      assert.ok(result.text.length <= 300, `text.length (${result.text.length}) must be <= 300`);
+      assert.equal(result.keptChars, result.text.length);
+      assert.equal(result.sliced, true);
+      assert.match(result.text, /broke: truncated/);
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it('does not split UTF-16 surrogate pairs during truncation', () => {
+    const ws = makeSliceWorkspace();
+    try {
+      // Emojis that require UTF-16 surrogate pairs
+      const emojiSource = Array.from({ length: 50 }, (_, i) => `// comment ${i} 🚀🌟🎉✨🔥💡\nexport const e${i} = "🚀🌟🎉✨🔥💡";`).join('\n');
+      writeFileSync(join(ws.dir, 'unicode.ts'), emojiSource, 'utf-8');
+
+      for (const cap of [40, 55, 73, 90, 111, 150, 250, 400]) {
+        const result = runAgentSlice(ws.dir, { path: 'unicode.ts', maxChars: cap });
+        assert.equal(result.ok, true);
+        assert.ok(result.text.length <= cap, `text.length (${result.text.length}) must be <= ${cap}`);
+        assert.equal(result.keptChars, result.text.length);
+
+        // encodeURIComponent throws URIError if string has lone/orphaned surrogate pairs!
+        assert.doesNotThrow(() => {
+          encodeURIComponent(result.text);
+        }, `URIError thrown at cap ${cap}: surrogate pair was split!`);
+      }
+    } finally {
+      ws.cleanup();
     }
   });
 });
