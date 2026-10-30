@@ -405,6 +405,7 @@ describe('mcp.ts: JSON-RPC 2.0 protocol & stdio runner', () => {
     const runnerPath = join(__dirname, '..', 'scripts', 'broke-runner.cjs');
     const child = spawn(process.execPath, [runnerPath, 'mcp', '--agent', 'antigravity'], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, NODE_V8_COVERAGE: '' },
     });
 
     try {

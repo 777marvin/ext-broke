@@ -101,6 +101,7 @@ describe('PR #33 Package G: Honest MCP Version Negotiation (Finding 15)', () => 
       const runnerScript = join(__dirname, '..', 'scripts', 'broke-runner.cjs');
       const proc = spawn(process.execPath, [runnerScript, 'mcp', '--root', dir], {
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, NODE_V8_COVERAGE: '' },
       });
 
       let stdoutAccum = '';

@@ -1,6 +1,6 @@
 # Multi-Agent Setup Guide (Claude Code, Antigravity, Codex, Cursor)
 
-`broke` is built for [AiderDesk](../../README.md), where it compresses older conversation context in-flight before each model call. Its core token-saving engines — **BM25 search** (`indexer.ts`), **ST-slicing** (`slice.ts`), **token-budgeted git diffs** (`diff.ts`), **stack-trace/log compression** (`errors.ts`), and **local Ollama summarization** (`local.ts`) — also run as a **zero-dependency MCP server, CLI, and hook bridge** for other coding agents.
+`broke` is built for [AiderDesk](../../README.md), where it compresses older conversation context in-flight before each model call. Its core token-saving engines — **BM25 search** (`indexer.ts`), **ST-slicing** (`slice.ts`), **token-budgeted git diffs** (`diff.ts`), **stack-trace/log compression** (`errors.ts`), and **local Ollama summarization** (`local.ts`) — also run as a **zero-build MCP server, CLI, and hook bridge** for other coding agents (Node.js >= 22.15).
 
 ---
 

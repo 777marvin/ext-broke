@@ -1,5 +1,5 @@
 /**
- * Zero-dependency MCP (Model Context Protocol) server over stdio.
+ * Zero-build MCP (Model Context Protocol) server over stdio.
  *
  * Exposes broke's context-saving capabilities (search, slice, diff, compress,
  * check, status) and brevity/workflow prompts to Claude Code, Antigravity,

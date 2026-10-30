@@ -162,7 +162,7 @@ index on disk for later re-enabling. `/broke index [rebuild] | status` and
 
 ## Multi-agent MCP, CLI & hooks (S5 / S6)
 
-Outside AiderDesk, broke runs as a zero-dependency stdio MCP server (`mcp.ts`),
+Outside AiderDesk, broke runs as a zero-build stdio MCP server (`mcp.ts`),
 CLI and Claude Code `PreToolUse`/`PostToolUse` hook handler (`cli.ts`), backed by
 the host-agnostic `agent-core.ts` module and launched without a build step via
 `node scripts/broke-runner.cjs` (Node.js ≥ 22.15). External agents use

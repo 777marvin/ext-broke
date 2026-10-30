@@ -524,16 +524,19 @@ describe('PR #33 Package F: Claude Hooks Match the Host Contract (Findings 7, 8)
         },
       };
 
+      const childEnv = {
+        ...process.env,
+        BROKE_DATA_DIR: ws.dir,
+        NODE_V8_COVERAGE: '',
+      };
+
       const proc = execFileSync(
         process.execPath,
         [runnerScript, 'hook', 'claude', '--root', ws.dir],
         {
           input: JSON.stringify(hookPayload),
           encoding: 'utf-8',
-          env: {
-            ...process.env,
-            BROKE_DATA_DIR: ws.dir,
-          },
+          env: childEnv,
         },
       );
 

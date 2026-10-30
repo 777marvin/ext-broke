@@ -259,7 +259,7 @@ describe('PR #33 Package C: Strict Runner Options and Complete Process Output', 
             const proc = spawnSync(
               process.execPath,
               ['-e', 'process.stdout.write("MARKER_REAL_STDOUT\\n"); process.stderr.write("MARKER_REAL_STDERR\\n"); process.exit(0);'],
-              { cwd, encoding: 'utf-8' },
+              { cwd, encoding: 'utf-8', env: { ...process.env, NODE_V8_COVERAGE: '' } },
             );
             // Before fix, if someone only captured stdout:
             // The fix must combine both stdout and stderr

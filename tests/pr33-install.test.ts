@@ -965,10 +965,12 @@ describe('PR #33 Package A: Preserve Existing Agent Configuration', () => {
       writeSeed(tomlPath, '# Runner CJS/ESM interop smoke\r\nmodel = "o3"\r\n');
       const runnerScript = join(__dirname, '..', 'scripts', 'broke-runner.cjs');
 
+      const runnerEnv = { ...process.env, BROKE_DATA_DIR: ws.dataDir, NODE_V8_COVERAGE: '' };
+
       const dryOut = execFileSync(
         process.execPath,
         [runnerScript, 'install-agent', 'codex', '--project', ws.projectDir, '--dry-run'],
-        { encoding: 'utf-8', env: { ...process.env, BROKE_DATA_DIR: ws.dataDir } },
+        { encoding: 'utf-8', env: runnerEnv },
       );
       assert.match(dryOut, /dry-run/);
       assert.equal(existsSync(join(ws.projectDir, 'AGENTS.md')), false);
@@ -976,7 +978,7 @@ describe('PR #33 Package A: Preserve Existing Agent Configuration', () => {
       execFileSync(
         process.execPath,
         [runnerScript, 'install-agent', 'codex', '--project', ws.projectDir],
-        { encoding: 'utf-8', env: { ...process.env, BROKE_DATA_DIR: ws.dataDir } },
+        { encoding: 'utf-8', env: runnerEnv },
       );
       const finalToml = readFileSync(tomlPath, 'utf-8');
       assert.match(finalToml, /# Runner CJS\/ESM interop smoke/);
