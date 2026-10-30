@@ -169,6 +169,21 @@ export function recordAgentCompression(
 }
 
 /**
+ * Safely resolves a path to its canonical realpath, expanding Windows 8.3 short names
+ * (e.g. `RUNNER~1` -> `runneradmin`) via `realpathSync.native` when available, and
+ * stripping any Windows long-path `\\?\` prefix.
+ */
+function safeRealpath(p: string): string {
+  try {
+    const res = typeof realpathSync.native === 'function' ? realpathSync.native(p) : realpathSync(p);
+    return res.startsWith('\\\\?\\') ? res.slice(4) : res;
+  } catch {
+    const res = realpathSync(p);
+    return res.startsWith('\\\\?\\') ? res.slice(4) : res;
+  }
+}
+
+/**
  * Resolve and validate a file path strictly inside the workspace root
  * (enforcing symlink containment and sensitive-file exclusion via SEC-001).
  */
@@ -183,12 +198,12 @@ export function resolveConfinedWorkspaceFile(
     return { ok: false, reason: 'path is required' };
   }
   try {
-    const canonicalRoot = realpathSync(root);
+    const canonicalRoot = safeRealpath(root);
     const candidateAbs = isAbsolute(targetPath) ? resolve(targetPath) : resolve(canonicalRoot, targetPath);
     if (!existsSync(candidateAbs)) {
       return { ok: false, reason: `file does not exist: ${targetPath}` };
     }
-    const canonicalFile = realpathSync(candidateAbs);
+    const canonicalFile = safeRealpath(candidateAbs);
     const rel = forwardSlash(relative(canonicalRoot, canonicalFile));
     if (rel.startsWith('..') || isAbsolute(rel) || !isSafeWorkspaceFile(canonicalRoot, rel)) {
       return {
@@ -455,7 +470,7 @@ function inspectWorkspaceCandidate(canonicalWorkspace: string, wsRelPath: string
       };
     }
     try {
-      const canonicalFile = realpathSync(candidateAbs);
+      const canonicalFile = safeRealpath(candidateAbs);
       const st = statSync(canonicalFile);
       if (!st.isFile()) {
         return { ok: false, omittedReason: 'non-regular file' };
@@ -475,7 +490,7 @@ function inspectWorkspaceCandidate(canonicalWorkspace: string, wsRelPath: string
     }
     try {
       lstatSync(currentDir);
-      const canonicalAncestor = realpathSync(currentDir);
+      const canonicalAncestor = safeRealpath(currentDir);
       const relAncestor = relative(canonicalWorkspace, canonicalAncestor);
       if (relAncestor.startsWith('..') || isAbsolute(relAncestor)) {
         return { ok: false, omittedReason: 'outside workspace boundary' };
@@ -535,11 +550,11 @@ type CollectDiffResult =
 
 function collectGitDiffFiles(canonicalWorkspace: string): CollectDiffResult {
   try {
-    let topRaw: string;
+    let revParseOut: string;
     try {
-      topRaw = execFileSync(
+      revParseOut = execFileSync(
         'git',
-        ['-c', 'safe.directory=*', '-c', 'core.quotepath=false', 'rev-parse', '--show-toplevel'],
+        ['-c', 'safe.directory=*', '-c', 'core.quotepath=false', 'rev-parse', '--show-toplevel', '--show-prefix'],
         {
           cwd: canonicalWorkspace,
           encoding: 'utf-8',
@@ -548,32 +563,29 @@ function collectGitDiffFiles(canonicalWorkspace: string): CollectDiffResult {
           maxBuffer: 1024 * 1024,
           stdio: ['ignore', 'pipe', 'pipe'],
         },
-      ).trim();
+      );
     } catch (err: unknown) {
       const stderr = (err as { stderr?: Buffer | string })?.stderr?.toString()?.trim();
       const msg = stderr || (err instanceof Error ? err.message : String(err));
       return { ok: false, error: `rev-parse failed: ${msg}` };
     }
-    if (!topRaw) return { ok: false, error: 'git rev-parse returned empty output' };
+
+    const revLines = revParseOut.split(/\r?\n/);
+    const topRaw = (revLines[0] ?? '').trim();
+    if (!topRaw) return { ok: false, error: 'git rev-parse returned empty toplevel' };
+
+    const prefixRaw = (revLines[1] ?? '').trim();
+    const wsPrefix = prefixRaw ? forwardSlash(prefixRaw.replace(/\/+$/, '')) : '';
 
     let canonicalGitTop: string;
     try {
-      canonicalGitTop = realpathSync(topRaw);
+      canonicalGitTop = safeRealpath(topRaw);
     } catch (err: unknown) {
       return {
         ok: false,
         error: `realpath of git top "${topRaw}" failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
-
-    const rawWsRel = relative(canonicalGitTop, canonicalWorkspace);
-    if (rawWsRel.startsWith('..') || isAbsolute(rawWsRel)) {
-      return {
-        ok: false,
-        error: `workspace "${canonicalWorkspace}" is not inside git root "${canonicalGitTop}" (rawWsRel: "${rawWsRel}")`,
-      };
-    }
-    const wsPrefix = rawWsRel ? forwardSlash(rawWsRel) : '';
 
     let statusOut: string;
     try {
@@ -924,7 +936,7 @@ export function runAgentDiff(
   }
   let canonicalWorkspace: string;
   try {
-    canonicalWorkspace = realpathSync(root);
+    canonicalWorkspace = safeRealpath(root);
     if (!statSync(canonicalWorkspace).isDirectory()) {
       return {
         ok: false,
@@ -1010,12 +1022,12 @@ export async function runAgentCompress(
       resolvedPath = confined.absPath;
     } else if (existsSync(errorsRoot)) {
       try {
-        const canonicalErrors = realpathSync(errorsRoot);
+        const canonicalErrors = safeRealpath(errorsRoot);
         const candidate = isAbsolute(input.filePath)
           ? resolve(input.filePath)
           : resolve(canonicalErrors, input.filePath.replace(/^errors[\\/]/, ''));
         if (existsSync(candidate)) {
-          const canonicalCandidate = realpathSync(candidate);
+          const canonicalCandidate = safeRealpath(candidate);
           const rel = relative(canonicalErrors, canonicalCandidate);
           if (!rel.startsWith('..') && !isAbsolute(rel) && statSync(canonicalCandidate).isFile()) {
             resolvedPath = canonicalCandidate;
