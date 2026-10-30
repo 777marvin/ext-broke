@@ -712,6 +712,13 @@ function upsertClaudeSettingsJson(settingsPath: string, runnerPath: string): str
           settingsPath,
           'PostToolUse',
         ),
+        PostToolUseFailure: upsertClaudeHookEvent(
+          hooksObj.PostToolUseFailure,
+          'Bash',
+          runnerPath,
+          settingsPath,
+          'PostToolUseFailure',
+        ),
       },
     };
   });
@@ -814,14 +821,20 @@ function validatePlannedOutputs(
 
       if (basename(item.path) === 'settings.json') {
         const hooks = parsed.hooks;
-        if (!isPlainObject(hooks) || !Array.isArray(hooks.PreToolUse) || !Array.isArray(hooks.PostToolUse)) {
+        if (
+          !isPlainObject(hooks) ||
+          !Array.isArray(hooks.PreToolUse) ||
+          !Array.isArray(hooks.PostToolUse) ||
+          !Array.isArray(hooks.PostToolUseFailure)
+        ) {
           throw new Error(`Planned Claude settings output for ${item.path} is missing valid hook arrays`);
         }
-        const expectedMatchers: Record<'PreToolUse' | 'PostToolUse', string> = {
+        const expectedMatchers: Record<'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure', string> = {
           PreToolUse: 'Read|Edit|Write|MultiEdit',
           PostToolUse: 'Bash',
+          PostToolUseFailure: 'Bash',
         };
-        for (const eventName of ['PreToolUse', 'PostToolUse'] as const) {
+        for (const eventName of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure'] as const) {
           const expectedMatcher = expectedMatchers[eventName];
           const groups = hooks[eventName] as Array<Record<string, unknown>>;
           const found = groups.some(
@@ -919,7 +932,7 @@ export function planAgentInstall(opts: InstallAgentOptions): PlannedFileWrite[] 
 
     writes.push({
       path: settingsPath,
-      description: 'Claude Code PreToolUse/PostToolUse hooks (.claude/settings.json)',
+      description: 'Claude Code PreToolUse/PostToolUse/PostToolUseFailure hooks (.claude/settings.json)',
       content: upsertClaudeSettingsJson(settingsPath, runner),
     });
 

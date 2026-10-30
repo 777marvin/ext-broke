@@ -61,7 +61,8 @@ claude mcp add broke -- node /path/to/broke/scripts/broke-runner.cjs mcp --agent
 
 Optional automatic hooks in `.claude/settings.json` (emitted in direct execution form with `"command": "node"` and `"args": ["/path/to/broke/scripts/broke-runner.cjs", "hook", "claude"]`, avoiding shell interpolation of runner paths):
 - **`PreToolUse` (`Read|Edit|Write|MultiEdit`):** Tracks the last edited file as focus and, when `slice.enabled` is set to `true` in `config.json`, intercepts full-file reads of large `.ts/.tsx/.js/.jsx/.py` files to return their compact interface view first. Ranged reads (`offset`/`limit`) and the active focus file always pass through untouched.
-- **`PostToolUse` (`Bash`):** Extracts the diagnostic essence of oversized compiler/test failures (`>= errors.minChars`) and archives the redacted log when `errors.archive` is enabled.
+- **`PostToolUse` (`Bash`):** Extracts the diagnostic essence of oversized compiler/test failures (`>= errors.minChars`) and returns `updatedToolOutput` directly without duplicating context into `additionalContext`, running unattended summarizer calls, or modifying shared ledgers (`summarize: false`, `recordTelemetry: false`). Interrupted and image outputs pass through unmodified.
+- **`PostToolUseFailure` (`Bash`):** Emits supplementary diagnostics via `additionalContext` for command execution failures without claiming replacement of the original failure output or mutating shared telemetry.
 
 ### 2. Google Antigravity
 

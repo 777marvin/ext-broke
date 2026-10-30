@@ -117,6 +117,8 @@ export interface ClaudeHookPayload {
   tool_name?: string;
   tool_input?: Record<string, unknown>;
   tool_response?: unknown;
+  error?: string;
+  is_interrupt?: boolean;
 }
 
 export interface ClaudeHookOptions {
@@ -159,6 +161,10 @@ export async function handleClaudeHookPayload(
   const toolName = typeof ev.tool_name === 'string' ? ev.tool_name : '';
   const toolInput = ev.tool_input && typeof ev.tool_input === 'object' ? ev.tool_input : {};
   const focusStorePath = opts.focusStorePath ?? defaultFocusStorePath();
+
+  if (ev.is_interrupt === true) {
+    return { exitCode: 0 };
+  }
 
   if (ev.hook_event_name === 'PreToolUse') {
     if (config.slice.enabled && config.slice.focusAuto && isEditTool(toolName, toolInput)) {
@@ -208,21 +214,76 @@ export async function handleClaudeHookPayload(
 
   if (ev.hook_event_name === 'PostToolUse') {
     if (config.errors.enabled && isCommandTool(toolName)) {
+      if (typeof ev.tool_response !== 'object' && typeof ev.tool_response !== 'string') {
+        return { exitCode: 0 };
+      }
+      if (typeof ev.tool_response === 'object' && ev.tool_response !== null) {
+        const respObj = ev.tool_response as Record<string, unknown>;
+        if (respObj.interrupted === true || respObj.isImage === true) {
+          return { exitCode: 0 };
+        }
+      }
+
       const rawText = extractHookResponseText(ev.tool_response);
       if (rawText.length >= config.errors.minChars) {
         const matchCheck = extractErrorSummary(rawText, { contextLines: config.errors.contextLines });
         if (matchCheck.matched) {
           const compressed = await runAgentCompress(
             root,
-            { text: rawText, callId: `hook-${Date.now()}` },
+            { text: rawText, summarize: false, callId: `hook-${Date.now()}` },
             'claude',
             config,
-            opts.deps,
+            { ...opts.deps, recordTelemetry: false },
+          );
+          if (compressed.ok && compressed.savedChars > 0) {
+            let updatedToolOutput: unknown;
+            if (typeof ev.tool_response === 'object' && ev.tool_response !== null && !Array.isArray(ev.tool_response)) {
+              updatedToolOutput = {
+                ...(ev.tool_response as Record<string, unknown>),
+                stdout: compressed.text,
+                stderr: '',
+              };
+            } else {
+              updatedToolOutput = compressed.text;
+            }
+
+            const responseJson = {
+              hookSpecificOutput: {
+                hookEventName: 'PostToolUse',
+                updatedToolOutput,
+              },
+            };
+            return { exitCode: 0, stdout: JSON.stringify(responseJson) };
+          }
+        }
+      }
+    }
+    return { exitCode: 0 };
+  }
+
+  if (ev.hook_event_name === 'PostToolUseFailure') {
+    if (config.errors.enabled && isCommandTool(toolName)) {
+      const failureText = [
+        typeof ev.error === 'string' ? ev.error : '',
+        extractHookResponseText(ev.tool_response),
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      if (failureText.length >= config.errors.minChars) {
+        const matchCheck = extractErrorSummary(failureText, { contextLines: config.errors.contextLines });
+        if (matchCheck.matched) {
+          const compressed = await runAgentCompress(
+            root,
+            { text: failureText, summarize: false, callId: `hook-fail-${Date.now()}` },
+            'claude',
+            config,
+            { ...opts.deps, recordTelemetry: false },
           );
           if (compressed.ok && compressed.savedChars > 0) {
             const responseJson = {
               hookSpecificOutput: {
-                hookEventName: 'PostToolUse',
+                hookEventName: 'PostToolUseFailure',
                 additionalContext: `[broke diagnostic essence]\n${compressed.text}`,
               },
             };
