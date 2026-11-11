@@ -9,7 +9,6 @@
   const [saving, setSaving] = React.useState(false);
   const [previewing, setPreviewing] = React.useState(false);
   const [guideVisible, setGuideVisible] = React.useState(false);
-  const [guideStep, setGuideStep] = React.useState(1);
   const [setupReadiness, setSetupReadiness] = React.useState(null);
   const [checkingSetup, setCheckingSetup] = React.useState(false);
   const [cmdCategory, setCmdCategory] = React.useState('all');
@@ -46,7 +45,6 @@
   const overlaySession = React.useRef(0);
   const guideButtonRef = React.useRef(null);
   const checkButtonRef = React.useRef(null);
-  const onboardingCheckButtonRef = React.useRef(null);
   const restoreCheckFocus = React.useRef(false);
   const guideRevision = React.useRef(0);
   const restoreGuideFocus = React.useRef(false);
@@ -146,15 +144,11 @@
   React.useEffect(() => {
     if (!checkingSetup && restoreCheckFocus.current) {
       restoreCheckFocus.current = false;
-      if (overlayOpen) {
-        if (guideVisible && guideStep === 2 && onboardingCheckButtonRef.current) {
-          onboardingCheckButtonRef.current.focus();
-        } else if (document.activeElement === document.body || document.activeElement === dialogRef.current) {
-          checkButtonRef.current?.focus();
-        }
+      if (overlayOpen && (document.activeElement === document.body || document.activeElement === dialogRef.current)) {
+        checkButtonRef.current?.focus();
       }
     }
-  }, [checkingSetup, overlayOpen, guideVisible, guideStep]);
+  }, [checkingSetup, overlayOpen]);
 
   const openOverlay = async () => {
     const request = ++revision.current;
@@ -164,7 +158,6 @@
     setCheckingSetup(false);
     setSetupReadiness(null);
     setGuideVisible(false);
-    setGuideStep(1);
     setAdvancedOpen(false);
     setCmdCategory('all');
     restoreGuideFocus.current = false;
@@ -212,7 +205,7 @@
   const checkSetup = async () => {
     if (!draftRef.current || savingRef.current || checkingSetup) return;
     const request = ++setupRequest.current;
-    restoreCheckFocus.current = document.activeElement === checkButtonRef.current || document.activeElement === onboardingCheckButtonRef.current;
+    restoreCheckFocus.current = document.activeElement === checkButtonRef.current;
     setCheckingSetup(true);
     setSetupReadiness(null);
     setOverlayError(null);
@@ -459,7 +452,6 @@
     : `${status.heading}. ${total.toLocaleString('en-US')} estimated input tokens saved.`;
 
   const fillPct = obs && obs.inputChars > 0 && maxCtx > 0 ? Math.min(100, Math.round((obs.inputChars / maxCtx) * 100)) : 0;
-  const passTotal = savedTokens.structural + savedTokens.error + savedTokens.truncate + savedTokens.summarize;
 
   // All 1-click commands grouped by category for the Command Studio
   const STUDIO_QUICK_COMMANDS = [
