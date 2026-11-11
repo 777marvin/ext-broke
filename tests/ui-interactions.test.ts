@@ -304,7 +304,7 @@ describe('F7 everyday badge experience', () => {
       passes: 0,
     });
     await open();
-    await click(input('Use Broke automatically'));
+    await click(input('Enable Broke'));
     assert.match(container.textContent!, /Broke is off/i, 'the dialog previews the draft state');
     await click(button('Cancel'));
 
@@ -374,7 +374,7 @@ describe('F7 everyday badge experience', () => {
     assert.match(badge?.getAttribute('title') ?? '', /Broke is off/i);
   });
 
-  it('separates observed reduction, provider usage, and modeled estimates when viewing savings (F6 Slice 2)', async () => {
+  it('keeps the expert stats command reduction, provider usage and modeled estimates separate (F6)', async () => {
     await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {
       level: 'truncate',
       totalSavedTokens: 3113,
@@ -386,9 +386,10 @@ describe('F7 everyday badge experience', () => {
       estimates: { slice: 500, flush: 1000, search: 200 },
     });
     await open();
-    await click(button('View savings'));
+    const stats = [...container.querySelectorAll('button')].find(b => /\/broke\s+stats$/.test(b.textContent?.trim() ?? ''));
+    assert.ok(stats); await click(stats);
 
-    assert.ok(calls.includes('runCommand'), 'View savings executes stats');
+    assert.ok(calls.includes('runCommand'), 'the expert command executes stats');
     assert.match(container.textContent, /Observed Context Reduction/i);
     assert.match(container.textContent, /3,113/);
     assert.match(container.textContent, /12,450 chars/);
@@ -406,7 +407,7 @@ describe('F7 everyday badge experience', () => {
     assert.doesNotMatch(container.textContent, /Savings & Usage Breakdown/);
   });
 
-  it('handles missing provider usage and unpriced models honestly in the savings view (F6 Slice 2)', async () => {
+  it('handles missing provider usage and unpriced models honestly in the expert stats command result (F6)', async () => {
     await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {
       level: 'truncate',
       totalSavedTokens: 0,
@@ -416,7 +417,8 @@ describe('F7 everyday badge experience', () => {
       estimates: null,
     });
     await open();
-    await click(button('View savings'));
+    const stats = [...container.querySelectorAll('button')].find(b => /\/broke\s+stats$/.test(b.textContent?.trim() ?? ''));
+    assert.ok(stats); await click(stats);
 
     assert.match(container.textContent, /Awaiting next API call or not reported by current provider/i);
     assert.match(container.textContent, /No input rate registered for current model/i);
@@ -672,26 +674,21 @@ describe('H1 quick commands in the badge overlay', () => {
     assert.doesNotMatch(container.textContent!, /ran broke/, 'the stale result is gone too');
   });
 
-  it('supports interactive 3-step onboarding with readiness check and Command Studio launch', async () => {
+  it('introduces everyday use without requiring Command Studio and keeps expert command access', async () => {
     await mount(true, applyPreset(DEFAULT_CONFIG, 'normal'), {}, false);
     await open();
 
-    assert.match(container.textContent!, /Step 1: Choose your operating approach/);
-    await click(button('2. Readiness'));
-    assert.match(container.textContent!, /Step 2: Verify readiness in one click/);
-    await click(button('Run Readiness Check Now'));
-    assert.ok(calls.includes('getSetupReadiness'), 'onboarding step 2 triggers setup readiness check');
-
-    await click(button('3. Command Studio'));
-    assert.match(container.textContent!, /Step 3: Every command is clickable in the UI/);
-    await click(button('Try: Check Search Index'));
-    assert.match(container.textContent!, /ran broke index status/);
-
-    await click(button('Explore All Commands'));
+    const guide = container.querySelector('[aria-label="Getting started"]');
+    assert.ok(guide);
+    assert.match(guide.textContent!, /Balanced shortens older technical output/);
+    assert.doesNotMatch(guide.textContent!, /Command Studio/);
+    assert.equal(calls.includes('runCommand'), false);
+    await click(button('Skip introduction'));
+    await click(button('Open Command Studio (All Commands)'));
     const advanced = [...container.querySelectorAll('details')].find((node) =>
       /Advanced settings and diagnostics/i.test(node.querySelector('summary')?.textContent ?? ''),
     );
-    assert.equal(advanced?.open, true, 'Explore All Commands opens the Command Studio disclosure');
+    assert.equal(advanced?.open, true, 'expert command access opens the Command Studio disclosure');
   });
 
   it('executes parameterized commands and universal commands from the Command Studio', async () => {

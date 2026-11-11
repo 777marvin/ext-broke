@@ -190,7 +190,7 @@
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium">Compression pipeline</p>
         <Checkbox
-          label="Enable broke"
+          label="Enable Broke"
           checked={cfg.enabled ?? true}
           onChange={(checked) => updateConfig({ ...config, enabled: checked })}
         />
@@ -569,7 +569,7 @@
           onChange={(checked) => updateConfig({ ...config, ui: { ...uiCfg, showMessageMenu: checked } })}
         />
         <Checkbox
-          label="Record every compression run to measure.jsonl"
+          label="Record run history"
           checked={statsCfg.measure ?? true}
           onChange={(checked) => updateConfig({ ...config, stats: { ...statsCfg, measure: checked } })}
         />

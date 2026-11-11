@@ -77,6 +77,15 @@ contain facts the agent needs, so review lossy settings for your workload.
 
 - Broke: `/broke stats`, the 💸 badge: chars/4 heuristic, honest
   estimates, per task.
+- Broke: the badge's **Context Press → Statistics** view shows recorded net
+  reduction and step contributions, with characters or rounded estimated tokens
+  (`Math.round(chars / 4)`). This task is the default; Retained history explicitly
+  selects the installation's bounded ledger. Pages contain 60 runs, while totals
+  cover the full selected retained scope. Net can be negative and step counters
+  can overlap. Cached provider tokens and avoided-context estimates remain
+  separate from measured net. Record run history takes effect after Save and
+  records future runs only; it cannot backfill missing history. See
+  [Context Press](features.md#context-press-and-recorded-statistics).
 - Broke: `/broke measure` (in a task) or `npm run measure` (extension
   directory): the measurement ledger `measure.jsonl` aggregates per-run
   sizes and per-pass removals into observed real-session character counts - runs,

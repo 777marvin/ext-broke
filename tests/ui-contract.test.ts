@@ -91,8 +91,8 @@ describe('vendored host UI contract (BRK-024)', () => {
     const statusBadge = readFileSync('StatusBadge.jsx', 'utf8');
     assert.match(statusBadge, /'getConfig'/, 'the overlay loads the config via the getConfig action');
     assert.match(statusBadge, /'setConfig'/, 'the overlay saves via the setConfig action');
-    assert.match(statusBadge, /Context savings for every task/, 'the badge carries the plain-language settings entry point');
-    assert.match(statusBadge, /Instrument Cockpit/, 'the badge renders the Precision Instrument Cockpit header');
+    assert.match(statusBadge, /Broke · Context Press/, 'the badge carries the selected Context Press entry point');
+    assert.match(statusBadge, /BROKE_CONTEXT_PRESS_UI/, 'the new visual surface is assembled through the shared template loader');
     assert.match(statusBadge, /Command Studio/, 'the badge includes the full Command Studio');
   });
 

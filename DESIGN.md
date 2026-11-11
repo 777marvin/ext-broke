@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: "Broke"
-description: "A calm context-budget instrument for AiderDesk that makes automatic savings understandable without hiding expert control."
+description: "Context Press makes compression depth visible and recorded reductions inspectable without hiding expert control."
 colors:
   ink: "#111111"
   text: "#34424A"
@@ -13,6 +13,13 @@ colors:
   warning: "#7A5512"
   danger: "#8A2D24"
   optimizing: "#7030A0"
+  press-paper: "#F0F3FF"
+  press-ink: "#1C2451"
+  press-action: "#3456EC"
+  press-lavender: "#CAD2FF"
+  press-protection: "#72DBCF"
+  press-contribution: "#9B81DE"
+  press-canvas: "#202C61"
 typography:
   sans:
     fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
@@ -40,10 +47,10 @@ components:
 
 ### Creative North Star
 
-Broke should feel like a trustworthy instrument panel: one unmistakable state,
-one recommended operating choice, and deeper controls available only when the
-operator asks for them. The money badge is the compact instrument; its dialog
-is the readable inspection panel.
+Broke should make the next-call payload understandable through a visible
+material metaphor: a context stack becomes a compact packet. The existing
+money badge stays the compact entry point. Context Press provides a Control
+view for choosing compression depth and a Statistics view for recorded evidence.
 
 ### Product context and register
 
@@ -57,41 +64,49 @@ is the readable inspection panel.
 - **Usage scene:** A small status badge and a compact modal used during coding
   tasks, usually on desktop.
 - **Register:** Product utility. Clarity and reliable state feedback lead.
-- **Memorable signature:** A single colored status dot paired with a complete
-  sentence; color never carries meaning alone.
-- **Restraint:** No decorative motion, dashboards, or dense metrics in the
-  everyday view. Technical measurements live behind disclosure.
+- **Memorable signature:** An indigo context press with visible protection rails,
+  native depth choices and a plain-language state; color never carries meaning alone.
+- **Restraint:** The press is a qualitative illustration. Replay is explicit,
+  brief and decorative; it never generates a summary or previews task content.
+  Recorded measurements have their own tab, separate from the draft controls.
 - **Anti-references:** Terminal help screens disguised as dialogs; unexplained
   emoji-only state; generic analytics dashboards; warning-heavy setup screens.
-- **Token ownership/runtime mapping:** This file records the existing inline
-  visual vocabulary. `StatusBadge.jsx` is the runtime owner for the badge and
-  its dialog. `ConfigComponent.jsx` uses AiderDesk's supplied controls and is
-  the expert configuration surface.
+- **Token ownership/runtime mapping:** `scripts/context-press-style.js` owns
+  Context Press's runtime tokens and styles, scoped to `.broke-context-press`.
+  `scripts/context-press-ui.jsx` supplies its controls and charts inside
+  `StatusBadge.jsx`; `scripts/ui-template-source.cjs` assembles these fragments
+  with the shared draft helper. `StatusBadge.jsx` retains the compact badge,
+  native modal lifecycle and advanced commands. `ConfigComponent.jsx` keeps
+  AiderDesk's supplied controls as the expert configuration surface.
 
 ## Colors
 
-White surfaces and dark neutral text preserve the host application's utility
-register. Blue is the interactive accent and ready state. Green means measured
-work completed, amber means an optional capability needs attention, and red is
-reserved for disabled or failed states. Every semantic color is paired with
-text. High-contrast and forced-color rendering may fall back to system colors.
+Context Press pairs cool paper (`#F0F3FF`) and ink (`#1C2451`) with an indigo
+material canvas (`#202C61`). Action blue (`#3456EC`) marks interactive selection;
+lavender layers, teal protection rails and violet contributions support the
+material metaphor. Existing status colors retain their text labels. The
+current Broke icon is retained; this is not a new brand or logo. Forced-color
+rendering may use system colors.
 
 ## Typography
 
-Use the host-compatible system sans stack for all controls and explanations.
-Use the monospace stack only for literal commands, paths, or machine values in
-the expert surface. Headings use weight rather than a separate display face so
-the extension remains visually native inside AiderDesk.
+Use local system sans fallbacks for controls and explanations, Bahnschrift /
+Segoe UI for display headings, and system monospace for machine values and
+commands. No remote fonts, chart libraries or new dependencies are required.
 
 ## Layout
 
-The badge stays compact, showing an inline context micro-gauge during initial observation before savings begin, while the full Cockpit modal provides continuous budget tracking. The dialog is a 540 px Precision Instrument Cockpit column with a 95vw cap and internal scrolling. The sequence is cockpit telemetry header, status and context-budget gauge card, interactive 3-step onboarding (when active), everyday controls, common actions, structured result inspector, advanced disclosure + Full Command Studio, then save/cancel. Controls must remain reachable at narrow widths; three common actions may wrap or compress without truncating their labels.
+The badge stays compact, including its observation micro-gauge. Context Press
+uses the existing native dialog, capped at 980 CSS px and `100vw - 24px`, with
+height capped at `100dvh - 24px`. The header, Control / Statistics tabs and
+Save / Cancel footer stay outside the scrolling body. Below 760px the press
+sits above compact depth choices; below 420px spacing and controls adapt again.
+Expanded Advanced content and result feedback scroll without hiding the footer.
 
 ## Elevation & Depth
 
 Use one restrained modal shadow and thin borders. Status cards use tinted flat
-surfaces rather than extra elevation. Nested cards and ornamental gradients are
-out of scope.
+surfaces. Layered material depth belongs inside the indigo press illustration.
 
 ## Components
 
@@ -108,21 +123,33 @@ Contains a dot, a short heading, and one corrective or reassuring sentence.
 Supported everyday states are ready, saving, compressing, optional local setup needed, off,
 and action failure.
 
-### Savings approach
+### Compression depth and drafts
 
 Both settings surfaces use the same synchronous draft reducer assembled into
 their standalone templates by `scripts/ui-template-source.cjs`. Draft edits
 preserve other changes from the same render and mark preset-owned edits Custom.
 Preset values remain owned by `presets.ts`; edits do not add network round trips.
 
-The native select is intentional: the host/operating-system popup is accepted.
-Options are outcome-focused: Safe, Balanced, Maximum savings, and Custom.
-Balanced is the recommended default.
+Native radio inputs select the last included step: Clean maps to Safe / `short`,
+Trim to Balanced / `normal`, and Summarize to Maximum savings / `long`. These
+are cumulative canonical presets, not independent pass toggles. Balanced is
+the recommended default. Existing Custom settings keep their actual depth
+without falsely selecting a named preset. Choosing a stage explicitly applies
+that preset's owned fields and preserves backend, cache, autonomy and consent.
+
+Enable Broke, automation policy and history recording remain separate settings.
+The press reflects draft depth and enablement, not measured capacity or a pass
+that has already run. Replay changes only the illustration and respects reduced
+motion. Edits require Save; the footer shows saved versus unsaved state and
+retains the draft on a failed save. Cancel discards draft edits. A dirty close
+or Escape offers Keep editing / Discard changes with focus restoration.
+
+Native selects in Statistics, Advanced and the expert panel are intentional:
+the host/operating-system popup is accepted.
 
 ### Advanced disclosure & Command Studio
 
-Uses native `details`/`summary`, starts closed (and can also be toggled via the
-Cockpit's `Open Command Studio` button), and retains all technical controls plus
+Uses native `details`/`summary`, starts closed, and retains technical controls plus
 the full **Command Studio**. Every valid `/broke` command is executable from the
 UI: one-click commands are organized by category (`Diagnostics`, `Snapshots &
 Flush`, `Search & Slice`, `Pipeline & Archives`, `Config & Updates`), and
@@ -132,6 +159,10 @@ provide dedicated input builders alongside a universal `/broke` command bar.
 `ConfigComponent.jsx` mirrors this capability with an embedded Interactive
 Command & Maintenance Deck and full schema coverage (`slice.*`,
 `truncate.tools`, `ui.showMessageMenu`).
+
+Advanced commands execute immediately through their existing action path.
+Their results and confirmations are separate from the settings draft; Cancel
+does not undo an executed command.
 
 ### Feedback and safety
 
@@ -172,16 +203,43 @@ control's focus. Modal content scrolls internally; focus rings remain visible,
 closed advanced controls stay out of the focus loop, and reduced-motion users
 receive a static activity dot.
 
-### Honest savings breakdown (F6)
+### Recorded Statistics
 
-When inspecting savings (via "View savings" or diagnostics), the UI strictly separates:
+View savings opens Statistics. Its read-only `getStatistics` action resolves
+the current task from the host; the renderer supplies only scope and page.
+This task is the default; Retained history must be selected explicitly and
+means the installation's retained ledger, not one project or unlimited history.
+No task produces a no-task state rather than silently substituting global data.
 
-1. Observed conversation reduction (measured character delta from the message pipeline; tokens estimated via chars / 4).
-2. Provider-reported usage (actual sent, cache-read, and cache-written tokens from the model API).
-3. Modeled monetary estimates (dollar savings calculated from task model input rates).
-4. Avoided context (counterfactuals like slicing, flushing, and search snippets, labeled outside measured totals).
+By step shows independent Clean, Errors & logs, Trim and Summarize contribution
+bars with an inspectable explanation and table. Contributions can overlap.
+Net reduction is signed before-minus-after; negative values mean added context.
+Reconciliation retains the difference between net and known contributions and
+is unavailable for incomplete attribution. Over time shows chronological runs
+on pages of 60, starting with the latest page; totals cover the full selected
+retained scope, not just the visible page. A selected run shows its sizes and
+contributions. Characters are measured; estimated tokens use `Math.round(chars / 4)`
+after aggregation. Totals sum calls that may repeat the same evolving material.
 
-A mandatory honest notice states that a measurement ledger does not prove a billed saving.
+Provider usage & avoided context stays collapsed and separate from measured
+net. It contains cached current-task counters only: last available completed-call
+sent/cache tokens, plus slicing/search/flush estimates. Provider values always
+remain tokens and are not attributed to a selected run or summed over retained
+history. Missing fields remain unavailable. These numbers do not prove billing
+reduction, exact tokenizer output or summary quality.
+
+Record run history edits the existing persisted `stats.measure` preference.
+After Save, disabling it stops future records, keeps existing records and does
+not disable compression. Missing earlier runs cannot be reconstructed.
+
+`ui-statistics.ts` bounds reads to four known ledger files, 20 MiB and 100,000
+physical lines; ordinary rotation retains a 5 MiB current file plus three
+rotations. The query uses a snapshot for at most two seconds and invalidates it
+after new measurements or reset. Statistics refresh only while visible, at most
+every five seconds, with stale-response protection and Retry. Loading, empty,
+no-task, partial and read-error states remain distinct. Missing counters never
+become measured zero; a failed refresh preserves the last valid chart with a
+stale notice. A safety-limit error does not claim full totals.
 
 ## Accessibility
 

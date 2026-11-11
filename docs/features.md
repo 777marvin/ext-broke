@@ -6,6 +6,62 @@ the [README](../README.md); the pipeline internals and the module map live
 in [docs/overview.md](overview.md); the tuning matrices are in
 [docs/tuning.md](tuning.md).
 
+## Context Press and recorded statistics
+
+The compact 💸 task badge opens Context Press inside AiderDesk's native modal.
+**Control** shows the current state and a qualitative illustration of the next-call
+payload. Choose the last included step: **Clean** is Safe (`short`), **Trim** is
+Balanced (`normal`), and **Summarize** is Maximum savings (`long`). Each choice
+includes the earlier steps and applies the existing canonical preset to a draft.
+An existing Custom configuration stays Custom until a preset is chosen; backend,
+cache and automation settings remain intact. Enable Broke is a separate switch.
+
+Save applies the draft extension-wide. Cancel discards it; closing a dirty draft
+offers Keep editing / Discard changes. A failed save retains the draft for retry.
+The footer stays visible while the body scrolls. Replay only animates the stack,
+respects reduced motion and makes no model request. Check setup reads metadata
+for the displayed settings without generating a summary. The short introduction
+can be skipped and reopened through Setup guide.
+
+Advanced retains technical settings and the complete Command Studio, including
+parameterized builders and the universal command bar. These commands execute
+immediately with their existing confirmations; Cancel does not undo them. The
+full extension settings panel remains the expert surface with host controls.
+
+**Statistics** reads the real measurement ledger, independently of the selected
+draft preset. This task is the default scope. Retained history must be chosen
+explicitly and covers the installation's currently retained records, across
+tasks and projects. With no current task, select that broader scope explicitly.
+
+- **By step:** Clean, Errors & logs, Trim and Summarize contributions, with
+  explanations and a table. Contributions can overlap and are not additive shares.
+- **Over time:** chronological run bars, run inspection and Older / Newer pages
+  of 60 runs. Totals cover the full selected retained scope, not only that page.
+- **Net reduction:** measured characters before minus after. A negative value
+  means added context. Reconciliation shows net minus known step contributions;
+  incomplete attribution remains unavailable rather than measured zero.
+- **Units:** characters or estimated tokens (`Math.round(characters / 4)`).
+  Aggregate character totals are converted once. Calls may contain repeated
+  evolving context, so their sum is not unique material removed forever.
+
+Provider usage & avoided context is a separate collapsed disclosure. It shows
+cached counters for the current task: provider-reported tokens from the last
+available completed call and slicing/search/flush estimates. Usage always stays
+in tokens; these counters are not the selected run's saving and are not summed
+across retained history. Missing provider/cache values remain unavailable.
+
+Record run history edits `stats.measure`. Save controls future recording only:
+turning it off keeps existing records and leaves compression enabled; turning
+it on does not backfill missing runs. Ordinary rotation retains a current 5 MiB
+ledger and three rotations. The UI query additionally caps reads at four known
+files, 20 MiB and 100,000 physical lines, and reports a limit error rather than
+calling partial totals complete. Statistics refresh only while visible, at most
+every five seconds. Loading, no-task, empty, partial and read-error states are
+distinct; Retry is available, and failed refreshes label a retained chart stale.
+
+Neither the illustration, estimated tokens, recorded reductions nor provider
+usage guarantees summary quality or a billing reduction.
+
 ## Cache-friendly mode (provider prompt cache)
 
 The current code models Anthropic cache writes at 1.25x and reads at 0.1x,

@@ -15,7 +15,8 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Added
 
-- Precision Instrument Cockpit in `StatusBadge.jsx`: telemetry header (mode, level, autonomy, runs), live Context Budget Gauge with per-pass token breakdown, and interactive 3-step onboarding flow.
+- Context Press behind the compact task badge, with Control and Statistics tabs, cumulative Clean / Trim / Summarize depth choices mapped to the existing canonical presets, preserved Custom settings, a qualitative Replay illustration, and a native modal with a fixed Save / Cancel footer. Draft edits preserve configured backend and automation policy; advanced commands keep their immediate execution behavior, separate from Cancel.
+- Recorded Statistics with task and explicitly selected retained-history scopes, per-step contributions and signed net reduction, 60-run timeline pages, characters or rounded estimated tokens, and separate cached provider/avoided-context counters. The read-only query bounds ledger reads to four files, 20 MiB and 100,000 physical lines, distinguishes missing/partial/unreadable data, and never generates a summary. Record run history uses the existing persisted `stats.measure` preference for future records only; retained history is bounded and is not a billing or quality guarantee.
 - Full Command Studio covering 100% of `/broke` commands across diagnostics, snapshots, flush, local search, ST-slicing, pipeline modes, and configuration with 2-step confirmation for mutating actions and execution indicators.
 - Interactive Command & Maintenance Deck and per-tool truncation rules editor (`truncate.tools`) in `ConfigComponent.jsx`.
 - Schema configuration support for ST-Slicing (`slice.*`), per-tool truncation (`truncate.tools`), search ignored files (`search.includeGitIgnored`), and per-message menu toggle (`ui.showMessageMenu`).

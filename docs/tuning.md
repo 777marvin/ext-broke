@@ -103,13 +103,26 @@ A practical playbook:
 
 ## The settings dialog
 
-The badge gear (⚙) opens the everyday view: a plain-language status,
-**Savings approach** (`Safe / Balanced / Maximum savings / Custom`) and the
-three common actions **Check setup**, **View savings** and
-**Why no savings yet?**. Balanced is the recommended default and needs no
-extra software. The technical controls and command grid start closed under
-**Advanced settings and diagnostics**; the full settings panel remains the
-expert surface.
+The badge gear (⚙) opens **Context Press**, with **Control** and **Statistics**
+tabs. Control shows a plain-language status and cumulative depth choices:
+**Clean** (Safe), **Trim** (Balanced), and **Summarize** (Maximum savings).
+Choose the last included step, then Save. Balanced needs no extra software.
+Existing Custom settings stay Custom until a preset is chosen. The stack is a
+qualitative illustration; Replay only animates it. Check setup and View savings
+remain available. Technical controls and the complete Command Studio start
+closed under **Advanced settings and diagnostics**; the full settings panel
+remains the expert surface. Advanced commands execute immediately and Cancel
+does not undo their effects.
+
+Statistics shows recorded history by step or over time, in characters or rounded
+estimated tokens. It defaults to This task; Retained history explicitly selects
+the installation's rotation-bounded ledger. Timeline pages show 60 runs, while
+totals cover the full selected retained scope. Net reduction is signed, step
+contributions can overlap, and repeated context may appear in multiple calls.
+Record run history edits `stats.measure`: Save affects future records only,
+without deleting retained data or reconstructing missing runs. Provider usage
+and avoided context remain separate cached task counters. See
+[the statistics definitions](features.md#context-press-and-recorded-statistics).
 
 Check setup evaluates the displayed settings without saving them. For local
 Maximum savings it reads Ollama metadata and distinguishes an unreachable
@@ -132,9 +145,11 @@ savings (`mode long` or `config set mode long`, any quoting that actually
 persists) shows the Ollama/cloud cost and consent guidance BEFORE the
 write; invalid spellings are reported as a rejection, never as pending
 Long guidance. The full settings panel retains cache controls and their
-inline tooltips. Cancel and Escape dismiss the badge dialog during
-loading, previewing, or errors, but are blocked while a save is in
-progress to avoid implying that an in-flight write was cancelled.
+inline tooltips. Cancel discards draft settings; Escape or the close control
+offers Keep editing / Discard changes when the draft is dirty. The native
+modal's Save / Cancel footer stays visible while the body scrolls. Closing is
+blocked during a save or command execution so it cannot imply that an in-flight
+operation was cancelled. Failed saves retain the draft for retry.
 
 `/broke measure` reports escape rewrites plus the provider-reported cache
 tokens (writes / reads / billed).

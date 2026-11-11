@@ -59,6 +59,7 @@ import {
 } from './slice';
 import { runSelfTest } from './selftest';
 import { checkSetupReadiness, deriveSetupReadiness, dismissSetup, loadSetupState } from './setup';
+import { StatisticsError, StatisticsService, validateStatisticsQuery } from './ui-statistics';
 import {
   buildFlushPlan,
   buildStateMessage,
@@ -299,6 +300,7 @@ export default class Broke implements Extension {
   private readonly statsByTask = new Map<string, TaskStats>();
   /** TTL-cached reads of stats.jsonl - a badge refresh must not re-scan 5 MB per tick. */
   private readonly statsLoader: StatsLoader = createStatsLoader();
+  private readonly statisticsService = new StatisticsService();
   private readonly lastPersistAt = new Map<string, number>();
   private readonly lastLogAt = new Map<string, number>();
   private readonly summarizeFailures = new Map<string, number>();
@@ -2068,6 +2070,25 @@ export default class Broke implements Extension {
    * exists, so a click died silently and looked like a broken extension.
    */
   async executeUIExtensionAction(_componentId: string, action: string, args: unknown[], context: ExtensionContext): Promise<unknown> {
+    if (action === 'getStatistics') {
+      try {
+        if (args.length !== 1) throw new StatisticsError('invalid-query');
+        const query = validateStatisticsQuery(args[0]);
+        // Resolve this supplied host context once; never borrow another task
+        // from the extension's onLoad context or re-read conversation content.
+        const task = query.scope === 'task' && typeof context?.getTaskContext === 'function' ? context.getTaskContext() : null;
+        const taskId = typeof task?.data.id === 'string' && task.data.id.length ? task.data.id : null;
+        const stats = taskId ? this.statsByTask.get(taskId) ?? this.statsLoader.peek(taskId) : null;
+        const usage = (taskId ? this.lastUsageByTask.get(taskId) : null) ?? stats?.lastUsage ?? null;
+        return await this.statisticsService.query(query, taskId, getConfig().stats.measure, {
+          providerUsage: usage,
+          avoidedChars: { slice: stats?.savedChars?.slice, search: stats?.estimates?.search, flush: stats?.estimates?.flush },
+        });
+      } catch (error) {
+        const failure = error instanceof StatisticsError ? error : new StatisticsError('read-failed');
+        return { error: { code: failure.code, message: failure.message } };
+      }
+    }
     if (action === 'refresh') this.refreshUI();
     if (action === 'getConfig') return getConfig();
     if (action === 'getSetupState') return loadSetupState();

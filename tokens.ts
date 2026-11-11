@@ -11,6 +11,10 @@ import { cacheAdjustedSavedUsd, savedCostUsd } from './pricing';
 export const STATS_PATH = process.env.BROKE_STATS_PATH ?? join(runtimeDir(), 'ledgers', 'stats.jsonl');
 export const MEASURE_PATH = process.env.BROKE_MEASURE_PATH ?? join(runtimeDir(), 'ledgers', 'measure.jsonl');
 
+// Read-only UI snapshots expire immediately after a locally recorded run/reset.
+let measureRevision = 0;
+export function measurementRevision(): number { return measureRevision; }
+
 /**
  * Token estimation. chars/4 is a deliberately crude heuristic (English prose
  * ≈ 4 chars/token; code ≈ 3-3.5). Broke never claims provider-exact numbers
@@ -208,6 +212,7 @@ export function persistStats(stats: TaskStats, filePath: string = STATS_PATH): v
  * including project paths, is actually deleted from disk).
  */
 export function clearTaskStats(taskId: string, filePath: string = STATS_PATH): void {
+  measureRevision++;
   try {
     // A real reset must reach rotated files too (XF15): the task's newest
     // line may live in a rotation when the main file was rotated since.
@@ -292,6 +297,8 @@ export interface StatsLoader {
    * scans the whole stats.jsonl synchronously (up to 5 MB).
    */
   get(taskId: string): TaskStats | null;
+  /** Existing metadata only; never opens a ledger (statistics disclosure). */
+  peek(taskId: string): TaskStats | null;
   /** Drop the cache for a task (after /broke reset cleared the persisted lines). */
   invalidate(taskId: string): void;
 }
@@ -308,6 +315,9 @@ function boundedCacheSet<K, V>(map: Map<K, V>, key: K, value: V, max = 500): voi
 export function createStatsLoader(filePath: string = STATS_PATH, ttlMs: number = 30_000): StatsLoader {
   const cache = new Map<string, { at: number; stats: TaskStats | null }>();
   return {
+    peek(taskId) {
+      return cache.get(taskId)?.stats ?? null;
+    },
     get(taskId) {
       const hit = cache.get(taskId);
       if (hit && Date.now() - hit.at < ttlMs) return hit.stats;
@@ -446,6 +456,7 @@ export function buildRunRecord(taskId: string, report: CompressReport, lastUsage
 /** Append one run record to the measurement ledger (rotation-capped, best effort). */
 export function persistRunRecord(record: RunRecord, filePath: string = MEASURE_PATH, maxBytes: number = MAX_MEASURE_FILE_BYTES): void {
   appendJsonLine(filePath, JSON.stringify(record), maxBytes);
+  measureRevision++;
 }
 
 /** Load all run records (oldest first, incl. rotated files). Malformed lines are skipped. */
