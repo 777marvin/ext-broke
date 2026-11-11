@@ -17,7 +17,10 @@ export type StatisticsTaskExtras = {
 export type StatisticsPage = {
   scope: 'task' | 'retained'; state: 'ready' | 'empty' | 'no-task' | 'partial';
   recordingEnabled: boolean; generatedAt: number; retainedFrom: number | null; retainedTo: number | null;
-  skippedRecords: number; unknownPassRecords: number;
+  /** Skipped records that count here: all of them in retained scope, only this task's records otherwise. */
+  skippedRecords: number;
+  /** Skipped ledger lines no task can be derived from (unparseable). Always global, never task-scoped. */
+  unattributedRecords: number; unknownPassRecords: number;
   summary: null | { runs: number; charsBefore: number; charsAfter: number; netChars: number;
     passChars: PassChars; reconciliationChars: number | null };
   page: number; pageSize: 60; totalRuns: number; taskExtras: StatisticsTaskExtras | null; runs: StatisticsRun[];
@@ -84,14 +87,20 @@ export class StatisticsService {
   async query(rawQuery: unknown, taskId: string | null | undefined, recordingEnabled: boolean, extras: unknown): Promise<StatisticsPage> {
     const query = validateStatisticsQuery(rawQuery);
     const base: StatisticsPage = { scope: query.scope, state: 'empty', recordingEnabled, generatedAt: this.now(),
-      retainedFrom: null, retainedTo: null, skippedRecords: 0, unknownPassRecords: 0, summary: null,
+      retainedFrom: null, retainedTo: null, skippedRecords: 0, unattributedRecords: 0, unknownPassRecords: 0, summary: null,
       page: 0, pageSize: 60, totalRuns: 0, taskExtras: null, runs: [] };
     if (query.scope === 'task' && !taskId) return { ...base, state: 'no-task' };
     const snapshot = await this.snapshot();
     const rows = query.scope === 'retained' ? snapshot.rows : snapshot.rows.filter(row => row.taskId === taskId);
     base.generatedAt = snapshot.generatedAt;
     base.taskExtras = query.scope === 'task' ? taskExtras(extras) : null;
-    base.skippedRecords = snapshot.skipped.filter(id => query.scope === 'retained' || id === null || id === taskId).length;
+    // A task scope only counts records attributable to it: an unparseable line
+    // is pushed with a null task id and belongs to no task, so it must not flip
+    // a clean task to 'partial'. Retained scope reports every skipped record,
+    // with the unattributable part broken out separately.
+    base.skippedRecords = query.scope === 'retained' ? snapshot.skipped.length
+      : snapshot.skipped.filter(id => id === taskId).length;
+    base.unattributedRecords = snapshot.skipped.filter(id => id === null).length;
     base.unknownPassRecords = rows.filter(row => row.reconciliationChars === null).length;
     base.totalRuns = rows.length;
     base.state = base.skippedRecords || base.unknownPassRecords ? 'partial' : rows.length ? 'ready' : 'empty';

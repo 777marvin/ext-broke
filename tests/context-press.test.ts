@@ -21,7 +21,7 @@ let calls: Array<{ name: string; args: any[] }>;
 let action: (name: string, ...args: any[]) => Promise<any>;
 const sample = (scope = 'task', netChars = 200) => ({
   scope, state: 'ready', recordingEnabled: true, generatedAt: 10, retainedFrom: 1, retainedTo: 2,
-  skippedRecords: 0, unknownPassRecords: 0, page: 0, pageSize: 60, totalRuns: 2,
+  skippedRecords: 0, unattributedRecords: 0, unknownPassRecords: 0, page: 0, pageSize: 60, totalRuns: 2,
   summary: { runs: 2, charsBefore: 1600, charsAfter: 1600 - netChars, netChars,
     passChars: { structural: 100, error: 20, truncate: 300, summarize: 0 }, reconciliationChars: netChars - 420 },
   taskExtras: null,
@@ -142,6 +142,25 @@ describe('Context Press recorded statistics', () => {
     const panel = container.querySelector('[aria-labelledby="broke-statistics-tab"]')!;
     assert.doesNotMatch(panel.textContent!, /249,?999|999,?999/);
     assert.equal(container.querySelector<HTMLSelectElement>('select[aria-label="Statistics scope"]')!.value, 'retained');
+  });
+  it('does not report a clean task as partial for ledger lines it cannot attribute', async () => {
+    await mount(); const base = action;
+    action = (name, ...args) => name === 'getStatistics'
+      ? Promise.resolve({ ...sample(args[0].scope), unattributedRecords: 3 })
+      : base(name, ...args);
+    await click(tab('Statistics'));
+    const panel = container.querySelector('[aria-labelledby="broke-statistics-tab"]')!;
+    assert.doesNotMatch(panel.textContent!, /Partial data/);
+    assert.match(panel.textContent!, /3 ledger lines could not be attributed to a task and are excluded from this task/);
+  });
+  it('still flags partial data for skipped records that belong to the task', async () => {
+    await mount(); const base = action;
+    action = (name, ...args) => name === 'getStatistics'
+      ? Promise.resolve({ ...sample(args[0].scope), state: 'partial', skippedRecords: 2, unattributedRecords: 3 })
+      : base(name, ...args);
+    await click(tab('Statistics'));
+    const panel = container.querySelector('[aria-labelledby="broke-statistics-tab"]')!;
+    assert.match(panel.textContent!, /Partial data: 2 malformed records skipped/);
   });
   it('distinguishes read failure from empty data and retries without writing config', async () => {
     await mount(); const base = action; let fail = true;

@@ -241,7 +241,11 @@ rotations. The query uses a revision-authoritative snapshot: it is reused while
 reset, so a five-second poll costs one integer comparison instead of re-reading
 and re-aggregating the ledger. Statistics refresh only while visible, at most
 every five seconds, with stale-response protection and Retry. Loading, empty,
-no-task, partial and read-error states remain distinct. Missing counters never
+no-task, partial and read-error states remain distinct. Skip counts are
+scope-aware: a task scope counts only records attributable to that task, so an
+unparseable ledger line cannot mark a clean task partial, while retained scope
+reports every skipped record and names the unattributable share separately.
+Missing counters never
 become measured zero; a failed refresh preserves the last valid chart with a
 stale notice. A safety-limit error does not claim full totals.
 

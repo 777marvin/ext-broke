@@ -56,12 +56,16 @@ it on does not backfill missing runs. Ordinary rotation retains a current 5 MiB
 ledger and three rotations. The UI query additionally caps reads at that
 four-file rotation ceiling - about 20 MiB, since a rotated file may hold one
 record past its 5 MiB trigger - and 250,000 physical lines, and reports a limit
-error rather than calling partial totals complete. Statistics refresh only while visible, at most
-every five seconds. The query reuses its snapshot while `measurementRevision()` is
-unchanged and re-reads the ledger only after a recorded run or a reset, so an
-unchanged ledger costs one comparison, not a full re-parse. Loading, no-task, empty, partial and read-error states are
-distinct; Retry is available, and failed refreshes label a retained chart stale.
-The snapshot is not a freshness guarantee for writes made outside the extension.
+error rather than calling partial totals complete. Statistics refresh only
+while visible, at most every five seconds. The query reuses its snapshot while
+`measurementRevision()` is unchanged and re-reads the ledger only after a
+recorded run or a reset, so an unchanged ledger costs one comparison instead of
+a full re-parse; a ledger changed outside the extension is not a freshness
+source. Skipped-record counts follow the selected scope: `This task` counts only
+records attributable to the open task, ledger lines no task can be derived from
+are reported on their own line, and `Retained history` reports the full skipped
+count. Loading, no-task, empty, partial and read-error states are distinct;
+Retry is available, and failed refreshes label a retained chart stale.
 
 Neither the illustration, estimated tokens, recorded reductions nor provider
 usage guarantees summary quality or a billing reduction.

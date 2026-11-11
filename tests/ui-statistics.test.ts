@@ -95,7 +95,22 @@ describe('bounded read-only statistics', () => {
     const partial = await new StatisticsService(malformed).query({ scope: 'retained', page: 0 }, null, true, null);
     assert.equal(partial.state, 'partial');
     assert.equal(partial.skippedRecords, 3);
+    assert.equal(partial.unattributedRecords, 3);
     assert.equal(partial.totalRuns, 0);
+    // Unattributable lines belong to no task, so they must not turn a clean
+    // task into 'partial'; records attributable to another task stay out too.
+    const scoped = fixture();
+    writeFileSync(scoped, ['broken', row(1), row(2, 'b', { charsBefore: -1 })].map(value =>
+      typeof value === 'string' ? value : JSON.stringify(value)).join('\n') + '\n');
+    const cleanTask = await new StatisticsService(scoped).query({ scope: 'task', page: 0 }, 'a', true, null);
+    assert.equal(cleanTask.state, 'ready');
+    assert.equal(cleanTask.skippedRecords, 0);
+    assert.equal(cleanTask.unattributedRecords, 1);
+    assert.equal(cleanTask.totalRuns, 1);
+    const scopedRetained = await new StatisticsService(scoped).query({ scope: 'retained', page: 0 }, null, true, null);
+    assert.equal(scopedRetained.state, 'partial');
+    assert.equal(scopedRetained.skippedRecords, 2);
+    assert.equal(scopedRetained.unattributedRecords, 1);
   });
 
   it('rejects hostile queries before attempting an unreadable ledger', async () => {
