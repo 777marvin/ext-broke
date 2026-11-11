@@ -57,8 +57,11 @@ ledger and three rotations. The UI query additionally caps reads at that
 four-file rotation ceiling - about 20 MiB, since a rotated file may hold one
 record past its 5 MiB trigger - and 250,000 physical lines, and reports a limit
 error rather than calling partial totals complete. Statistics refresh only while visible, at most
-every five seconds. Loading, no-task, empty, partial and read-error states are
+every five seconds. The query reuses its snapshot while `measurementRevision()` is
+unchanged and re-reads the ledger only after a recorded run or a reset, so an
+unchanged ledger costs one comparison, not a full re-parse. Loading, no-task, empty, partial and read-error states are
 distinct; Retry is available, and failed refreshes label a retained chart stale.
+The snapshot is not a freshness guarantee for writes made outside the extension.
 
 Neither the illustration, estimated tokens, recorded reductions nor provider
 usage guarantees summary quality or a billing reduction.

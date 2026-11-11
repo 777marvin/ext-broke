@@ -115,10 +115,17 @@ export class StatisticsService {
     return base;
   }
 
+  /**
+   * The snapshot is revision-authoritative, not time-based: while
+   * measurementRevision() is unchanged a visible poll costs one integer
+   * comparison instead of re-reading and re-aggregating the whole ledger.
+   * persistRunRecord() and clearTaskStats() bump that revision, so the next
+   * poll after a recorded run or a reset reads fresh data. A ledger changed by
+   * something other than this process is therefore not a freshness source.
+   */
   private snapshot(): Promise<Snapshot> {
     const revision = measurementRevision();
-    if (this.cached && this.cached.revision === revision && this.now() - this.cached.generatedAt >= 0 &&
-        this.now() - this.cached.generatedAt < 2000) return Promise.resolve(this.cached);
+    if (this.cached?.revision === revision) return Promise.resolve(this.cached);
     if (this.pending?.revision === revision) return this.pending.promise;
     const promise = this.read(revision).then(snapshot => {
       if (measurementRevision() === revision) this.cached = snapshot;

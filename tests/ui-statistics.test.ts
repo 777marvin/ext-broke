@@ -141,24 +141,26 @@ describe('bounded read-only statistics', () => {
     await assert.rejects(new StatisticsService(overflow).query({ scope: 'task', page: 0 }, 'a', true, null), { code: 'unsafe-totals' });
   });
 
-  it('coalesces concurrent snapshots, caches for two seconds, and invalidates recorded runs and resets', async () => {
+  it('coalesces concurrent snapshots, reuses one snapshot until a revision bump, and reflects recorded runs and resets', async () => {
     const path = fixture();
     write(path, [row(1)]);
     let now = 10000;
-    let ticking = true;
-    const service = new StatisticsService(path, () => ticking ? now++ : now);
+    const service = new StatisticsService(path, () => now++);
     const [first, concurrent] = await Promise.all([
       service.query({ scope: 'task', page: 0 }, 'a', true, null),
       service.query({ scope: 'retained', page: 0 }, null, true, null),
     ]);
     assert.equal(first.generatedAt, concurrent.generatedAt);
-    ticking = false;
+    // A visible poll must not rescan the ledger: lines that appear without a
+    // measurementRevision() bump stay invisible, however old the snapshot gets.
     write(path, [row(1), row(2)]);
-    now = first.generatedAt + 1999;
-    assert.equal((await service.query({ scope: 'task', page: 0 }, 'a', true, null)).totalRuns, 1);
-    now = first.generatedAt + 2000;
-    assert.equal((await service.query({ scope: 'task', page: 0 }, 'a', true, null)).totalRuns, 2);
+    now = first.generatedAt + 600_000;
+    const polled = await service.query({ scope: 'task', page: 0 }, 'a', true, null);
+    assert.equal(polled.totalRuns, 1);
+    assert.equal(polled.generatedAt, first.generatedAt);
     const { persistRunRecord, clearTaskStats } = await import('../tokens');
+    // A recorded run bumps the revision, so the next poll sees the two lines
+    // written directly above plus the newly recorded one.
     persistRunRecord(row(3) as import('../tokens').RunRecord, path);
     assert.equal((await service.query({ scope: 'task', page: 0 }, 'a', true, null)).totalRuns, 3);
     write(path, []);
