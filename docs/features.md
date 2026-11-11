@@ -53,9 +53,10 @@ across retained history. Missing provider/cache values remain unavailable.
 Record run history edits `stats.measure`. Save controls future recording only:
 turning it off keeps existing records and leaves compression enabled; turning
 it on does not backfill missing runs. Ordinary rotation retains a current 5 MiB
-ledger and three rotations. The UI query additionally caps reads at four known
-files, 20 MiB and 100,000 physical lines, and reports a limit error rather than
-calling partial totals complete. Statistics refresh only while visible, at most
+ledger and three rotations. The UI query additionally caps reads at that
+four-file rotation ceiling - about 20 MiB, since a rotated file may hold one
+record past its 5 MiB trigger - and 250,000 physical lines, and reports a limit
+error rather than calling partial totals complete. Statistics refresh only while visible, at most
 every five seconds. Loading, no-task, empty, partial and read-error states are
 distinct; Retry is available, and failed refreshes label a retained chart stale.
 

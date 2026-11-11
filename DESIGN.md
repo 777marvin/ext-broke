@@ -232,8 +232,10 @@ Record run history edits the existing persisted `stats.measure` preference.
 After Save, disabling it stops future records, keeps existing records and does
 not disable compression. Missing earlier runs cannot be reconstructed.
 
-`ui-statistics.ts` bounds reads to four known ledger files, 20 MiB and 100,000
-physical lines; ordinary rotation retains a 5 MiB current file plus three
+`ui-statistics.ts` bounds reads to four known ledger files and 250,000 physical
+lines. That byte budget is the rotation ceiling itself, including per-file record
+headroom (about 20 MiB), because a rotated file may hold one record past its
+5 MiB trigger; ordinary rotation retains a 5 MiB current file plus three
 rotations. The query uses a snapshot for at most two seconds and invalidates it
 after new measurements or reset. Statistics refresh only while visible, at most
 every five seconds, with stale-response protection and Retry. Loading, empty,

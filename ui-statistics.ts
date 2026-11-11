@@ -1,6 +1,6 @@
 import { open, type FileHandle } from 'node:fs/promises';
 import { StringDecoder } from 'node:string_decoder';
-import { ledgerFiles, MEASURE_PATH, measurementRevision } from './tokens';
+import { ledgerFiles, MAX_MEASURE_FILE_BYTES, MAX_ROTATED_FILES, MEASURE_PATH, measurementRevision } from './tokens';
 
 export type StatisticsQuery = { scope: 'task' | 'retained'; page: number };
 type Pass = 'structural' | 'error' | 'truncate' | 'summarize';
@@ -34,8 +34,16 @@ export class StatisticsError extends Error {
 }
 
 const PASSES: Pass[] = ['structural', 'error', 'truncate', 'summarize'];
-const MAX_BYTES = 20 * 1024 * 1024;
-const MAX_LINES = 100000;
+/**
+ * `appendJsonLine` checks the file size BEFORE appending, so each of the
+ * `MAX_ROTATED_FILES + 1` files can hold one record past the rotation trigger.
+ * The read budget must cover that ceiling: a tighter cap rejects the ledger's
+ * own steady state with 'data-limit' instead of guarding against runaway data.
+ */
+const RECORD_HEADROOM_BYTES = 4 * 1024;
+export const MAX_LEDGER_READ_BYTES = (MAX_ROTATED_FILES + 1) * (MAX_MEASURE_FILE_BYTES + RECORD_HEADROOM_BYTES);
+/** The shortest record is ~194 bytes, so the byte budget allows ~108k lines. */
+export const MAX_LEDGER_READ_LINES = 250_000;
 const object = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value);
@@ -126,7 +134,7 @@ export class StatisticsService {
     const skipped: Array<string | null> = [];
     let lines = 0, bytes = 0, declaredBytes = 0;
     const consume = (line: string) => {
-      if (++lines > MAX_LINES) throw new StatisticsError('data-limit');
+      if (++lines > MAX_LEDGER_READ_LINES) throw new StatisticsError('data-limit');
       if (!line.trim()) return;
       let value: unknown;
       try { value = JSON.parse(line); } catch { skipped.push(null); return; }
@@ -154,7 +162,7 @@ export class StatisticsService {
         const stat = await handle.stat();
         if (!stat.isFile()) throw new StatisticsError('read-failed');
         declaredBytes += stat.size;
-        if (declaredBytes > MAX_BYTES) throw new StatisticsError('data-limit');
+        if (declaredBytes > MAX_LEDGER_READ_BYTES) throw new StatisticsError('data-limit');
       }
       const buffer = Buffer.alloc(64 * 1024);
       for (const handle of handles) {
@@ -168,10 +176,10 @@ export class StatisticsService {
           if (pieces[pieces.length - 1]) fragments.push(pieces[pieces.length - 1]);
         };
         for (;;) {
-          const result = await handle.read(buffer, 0, Math.min(buffer.length, MAX_BYTES - bytes + 1), null);
+          const result = await handle.read(buffer, 0, Math.min(buffer.length, MAX_LEDGER_READ_BYTES - bytes + 1), null);
           if (!result.bytesRead) break;
           bytes += result.bytesRead;
-          if (bytes > MAX_BYTES) throw new StatisticsError('data-limit');
+          if (bytes > MAX_LEDGER_READ_BYTES) throw new StatisticsError('data-limit');
           chunk(decoder.write(buffer.subarray(0, result.bytesRead)));
         }
         chunk(decoder.end());

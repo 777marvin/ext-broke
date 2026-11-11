@@ -146,9 +146,14 @@ export function modeledCounterfactualChars(stats: TaskStats): number {
 }
 
 const MAX_STATS_FILE_BYTES = 5 * 1024 * 1024;
-const MAX_MEASURE_FILE_BYTES = 5 * 1024 * 1024;
+/**
+ * Rotation trigger for `measure.jsonl`. Exported because the read-only
+ * statistics budget derives from it: each file may hold one record more than
+ * this value (appendJsonLine checks the size before appending).
+ */
+export const MAX_MEASURE_FILE_BYTES = 5 * 1024 * 1024;
 /** Rotation chain length: <file>.1 (newest) .. <file>.3 (oldest) are kept. */
-const MAX_ROTATED_FILES = 3;
+export const MAX_ROTATED_FILES = 3;
 
 /**
  * All ledger files for `filePath`, OLDEST first: <file>.3, .2, .1, <file>.

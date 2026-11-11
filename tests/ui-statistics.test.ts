@@ -7,7 +7,11 @@ import { join } from 'node:path';
 const root = mkdtempSync(join(tmpdir(), 'broke-ui-statistics-'));
 process.env.BROKE_DATA_DIR = join(root, 'data');
 let StatisticsService: (typeof import('../ui-statistics'))['StatisticsService'];
-before(async () => { ({ StatisticsService } = await import('../ui-statistics')); });
+let MAX_LEDGER_READ_BYTES: number;
+let MAX_LEDGER_READ_LINES: number;
+before(async () => {
+  ({ StatisticsService, MAX_LEDGER_READ_BYTES, MAX_LEDGER_READ_LINES } = await import('../ui-statistics'));
+});
 after(() => rmSync(root, { recursive: true, force: true }));
 let nextFixture = 0;
 function fixture() { return join(root, `ledger-${nextFixture++}.jsonl`); }
@@ -105,17 +109,32 @@ describe('bounded read-only statistics', () => {
     }
   });
 
-  it('rejects oversized files, aggregate bytes, physical lines, and unsafe aggregate totals', async () => {
+  it('reads a mature rotation chain whose files each sit one record past the rotation trigger', async () => {
+    const path = fixture();
+    // appendJsonLine checks the size BEFORE appending, so every rotated file can
+    // hold one record more than MAX_MEASURE_FILE_BYTES: the four-file chain is
+    // the ledger's normal steady state and must stay readable.
+    const worstCase = 5 * 1024 * 1024 + 400;
+    for (const file of [path, `${path}.1`, `${path}.2`, `${path}.3`]) {
+      writeFileSync(file, '');
+      truncateSync(file, worstCase);
+    }
+    const page = await new StatisticsService(path).query({ scope: 'retained', page: 0 }, null, true, null);
+    assert.equal(page.state, 'partial');
+    assert.equal(page.skippedRecords, 4);
+  });
+
+  it('rejects files, aggregate bytes, physical lines, and unsafe totals past the documented budget', async () => {
     const large = fixture();
     writeFileSync(large, '');
-    truncateSync(large, 20 * 1024 * 1024 + 1);
+    truncateSync(large, MAX_LEDGER_READ_BYTES + 1);
     await assert.rejects(new StatisticsService(large).query({ scope: 'retained', page: 0 }, null, true, null), { code: 'data-limit' });
     const aggregate = fixture();
-    writeFileSync(aggregate, ''); truncateSync(aggregate, 11 * 1024 * 1024);
-    writeFileSync(aggregate + '.1', ''); truncateSync(aggregate + '.1', 10 * 1024 * 1024);
+    writeFileSync(aggregate, ''); truncateSync(aggregate, Math.ceil(MAX_LEDGER_READ_BYTES / 2));
+    writeFileSync(aggregate + '.1', ''); truncateSync(aggregate + '.1', Math.ceil(MAX_LEDGER_READ_BYTES / 2) + 1);
     await assert.rejects(new StatisticsService(aggregate).query({ scope: 'retained', page: 0 }, null, true, null), { code: 'data-limit' });
     const lines = fixture();
-    writeFileSync(lines, '\n'.repeat(100001));
+    writeFileSync(lines, '\n'.repeat(MAX_LEDGER_READ_LINES + 1));
     await assert.rejects(new StatisticsService(lines).query({ scope: 'retained', page: 0 }, null, true, null), { code: 'data-limit' });
     const overflow = fixture();
     write(overflow, [row(1, 'a', { charsBefore: Number.MAX_SAFE_INTEGER }), row(2)]);
