@@ -16,8 +16,9 @@ includes the earlier steps and applies the existing canonical preset to a draft.
 An existing Custom configuration stays Custom until a preset is chosen; backend,
 cache and automation settings remain intact. Enable Broke is a separate switch.
 
-Save applies the draft extension-wide. Cancel discards it; closing a dirty draft
-offers Keep editing / Discard changes. A failed save retains the draft for retry.
+Save applies the draft extension-wide. Cancel, Escape and the close control close
+immediately and drop the draft; only Save changes settings. A failed save retains
+the draft for retry.
 The footer stays visible while the body scrolls. Replay only animates the stack,
 respects reduced motion and makes no model request. Check setup reads metadata
 for the displayed settings without generating a summary. The short introduction

@@ -112,7 +112,6 @@
 
   const closeOverlay = () => {
     if (savingRef.current || executingCmd) return;
-    cpSetDiscard(false);
     cpRequest.current++;
     cpFlight.current = null;
     invalidatePreview();
@@ -163,7 +162,6 @@
     restoreGuideFocus.current = false;
     setReadinessMatchesSaved(true);
     cpSetView('control');
-    cpSetDiscard(false);
     cpSetStats(null);
     cpDataKey.current = '';
     cpOriginal.current = null;
@@ -335,7 +333,7 @@
   };
 
   const dialogKeyDown = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (cpDiscard) cpKeepEditing(); else cpCloseRequest(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeOverlay(); }
     if (e.key === 'Tab') {
       const controls = (Array.from(dialogRef.current.querySelectorAll('button:not(:disabled),select:not(:disabled),input:not(:disabled),summary')) as HTMLElement[])
         .filter((el) => {
@@ -624,7 +622,7 @@
 
       {overlayOpen ? (
         <dialog className="broke-settings broke-context-press" ref={dialogRef} tabIndex={-1} aria-label="Broke settings" aria-modal="true"
-          onCancel={(event) => { event.preventDefault(); if (cpDiscard) cpKeepEditing(); else cpCloseRequest(); }}
+          onCancel={(event) => { event.preventDefault(); closeOverlay(); }}
           onKeyDown={dialogKeyDown} onClick={event => event.stopPropagation()}>
           <style>{cpCss}</style>
           <div className="cp-shell">
@@ -632,10 +630,9 @@
               <div className="cp-head-actions"><div className="cp-tabs" role="tablist" aria-label="Broke views">
                 <button type="button" id="broke-control-tab" className="cp-tab" role="tab" ref={el => { if (el) cpTabs.current[0] = el; }} aria-selected={cpView === 'control'} aria-controls="broke-control-panel" tabIndex={cpView === 'control' ? 0 : -1} onClick={() => cpSetView('control')} onKeyDown={event => cpTabKey(event, 0)}>Control</button>
                 <button type="button" id="broke-statistics-tab" className="cp-tab" role="tab" ref={el => { if (el) cpTabs.current[1] = el; }} aria-selected={cpView === 'statistics'} aria-controls="broke-statistics-panel" tabIndex={cpView === 'statistics' ? 0 : -1} onClick={() => cpSetView('statistics')} onKeyDown={event => cpTabKey(event, 1)}>Statistics</button>
-              </div><button type="button" className="cp-close" aria-label="Close settings" onClick={cpCloseRequest} disabled={saving || !!executingCmd}>×</button></div>
+              </div><button type="button" className="cp-close" aria-label="Close settings" onClick={closeOverlay} disabled={saving || !!executingCmd}>×</button></div>
             </header>
             <div className="cp-body">
-              {cpDiscard ? <section className="cp-alert" aria-label="Discard settings changes"><h2 style={{ fontSize: 17 }}>Discard your changes?</h2><p>Your saved settings stay as they are. Commands already executed cannot be undone here.</p><div className="cp-row" style={{ marginTop: 10, justifyContent: 'flex-end' }}><button type="button" ref={cpKeepRef} onClick={cpKeepEditing}>Keep editing</button><button type="button" onClick={closeOverlay}>Discard changes</button></div></section> : null}
               {overlayError ? <div className="cp-error" role="alert">{overlayError}</div> : null}
               {overlayCfg ? <>
                 {cpControlView}

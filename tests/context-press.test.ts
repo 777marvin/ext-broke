@@ -81,18 +81,23 @@ describe('Context Press control', () => {
     await click(button('Save'));
     assert.equal(persisted.mode, 'long'); assert.equal(persisted.autonomy, 'manual'); assert.equal(persisted.summarize.via, 'cloud');
   });
-  it('does not falsely select a named preset for Custom and confirms dirty Escape while Cancel discards', async () => {
+  it('does not falsely select a named preset for Custom and closes a dirty draft without a confirmation step', async () => {
     await mount({ ...DEFAULT_CONFIG, mode: 'custom', maxContextChars: 72000 });
     assert.equal(container.querySelectorAll('input[type="radio"]:checked').length, 0);
     assert.match(container.textContent!, /Custom settings/);
     await selectMode('short');
+    assert.match(container.textContent!, /Unsaved changes/);
+    // Escape is a plain close: the draft is the only thing lost, settings change on Save only.
     await React.act(async () => container.querySelector('dialog')!.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
-    assert.match(container.textContent!, /Discard your changes/);
-    await click(button('Keep editing'));
-    assert.ok(container.querySelector('dialog[open]'));
-    await click(button('Cancel'));
-    assert.equal(persisted.maxContextChars, 72000);
     assert.equal(container.querySelector('dialog'), null);
+    assert.equal(container.querySelector('[aria-label="Discard settings changes"]'), null);
+    assert.equal(persisted.maxContextChars, 72000);
+    await click(container.querySelector('button')!);
+    assert.ok(container.querySelector('dialog[open]'), 'the badge reopens the modal');
+    await click(button('Cancel'));
+    assert.equal(container.querySelector('dialog'), null, 'Cancel closes immediately as well');
+    assert.equal(persisted.maxContextChars, 72000, 'only Save changes settings');
+    assert.equal(persisted.mode, 'custom');
   });
 });
 

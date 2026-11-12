@@ -141,8 +141,9 @@ Enable Broke, automation policy and history recording remain separate settings.
 The press reflects draft depth and enablement, not measured capacity or a pass
 that has already run. Replay changes only the illustration and respects reduced
 motion. Edits require Save; the footer shows saved versus unsaved state and
-retains the draft on a failed save. Cancel discards draft edits. A dirty close
-or Escape offers Keep editing / Discard changes with focus restoration.
+retains the draft on a failed save. Cancel, Escape and the close control all
+close immediately and drop the draft: nothing is destroyed, because settings
+change only on Save and commands carry their own confirmation.
 
 Native selects in Statistics, Advanced and the expert panel are intentional:
 the host/operating-system popup is accepted.

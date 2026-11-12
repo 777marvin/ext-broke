@@ -145,11 +145,12 @@ savings (`mode long` or `config set mode long`, any quoting that actually
 persists) shows the Ollama/cloud cost and consent guidance BEFORE the
 write; invalid spellings are reported as a rejection, never as pending
 Long guidance. The full settings panel retains cache controls and their
-inline tooltips. Cancel discards draft settings; Escape or the close control
-offers Keep editing / Discard changes when the draft is dirty. The native
-modal's Save / Cancel footer stays visible while the body scrolls. Closing is
-blocked during a save or command execution so it cannot imply that an in-flight
-operation was cancelled. Failed saves retain the draft for retry.
+inline tooltips. Cancel, Escape and the close control close immediately and drop
+the draft; only Save changes settings, so closing cannot lose more than the
+draft. The native modal's Save / Cancel footer stays visible while the body
+scrolls. Closing is blocked during a save or command execution so it cannot
+imply that an in-flight operation was cancelled. Failed saves retain the draft
+for retry.
 
 `/broke measure` reports escape rewrites plus the provider-reported cache
 tokens (writes / reads / billed).

@@ -1,9 +1,6 @@
 // Assembled inside StatusBadge's function: use the existing config/setup/command owners.
 const cpOriginal = React.useRef(null as any);
 const [cpView, cpSetView] = React.useState('control');
-const [cpDiscard, cpSetDiscard] = React.useState(false);
-const cpDiscardOrigin = React.useRef(null as HTMLElement | null);
-const cpKeepRef = React.useRef(null as HTMLButtonElement | null);
 const cpTabs = React.useRef([] as HTMLButtonElement[]);
 const [cpReplay, cpSetReplay] = React.useState(false);
 const cpReplayTimer = React.useRef(null as ReturnType<typeof setTimeout> | null);
@@ -32,13 +29,6 @@ const cpPasses = [
 ];
 const cpDepth = dialogLevel === 'summarize' ? 2 : dialogLevel === 'truncate' ? 1 : 0;
 const cpModeNames = { short: 'Safe', normal: 'Balanced', long: 'Maximum savings', custom: 'Custom settings' };
-const cpCloseRequest = () => {
-  if (savingRef.current || executingCmd) return;
-  if (cpDirty) { cpDiscardOrigin.current = document.activeElement as HTMLElement; cpSetDiscard(true); }
-  else closeOverlay();
-};
-const cpKeepEditing = () => { cpSetDiscard(false); cpDiscardOrigin.current?.focus(); };
-React.useEffect(() => { if (cpDiscard) cpKeepRef.current?.focus(); }, [cpDiscard]);
 React.useEffect(() => () => { if (cpReplayTimer.current) clearTimeout(cpReplayTimer.current); }, []);
 const cpPlay = () => {
   if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
