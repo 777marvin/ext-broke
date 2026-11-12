@@ -26,7 +26,7 @@ npx @aiderdesk/extensions install -g https://github.com/777marvin/ext-broke
 
 Open any AiderDesk task. broke is active by default — the **💸 badge** shows its current state. Leave **Balanced** selected for everyday use. That's it.
 
-Click the badge to open **Context Press**. In **Control**, choose the last included step: **Clean** (Safe), **Trim** (Balanced), or **Summarize** (Maximum savings), then **Save**. Each depth includes the earlier steps. Existing Custom settings stay Custom until you choose a preset. **Check setup** verifies the displayed draft without saving or generating a summary; **Replay** only animates the illustration. See [Install](#install) for requirements and manual setup.
+Click the badge to open **Context Press**. In **Control**, choose the last included step: **Clean** (Safe), **Trim** (Balanced), or **Summarize** (Maximum savings), then **Save**. Each depth includes the earlier steps. Existing Custom settings stay Custom until you choose a preset. **Check setup** verifies the displayed draft without saving or generating a summary; the illustration above the choices draws the last measured context (a bar of real characters against the limit with a sealed head and an open rest, a derived scale and the limit line, plus a receipt for the cumulative, estimated saving in money), reads "not measured yet" before the first observed call, and **Replay** only animates it. See [Install](#install) for requirements and manual setup.
 
 ---
 

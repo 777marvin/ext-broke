@@ -107,8 +107,12 @@ The badge gear (⚙) opens **Context Press**, with **Control** and **Statistics*
 tabs. Control shows a plain-language status and cumulative depth choices:
 **Clean** (Safe), **Trim** (Balanced), and **Summarize** (Maximum savings).
 Choose the last included step, then Save. Balanced needs no extra software.
-Existing Custom settings stay Custom until a preset is chosen. The stack is a
-qualitative illustration; Replay only animates it. Check setup and View savings
+Existing Custom settings stay Custom until a preset is chosen. The illustration
+draws the last measured context against `maxContextChars`, marks the limit with
+a derived scale, splits the bar into the sealed protected head and the part open
+to trimming, and shows the cumulative saving as an estimate in a separate
+receipt; before the first observed call it reads "not measured yet". Replay only
+animates it. Check setup and View savings
 remain available. Technical controls and the complete Command Studio start
 closed under **Advanced settings and diagnostics**; the full settings panel
 remains the expert surface. Advanced commands execute immediately and Cancel

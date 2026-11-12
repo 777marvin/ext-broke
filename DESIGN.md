@@ -64,11 +64,15 @@ view for choosing compression depth and a Statistics view for recorded evidence.
 - **Usage scene:** A small status badge and a compact modal used during coding
   tasks, usually on desktop.
 - **Register:** Product utility. Clarity and reliable state feedback lead.
-- **Memorable signature:** An indigo context press with visible protection rails,
-  native depth choices and a plain-language state; color never carries meaning alone.
-- **Restraint:** The press is a qualitative illustration. Replay is explicit,
-  brief and decorative; it never generates a summary or previews task content.
-  Recorded measurements have their own tab, separate from the draft controls.
+- **Memorable signature:** A paper-light context gauge whose measured bar, limit
+  line and receipt read the actual state; native depth choices and a
+  plain-language state; color never carries meaning alone.
+- **Restraint:** The illustration draws only measured facts: the printed context
+  count against `maxContextChars`, the sealed-to-open split of the fill and the
+  modelled saving, always labelled as an estimate. An unmeasured context says so
+  instead of inventing a split. Replay is explicit, brief and decorative; it
+  never generates a summary or previews task content. Recorded measurements have
+  their own tab, separate from the draft controls.
 - **Anti-references:** Terminal help screens disguised as dialogs; unexplained
   emoji-only state; generic analytics dashboards; warning-heavy setup screens.
 - **Token ownership/runtime mapping:** `scripts/context-press-style.js` owns
@@ -81,12 +85,13 @@ view for choosing compression depth and a Statistics view for recorded evidence.
 
 ## Colors
 
-Context Press pairs cool paper (`#F0F3FF`) and ink (`#1C2451`) with an indigo
-material canvas (`#202C61`). Action blue (`#3456EC`) marks interactive selection;
-lavender layers, teal protection rails and violet contributions support the
-material metaphor. Existing status colors retain their text labels. The
-current Broke icon is retained; this is not a new brand or logo. Forced-color
-rendering may use system colors.
+Context Press pairs cool paper (`#F0F3FF`) and ink (`#1C2451`) on a light
+paper illustration surface with a faint grid, the same surface family as the
+dialog. Action blue (`#3456EC`) marks the trimmable part of the context;
+lavender outlines the drawn fill, teal marks what stays sealed, and a deep red
+(`#8A2D24`) marks an over-limit context. Existing status colors retain their
+text labels. The current Broke icon is retained; this is not a new brand or
+logo. Forced-color rendering may use system colors.
 
 ## Typography
 
@@ -106,7 +111,10 @@ Expanded Advanced content and result feedback scroll without hiding the footer.
 ## Elevation & Depth
 
 Use one restrained modal shadow and thin borders. Status cards use tinted flat
-surfaces. Layered material depth belongs inside the indigo press illustration.
+surfaces. The press illustration is a flat paper panel, not a raised object: its
+bar, limit line and legend carry the only saturated colour in the dialog. Below
+800px a compact block repeats the same numbers in DOM instead of shrinking the
+960px canvas.
 
 ## Components
 
@@ -123,6 +131,28 @@ Contains a dot, a short heading, and one corrective or reassuring sentence.
 Supported everyday states are ready, saving, compressing, optional local setup needed, off,
 and action failure.
 
+### Context press illustration
+
+The illustration answers one question first: how full is the context? It draws
+only measured facts from the last observed run (`contextShape`) on a 960x300
+canvas that spans the dialog width, plus a separate receipt card: a header naming
+the measurement and its standing against the limit, the context count printed
+large next to `/ <limit> chars`, a horizontal bar at the dialog's own scale whose
+teal head is the sealed share of the fill and whose blue rest is open to
+trimming, a dashed limit line with `0 / 25 / 50 / 75 / 100` percent ticks
+derived from `maxContextChars`, and a two-line legend that repeats both counts as
+text. The receipt on the right names the cumulative saving with a leading "~",
+the model label and the word "estimated"; an unknown price reads "n/a" with "no
+model price known", never a zero, and the token count stays visible because it
+is measured regardless of pricing. Above the limit the bar stops at the scale
+while the header reads "over limit" and the numbers keep the real percentage.
+Without an observation the bar is an empty dashed track reading "The first
+measured run fills this bar" - the drawing never guesses a split. The caption
+repeats the measured characters, the age of the measurement and the estimate as
+text, and the `aria-label` repeats every drawn value, so no state depends on
+colour or shape alone. The illustration sits above the depth choices so its type
+stays legible instead of shrinking inside a column.
+
 ### Compression depth and drafts
 
 Both settings surfaces use the same synchronous draft reducer assembled into
@@ -138,9 +168,10 @@ without falsely selecting a named preset. Choosing a stage explicitly applies
 that preset's owned fields and preserves backend, cache, autonomy and consent.
 
 Enable Broke, automation policy and history recording remain separate settings.
-The press reflects draft depth and enablement, not measured capacity or a pass
-that has already run. Replay changes only the illustration and respects reduced
-motion. Edits require Save; the footer shows saved versus unsaved state and
+The depth choices reflect the draft; the illustration above them reflects the
+last measured run, so the two can disagree until the next call. An unmeasured
+context, a disabled extension and a zero saving each look different. Replay
+changes only the illustration and respects reduced motion. Edits require Save; the footer shows saved versus unsaved state and
 retains the draft on a failed save. Cancel, Escape and the close control all
 close immediately and drop the draft: nothing is destroyed, because settings
 change only on Save and commands carry their own confirmation.

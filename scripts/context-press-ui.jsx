@@ -29,6 +29,71 @@ const cpPasses = [
 ];
 const cpDepth = dialogLevel === 'summarize' ? 2 : dialogLevel === 'truncate' ? 1 : 0;
 const cpModeNames = { short: 'Safe', normal: 'Balanced', long: 'Maximum savings', custom: 'Custom settings' };
+// Measured shape of the last observed context - the illustration draws ONLY
+// what the host actually measured. No observation means an honest "not
+// measured yet" figure instead of a guessed split.
+const cpShape = data?.contextShape ?? null;
+const cpLimit = maxCtx > 0 ? maxCtx : 0;
+const cpChars = cpShape?.totalChars ?? 0;
+const cpSealed = cpShape?.protectedChars ?? 0;
+const cpOpen = cpShape?.compressibleChars ?? 0;
+const cpPct = cpShape && cpLimit > 0 ? Math.round((cpChars / cpLimit) * 100) : 0;
+// Only the DRAWN bar is clamped: at the limit it stops at 100 percent while the
+// printed numbers keep the real value. Without a configured limit there is no
+// scale and no fill.
+const cpOver = !!cpShape && cpLimit > 0 && cpChars > cpLimit;
+const cpBarX = 32;
+const cpBarW = 520;
+const cpBarY = 118;
+const cpBarH = 44;
+const cpFillW = cpShape && cpLimit > 0 ? Math.min(1, cpChars / cpLimit) * cpBarW : 0;
+const cpFillPct = cpShape && cpLimit > 0 ? Math.min(100, (cpChars / cpLimit) * 100) : 0;
+const cpSealedW = cpChars > 0 ? (cpSealed / cpChars) * cpFillW : 0;
+const cpOpenW = Math.max(0, cpFillW - cpSealedW);
+const cpSealedShare = cpChars > 0 ? (cpSealed / cpChars) * 100 : 0;
+const cpOpenShare = Math.max(0, 100 - cpSealedShare);
+const cpShort = (value) => value >= 1000 ? `${Math.round(value / 1000)}k` : String(value);
+// The scale is derived from the configured limit, so the ticks always describe
+// THIS dialog's limit instead of a hardcoded number.
+const cpTicks = cpLimit > 0
+  ? [0, 0.25, 0.5, 0.75, 1].map((share, index) => ({
+      x: cpBarX + share * cpBarW,
+      label: index === 0 ? '0' : cpShort(cpLimit * share),
+      anchor: (index === 0 ? 'start' : index === 4 ? 'end' : 'middle') as 'start' | 'middle' | 'end',
+    }))
+  : [];
+const cpNumText = cpShape ? cpFormat(cpChars) : '\u2014';
+// The suffix follows the printed number, so a long count never collides with it.
+const cpSuffixX = cpBarX + cpNumText.length * 28 + 16;
+const cpSuffixSize = cpNumText.length > 7 ? 15 : 18;
+const cpSuffixText = cpLimit > 0 ? `/ ${cpFormat(cpLimit)} chars` : 'chars';
+const cpTopRight = !cpShape ? '' : cpLimit === 0 ? 'no limit configured' : cpOver ? `${cpPct}% \u00b7 over limit` : `${cpPct}% of limit`;
+const cpTopRightColor = cpOver ? '#8a2d24' : '#596385';
+const cpUsdText = cost?.savedUsd == null ? null : cost.savedUsd > 0 && cost.savedUsd < 0.005 ? '<$0.01' : `$${cost.savedUsd.toFixed(2)}`;
+const cpPriceRaw = cost?.modelLabel ?? null;
+const cpPriceLabel = cpPriceRaw && cpPriceRaw.length > 28 ? `${cpPriceRaw.slice(0, 27)}...` : cpPriceRaw;
+const cpMoneyText = cpUsdText ? `\u2248 ${cpUsdText}` : 'n/a';
+const cpMoneySize = cpMoneyText.length > 9 ? 34 : 46;
+const cpWhen = cpShape ? (Math.round((Date.now() - cpShape.at) / 60000) < 1 ? 'just now' : `${Math.round((Date.now() - cpShape.at) / 60000)} min ago`) : '';
+const cpSavingText = cpUsdText ? `${cpUsdText} estimated` : 'no model price known';
+const cpMeasuredLine = cpShape
+  ? cpLimit > 0
+    ? `${cpFormat(cpChars)} of ${cpFormat(cpLimit)} chars \u00b7 ${cpPct}%${cpOver ? ' \u00b7 over limit' : ''}`
+    : `${cpFormat(cpChars)} chars \u00b7 no limit configured`
+  : 'Not measured yet';
+const cpFigureNote = !cpShape
+  ? 'No guessed split. The next request will be measured.'
+  : cpLimit === 0
+    ? 'No limit configured, so there is no scale to draw.'
+    : cpOver
+      ? 'The bar stops at the limit; the printed numbers keep the real value.'
+      : `Measured ${cpWhen}. Nothing here is guessed.`;
+const cpCaption = cpShape ? `${cpMeasuredLine} \u00b7 ${cpWhen} \u00b7 ${cpSavingText}` : `${cpMeasuredLine} \u00b7 ${cpSavingText}`;
+// Every drawn value is repeated as text: the same numbers, the same split and
+// the same estimate, so nothing depends on colour or shape alone.
+const cpAria = cpShape
+  ? `Measured context from the last run: ${cpFormat(cpChars)}${cpLimit > 0 ? ` of ${cpFormat(cpLimit)} characters, ${cpPct} percent${cpOver ? ', over the limit' : ''}` : ' characters, the limit is not configured'}. ${cpFormat(cpSealed)} characters stay sealed and are never trimmed; ${cpFormat(cpOpen)} are open to trimming. Saved so far: ${cpUsdText ? `${cpUsdText} estimated` : 'no model price known'}, ${cpFormat(total)} tokens redirected from repeated context.`
+  : `Context not measured yet. Saved so far: ${cpUsdText ? `${cpUsdText} estimated` : 'no model price known'}, ${cpFormat(total)} tokens redirected from repeated context.`;
 React.useEffect(() => () => { if (cpReplayTimer.current) clearTimeout(cpReplayTimer.current); }, []);
 const cpPlay = () => {
   if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -84,20 +149,77 @@ const cpControlView = (
     </div>
     <div className="cp-stage-layout">
       <div className={`cp-material${cpReplay ? ' cp-replaying' : ''}`} style={{ opacity: dialogEnabled ? 1 : .65 }}>
-        <svg viewBox="0 0 960 328" role="img" aria-label="Context Press: an illustration of the selected compression depth, not a measured reduction">
-          <path d="M120 75L565 48L815 104M120 253L565 280L815 224" fill="none" stroke="#72dbcf" strokeWidth="4" />
-          <circle cx="120" cy="75" r="5" fill="#72dbcf" /><circle cx="120" cy="253" r="5" fill="#72dbcf" />
-          <g className="cp-pages" style={{ transform: `scaleY(${[1,.72,.42][cpDepth]})` }}>
-            {['#6c83de','#8b9fea','#a5b7ff','#c2ccff','#8499ec'].map((color, index) => <path key={color} d={`M170 ${122+index*12}L492 ${83+index*12}L696 ${145+index*12}L373 ${184+index*12}Z`} fill={color} stroke="#c3ceff" />)}
-            <path d="M170 122V170L373 232V184Z" fill="#536ac3" opacity=".7" /><path d="M373 184L696 145V193L373 232Z" fill="#394f9d" opacity=".6" />
-            <path d="M265 146L499 118M290 156L529 128M316 165L557 138" stroke="#e3e9ff" strokeWidth="3" opacity=".8" />
-          </g>
-          <path d="M739 139L847 126L897 141L789 155Z" fill="#cbd5ff" stroke="#e0e6ff" /><path d="M739 139V177L789 193V155Z" fill="#647bd7" /><path d="M789 155L897 141V179L789 193Z" fill="#8ea4ff" />
-          <path d="M740 203L848 190L897 205L789 220Z" fill="none" stroke="#7084be" strokeDasharray="4 5" />
-          <path d="M675 216L721 211L714 206M721 211L715 217" fill="none" stroke="#a4b5df" strokeWidth="2" />
-        </svg>
-        <div className="cp-visual-caption"><span>Illustration · {cpModeNames[dialogMode] ?? 'Custom settings'}</span><button type="button" className="cp-replay" onClick={cpPlay} disabled={saving || !dialogEnabled}>Replay</button></div>
-      </div>
+              <svg viewBox="0 0 960 300" role="img" aria-label={cpAria} className="cp-figure-wide">
+                <defs>
+                  <clipPath id="cpBarClip">
+                    <rect x={cpBarX} y={cpBarY} width={cpBarW} height={cpBarH} rx="8" />
+                  </clipPath>
+                </defs>
+                {/* header: what was measured and how it stands against the limit */}
+                <text x={cpBarX} y="38" fill="#596385" fontSize="12" letterSpacing="1.1">{cpShape ? 'CONTEXT \u00b7 LAST MEASURED RUN' : 'CONTEXT \u00b7 NOT MEASURED YET'}</text>
+                {cpTopRight ? <text x={cpBarX + cpBarW} y="38" fill={cpTopRightColor} fontSize="14" fontWeight="700" textAnchor="end">{cpTopRight}</text> : null}
+                <text x={cpBarX} y="92" fill={cpShape ? '#1c2451' : '#9aa5c2'} fontSize="46" fontFamily="ui-monospace,Consolas,monospace" fontWeight="700">{cpNumText}</text>
+                <text x={cpSuffixX} y="92" fill="#596385" fontSize={cpSuffixSize} fontFamily="ui-monospace,Consolas,monospace">{cpSuffixText}</text>
+                {/* the bar: sealed head, open rest, limit line at full scale */}
+                <rect x={cpBarX} y={cpBarY} width={cpBarW} height={cpBarH} rx="8" fill="#e6ebf9" stroke="#c3cdec" strokeWidth="2" strokeDasharray={cpShape ? undefined : '7 6'} />
+                {cpFillW > 0 ? (
+                  <g clipPath="url(#cpBarClip)">
+                    {cpSealedW > 0 ? <rect className="cp-fig-sealed" x={cpBarX} y={cpBarY} width={cpSealedW} height={cpBarH} fill="#72dbcf" /> : null}
+                    {cpOpenW > 0 ? <rect className="cp-fig-open" x={cpBarX + cpSealedW} y={cpBarY} width={cpOpenW} height={cpBarH} fill={cpOver ? '#8a2d24' : '#3456ec'} /> : null}
+                  </g>
+                ) : null}
+                {cpShape ? (cpLimit === 0 ? <text x={cpBarX + cpBarW / 2} y={cpBarY + 28} fill="#7b87a8" fontSize="15" textAnchor="middle">No scale without a configured limit</text> : null) : <text x={cpBarX + cpBarW / 2} y={cpBarY + 28} fill="#7b87a8" fontSize="15" textAnchor="middle">The first measured run fills this bar</text>}
+                {cpFillW > 0 ? <rect x={cpBarX} y={cpBarY} width={cpFillW} height={cpBarH} rx="8" fill="none" stroke={cpOver ? '#8a2d24' : '#8ea4ff'} strokeWidth="2" /> : null}
+                {cpLimit > 0 ? (
+                  <g>
+                    <line x1={cpBarX + cpBarW} y1={cpBarY - 12} x2={cpBarX + cpBarW} y2={cpBarY + 58} stroke="#1b7f76" strokeWidth="4" strokeDasharray="8 6" />
+                    <text x={cpBarX + cpBarW} y={cpBarY - 20} fill="#135f58" fontSize="14" fontWeight="700" textAnchor="end">{`limit ${cpFormat(cpLimit)}`}</text>
+                  </g>
+                ) : null}
+                <g fontSize="12" fill="#7b87a8">
+                  {cpTicks.map((tick, index) => <text key={`cp-tick-${index}`} x={tick.x} y="194" textAnchor={tick.anchor}>{tick.label}</text>)}
+                </g>
+                {/* legend: the same split as text, never colour alone */}
+                <rect x={cpBarX} y="214" width="14" height="14" rx="3" fill={cpShape ? '#72dbcf' : '#e6ebf9'} stroke={cpShape ? '#1b7f76' : '#c3cdec'} />
+                <text x="58" y="226" fill={cpShape ? '#1c2451' : '#7b87a8'} fontSize="15">Sealed, never trimmed</text>
+                <text x="330" y="226" fill={cpShape ? '#1c2451' : '#7b87a8'} fontSize="15" fontFamily="ui-monospace,Consolas,monospace">{cpShape ? `${cpFormat(cpSealed)} chars` : '\u2014'}</text>
+                <rect x={cpBarX} y="244" width="14" height="14" rx="3" fill={cpShape ? (cpOver ? '#8a2d24' : '#3456ec') : '#e6ebf9'} stroke={cpShape ? (cpOver ? '#8a2d24' : '#3456ec') : '#c3cdec'} />
+                <text x="58" y="256" fill={cpShape ? '#1c2451' : '#7b87a8'} fontSize="15">Open to trimming</text>
+                <text x="330" y="256" fill={cpShape ? '#1c2451' : '#7b87a8'} fontSize="15" fontFamily="ui-monospace,Consolas,monospace">{cpShape ? `${cpFormat(cpOpen)} chars` : '\u2014'}</text>
+                <text x={cpBarX} y="286" fill="#596385" fontSize="13">{cpFigureNote}</text>
+                {/* receipt: the cumulative estimate, kept apart from the per-run split */}
+                <rect x="616" y="40" width="312" height="224" rx="14" fill="#fff" stroke="#d7ddf1" strokeWidth="2" />
+                <text x="640" y="72" fill="#596385" fontSize="12" letterSpacing="1.1">SAVED SO FAR</text>
+                <text x="640" y="130" fill={cpUsdText ? '#1c2451' : '#9aa5c2'} fontSize={cpMoneySize} fontFamily="ui-monospace,Consolas,monospace" fontWeight="700">{cpMoneyText}</text>
+                <text x="640" y="152" fill="#596385" fontSize="13">{cpUsdText ? 'estimated at' : 'no model price known'}</text>
+                {cpUsdText && cpPriceLabel ? <text x="640" y="172" fill="#33416a" fontSize="15" fontFamily="ui-monospace,Consolas,monospace">{cpPriceLabel}</text> : null}
+                <line x1="640" y1="190" x2="904" y2="190" stroke="#e0e6f6" strokeWidth="2" />
+                <text x="640" y="218" fill="#1c2451" fontSize="18" fontFamily="ui-monospace,Consolas,monospace">{`${cpFormat(total)} tokens`}</text>
+                <text x="640" y="240" fill="#596385" fontSize="13">{cpUsdText ? 'redirected from repeated context' : 'the token saving is measured either way'}</text>
+              </svg>
+              {/* Narrow dialogs cannot read a 960px canvas, so the same numbers
+                  repeat as a compact block: identical values, no extra figure. */}
+              <div className="cp-figure-compact" aria-hidden="true">
+                <div className="cp-fig-head">
+                  <span className="cp-fig-label">{cpShape ? 'Context \u00b7 last measured run' : 'Context \u00b7 not measured yet'}</span>
+                  <span className="cp-fig-pct">{cpTopRight || (cpShape ? `${cpPct}%` : '\u2014')}</span>
+                </div>
+                <div className="cp-fig-value"><strong>{cpNumText}</strong><span>{cpSuffixText}</span></div>
+                <div className="cp-fig-track">
+                  <span className="cp-fig-sealed" style={{ width: `${cpFillPct * cpSealedShare / 100}%` }} />
+                  <span className="cp-fig-open" style={{ width: `${cpFillPct * cpOpenShare / 100}%` }} />
+                </div>
+                <dl className="cp-fig-legend">
+                  <div><dt><span className="cp-fig-key cp-fig-key-sealed" />Sealed, never trimmed</dt><dd>{cpShape ? `${cpFormat(cpSealed)} chars` : '\u2014'}</dd></div>
+                  <div><dt><span className="cp-fig-key cp-fig-key-open" />Open to trimming</dt><dd>{cpShape ? `${cpFormat(cpOpen)} chars` : '\u2014'}</dd></div>
+                  <div><dt>Saved so far</dt><dd>{`${cpMoneyText} \u00b7 ${cpFormat(total)} tokens`}</dd></div>
+                </dl>
+              </div>
+              <div className="cp-visual-caption">
+                <span>{cpCaption}</span>
+                <button type="button" className="cp-replay" onClick={cpPlay}>Replay</button>
+              </div>
+            </div>
       <fieldset className="cp-depth" disabled={saving || previewing || !overlayCfg || !dialogEnabled}>
         <legend>Choose the last included step</legend>
         {[

@@ -55,6 +55,7 @@ release-payload*.json
 .superpowers/
 .hyperframes/
 .thumbnails/
+.playwright-mcp/
 
 # Agent scratch plans (plan.md / todo.md) are working notes for the
 # maintainer, not part of the published extension or its docs.

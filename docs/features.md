@@ -9,8 +9,11 @@ in [docs/overview.md](overview.md); the tuning matrices are in
 ## Context Press and recorded statistics
 
 The compact 💸 task badge opens Context Press inside AiderDesk's native modal.
-**Control** shows the current state and a qualitative illustration of the next-call
-payload. Choose the last included step: **Clean** is Safe (`short`), **Trim** is
+**Control** shows the current state and a measured illustration of the last
+observed context: a bar of real characters against `maxContextChars` with a
+sealed head and an open rest, the limit as a dashed line with a derived scale,
+and a receipt for the cumulative, estimated saving in money. Choose the last
+included step: **Clean** is Safe (`short`), **Trim** is
 Balanced (`normal`), and **Summarize** is Maximum savings (`long`). Each choice
 includes the earlier steps and applies the existing canonical preset to a draft.
 An existing Custom configuration stays Custom until a preset is chosen; backend,
@@ -68,8 +71,10 @@ are reported on their own line, and `Retained history` reports the full skipped
 count. Loading, no-task, empty, partial and read-error states are distinct;
 Retry is available, and failed refreshes label a retained chart stale.
 
-Neither the illustration, estimated tokens, recorded reductions nor provider
-usage guarantees summary quality or a billing reduction.
+Neither the illustration's estimated saving, its measured split, estimated
+tokens, recorded reductions nor provider usage guarantees summary quality or a
+billing reduction. An unobserved context is drawn as "not measured yet" rather
+than estimated.
 
 ## Cache-friendly mode (provider prompt cache)
 
