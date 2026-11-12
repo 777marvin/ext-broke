@@ -1,4 +1,4 @@
-﻿import { open, stat, type FileHandle } from 'node:fs/promises';
+import { open, stat, type FileHandle } from 'node:fs/promises';
 import { StringDecoder } from 'node:string_decoder';
 import { ledgerFiles, MAX_MEASURE_FILE_BYTES, MAX_RECORD_HEADROOM_BYTES, MAX_ROTATED_FILES, MEASURE_PATH, measurementRevision } from './tokens';
 

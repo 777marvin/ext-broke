@@ -1421,7 +1421,10 @@ export default class Broke implements Extension {
           const cleared = emptyStats(taskId);
           ext.statsByTask.set(taskId, cleared);
           // Real reset: remove the task's persisted lines from stats.jsonl
-          // and drop the summarize cache so nothing stale survives.
+          // and drop the summarize cache so nothing stale survives. The
+          // measured context SHAPE is not dropped: it describes the last call
+          // that actually ran, so a reset that zeroes the savings must not also
+          // make the illustration claim the context was never measured.
           clearTaskStats(taskId);
           ext.statsLoader.invalidate(taskId);
           ext.lastPersistAt.delete(taskId);

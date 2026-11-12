@@ -1,4 +1,4 @@
-﻿const { readFileSync } = require('node:fs');
+const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 /**
  * The Context Press figure helpers live in `scripts/context-press-figure.js`

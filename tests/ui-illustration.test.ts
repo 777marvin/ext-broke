@@ -1,4 +1,4 @@
-﻿/**
+/**
  * The Context Press illustration must draw MEASURED state: the printed context
  * count against maxContextChars, a bar whose sealed head and open rest are
  * proportional to the real characters, a limit line at the configured scale and

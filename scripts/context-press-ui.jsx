@@ -1,4 +1,4 @@
-﻿// Assembled inside StatusBadge's function: use the existing config/setup/command owners.
+// Assembled inside StatusBadge's function: use the existing config/setup/command owners.
 // The draft mirrors the Zod ConfigSchema. The host types `data` as `any`, so the
 // dialog declares the fields it actually reads rather than spreading `any` into
 // every consumer below.
@@ -275,12 +275,12 @@ const cpControlView = (
           { mode: 'long', title: 'Summarize', detail: 'Also summarize eligible older work.' },
         ].map((stage, index) => <label key={stage.mode} className={`cp-option${cpDepth >= index ? ' cp-included' : ''}${dialogMode === stage.mode ? ' cp-selected' : ''}`}>
           <input type="radio" name="broke-compression-depth" value={stage.mode} checked={dialogMode === stage.mode} onChange={() => void selectMode(stage.mode)} aria-label={`${stage.title} (${cpModeNames[stage.mode]})`} />
-          <strong>{stage.title}</strong><p>{stage.detail}</p><small>{cpDepth >= index ? 'Included' : index === 2 ? 'Optional ┬À needs model' : 'Not included'}</small>
+          <strong>{stage.title}</strong><p>{stage.detail}</p><small>{cpDepth >= index ? 'Included' : index === 2 ? 'Optional · needs model' : 'Not included'}</small>
         </label>)}
       </fieldset>
     </div>
     <label className="cp-enable"><input type="checkbox" checked={overlayCfg?.enabled ?? true} disabled={saving || !overlayCfg} onChange={e => patchOverlay({ enabled: e.target.checked })} />Enable Broke</label>
-    <div className="cp-selection"><strong>{cpModeNames[dialogMode] ?? 'Custom settings'}{dialogMode === 'normal' ? ' ┬À recommended' : ''}</strong>
+    <div className="cp-selection"><strong>{cpModeNames[dialogMode] ?? 'Custom settings'}{dialogMode === 'normal' ? ' · recommended' : ''}</strong>
       <p>{dialogMode === 'custom' ? 'Your individually adjusted settings are kept. Choosing a stage explicitly applies its preset.' : cpDepth === 0 ? 'Clean only. Text is retained; message framing may change.' : cpDepth === 1 ? 'Clean + Trim. No extra software needed.' : 'Clean + Trim + Summarize. A configured model is required.'}</p>
       {dialogMode === 'custom' ? <button type="button" onClick={() => setAdvancedOpen(true)} style={{ marginTop: 8 }}>Inspect custom settings</button> : null}
     </div>
@@ -317,7 +317,7 @@ const cpStatisticsView = (
     {cpStats?.state === 'no-task' ? <div className="cp-detail" role="status"><strong>No task is open</strong>Select Retained history explicitly to inspect the installation's recorded runs.</div> : null}
     {cpStats && cpStats.state !== 'no-task' && !cpSummary ? <div className="cp-detail" role="status"><strong>No runs recorded yet</strong>{cpStats.recordingEnabled ? 'Future compression runs will add measurements. Earlier missing records cannot be reconstructed.' : 'History recording is off. Enable Record run history below and Save to record future runs.'}</div> : null}
     {cpSummary ? <>
-      <div className="cp-stat-top"><div><p className="cp-unit-label">Net reduction ┬À {cpUnits === 'tokens' ? 'Estimated tokens' : 'Measured characters'}</p><strong className="cp-number">{cpFormat(cpConvert(cpSummary.netChars))}</strong><p className="cp-small">{cpSummary.netChars < 0 ? 'Net added context' : 'Net context removed'} across {cpSummary.runs} recorded runs.</p></div>
+      <div className="cp-stat-top"><div><p className="cp-unit-label">Net reduction · {cpUnits === 'tokens' ? 'Estimated tokens' : 'Measured characters'}</p><strong className="cp-number">{cpFormat(cpConvert(cpSummary.netChars))}</strong><p className="cp-small">{cpSummary.netChars < 0 ? 'Net added context' : 'Net context removed'} across {cpSummary.runs} recorded runs.</p></div>
         <div className="cp-small"><p>{cpFormat(cpSummary.charsBefore)} characters before</p><p>{cpFormat(cpSummary.charsAfter)} characters after</p><p style={{ marginTop: 5 }}>Summed over individual calls, including repeated material.</p></div>
       </div>
       <div className="cp-toolbar"><div className="cp-toggles" role="group" aria-label="Statistics diagram"><button type="button" aria-pressed={cpChart === 'step'} onClick={() => cpSetChart('step')}>By step</button><button type="button" aria-pressed={cpChart === 'time'} onClick={() => cpSetChart('time')}>Over time</button></div>
@@ -338,8 +338,8 @@ const cpStatisticsView = (
             <span className="cp-run-canvas" aria-hidden="true"><span className="cp-zero" /><span className="cp-run-bar" style={{ height, top: run.netChars >= 0 ? 65-height : 65, background: run.netChars < 0 ? '#a34136' : '#3456ec' }} /></span><span className="cp-run-index">{index + 1}</span>
           </button>; })}
         </div></div>
-        {cpSelectedRun ? <div className="cp-detail" role="status"><strong>{new Date(cpSelectedRun.at).toLocaleString('en-US')} ┬À {cpFormat(cpConvert(Math.abs(cpSelectedRun.netChars)))} {cpUnitName} {cpSelectedRun.netChars < 0 ? 'added' : 'removed'}</strong><p>{cpFormat(cpSelectedRun.charsBefore)} ÔåÆ {cpFormat(cpSelectedRun.charsAfter)} characters.</p><p>{cpPasses.map(pass => `${pass.label}: ${cpSelectedRun.passChars[pass.key] == null ? 'Unavailable' : cpFormat(cpConvert(cpSelectedRun.passChars[pass.key]))}`).join(' ┬À ')}</p><p>Net reconciliation: {cpSelectedRun.reconciliationChars == null ? 'Unavailable' : cpFormat(cpConvert(cpSelectedRun.reconciliationChars))}</p></div> : null}
-        <div className="cp-row" style={{ marginTop: 12 }}><p className="cp-small">Showing {cpStats.totalRuns ? Math.max(1, cpStats.totalRuns - (cpStats.page+1)*60+1) : 0}ÔÇô{Math.max(0, cpStats.totalRuns-cpStats.page*60)} of {cpStats.totalRuns} runs</p><div className="cp-toggles"><button type="button" disabled={cpStatsLoading || (cpStats.page+1)*60 >= cpStats.totalRuns} onClick={() => cpSetQuery({ ...cpQuery, page: cpStats.page+1 })}>Older</button><button type="button" disabled={cpStatsLoading || cpStats.page === 0} onClick={() => cpSetQuery({ ...cpQuery, page: cpStats.page-1 })}>Newer</button></div></div>
+        {cpSelectedRun ? <div className="cp-detail" role="status"><strong>{new Date(cpSelectedRun.at).toLocaleString('en-US')} · {cpFormat(cpConvert(Math.abs(cpSelectedRun.netChars)))} {cpUnitName} {cpSelectedRun.netChars < 0 ? 'added' : 'removed'}</strong><p>{cpFormat(cpSelectedRun.charsBefore)} → {cpFormat(cpSelectedRun.charsAfter)} characters.</p><p>{cpPasses.map(pass => `${pass.label}: ${cpSelectedRun.passChars[pass.key] == null ? 'Unavailable' : cpFormat(cpConvert(cpSelectedRun.passChars[pass.key]))}`).join(' · ')}</p><p>Net reconciliation: {cpSelectedRun.reconciliationChars == null ? 'Unavailable' : cpFormat(cpConvert(cpSelectedRun.reconciliationChars))}</p></div> : null}
+        <div className="cp-row" style={{ marginTop: 12 }}><p className="cp-small">Showing {cpStats.totalRuns ? Math.max(1, cpStats.totalRuns - (cpStats.page+1)*60+1) : 0}–{Math.max(0, cpStats.totalRuns-cpStats.page*60)} of {cpStats.totalRuns} runs</p><div className="cp-toggles"><button type="button" disabled={cpStatsLoading || (cpStats.page+1)*60 >= cpStats.totalRuns} onClick={() => cpSetQuery({ ...cpQuery, page: cpStats.page+1 })}>Older</button><button type="button" disabled={cpStatsLoading || cpStats.page === 0} onClick={() => cpSetQuery({ ...cpQuery, page: cpStats.page-1 })}>Newer</button></div></div>
       </>}
     </> : null}
     {cpStats?.state === 'partial' || cpStats?.skippedRecords || cpStats?.unknownPassRecords ? <p className="cp-chart-note" role="status">Partial data: {cpStats.skippedRecords} malformed records skipped; {cpStats.unknownPassRecords} records have incomplete step counters. Known contributions are partial; unavailable values are not measured zero.</p> : null}
@@ -347,15 +347,15 @@ const cpStatisticsView = (
     <div className="cp-row" style={{ marginTop: 18, paddingTop: 13, borderTop: '1px solid #d7ddf1' }}><div><strong style={{ fontSize: 13 }}>Keep a run history</strong><p className="cp-small">Future measurements only. Turning this off keeps recorded history.</p></div><label className="cp-record"><input type="checkbox" checked={overlayCfg?.stats?.measure ?? true} disabled={saving || !overlayCfg} onChange={event => patchOverlay({ stats: { ...(draftRef.current?.stats ?? {}), measure: event.target.checked } })} />Record run history</label></div>
     <details className="cp-disclosure"><summary>Provider usage &amp; avoided context</summary>
       {cpQuery.scope !== 'task' ? <p className="cp-chart-note">These additional counters are task-specific. Select This task to inspect them; they are not summed across retained history.</p> : <>
-        <p className="cp-chart-note">Last available completed call ÔÇö separate usage, not the selected run's saving.</p>
+        <p className="cp-chart-note">Last available completed call — separate usage, not the selected run's saving.</p>
         <table className="cp-table"><caption>Additional task counters, excluded from net reduction</caption><tbody>
           <tr><th scope="row">Provider-reported sent tokens</th><td>{cpStats?.taskExtras?.providerUsage ? cpFormat(cpStats.taskExtras.providerUsage.sentTokens) : 'Unavailable'}</td></tr>
           <tr><th scope="row">Cache-read tokens</th><td>{cpStats?.taskExtras?.providerUsage?.cacheReadTokens == null ? 'Unavailable' : cpFormat(cpStats.taskExtras.providerUsage.cacheReadTokens)}</td></tr>
           <tr><th scope="row">Cache-written tokens</th><td>{cpStats?.taskExtras?.providerUsage?.cacheWriteTokens == null ? 'Unavailable' : cpFormat(cpStats.taskExtras.providerUsage.cacheWriteTokens)}</td></tr>
-          {['slice','search','flush'].map(key => <tr key={key}><th scope="row">Avoided context ┬À {key} (estimate)</th><td>{cpStats?.taskExtras?.avoidedChars?.[key] == null ? 'Unavailable' : `${cpFormat(cpConvert(cpStats.taskExtras.avoidedChars[key]))} ${cpUnitName}`}</td></tr>)}
+          {['slice','search','flush'].map(key => <tr key={key}><th scope="row">Avoided context · {key} (estimate)</th><td>{cpStats?.taskExtras?.avoidedChars?.[key] == null ? 'Unavailable' : `${cpFormat(cpConvert(cpStats.taskExtras.avoidedChars[key]))} ${cpUnitName}`}</td></tr>)}
         </tbody></table>
       </>}
     </details>
-    <p className="cp-chart-note">Token estimates use characters ├À 4, rounded. Retained history is rotation-bounded, not unlimited all-time history. Neither these measurements nor provider usage proves a billing reduction. Changing a preset does not rewrite history.</p>
+    <p className="cp-chart-note">Token estimates use characters ÷ 4, rounded. Retained history is rotation-bounded, not unlimited all-time history. Neither these measurements nor provider usage proves a billing reduction. Changing a preset does not rewrite history.</p>
   </section>
 );

@@ -1,4 +1,4 @@
-﻿import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { CompressReport } from './compress';
@@ -17,7 +17,7 @@ export function measurementRevision(): number { return measureRevision; }
 
 /**
  * Token estimation. chars/4 is a deliberately crude heuristic (English prose
- * Ôëê 4 chars/token; code Ôëê 3-3.5). Broke never claims provider-exact numbers
+ * ≈ 4 chars/token; code ≈ 3-3.5). Broke never claims provider-exact numbers
  * - every figure is labeled as an estimate. The heuristic is consistent,
  * which is what matters for comparing before/after.
  */

@@ -1,4 +1,4 @@
-﻿# Feature deep dives
+# Feature deep dives
 
 One page per feature that needs more than a line of explanation. The
 command list, the configuration table and the honest cost numbers live in
@@ -8,7 +8,7 @@ in [docs/overview.md](overview.md); the tuning matrices are in
 
 ## Context Press and recorded statistics
 
-The compact ­şÆ© task badge opens Context Press inside AiderDesk's native modal.
+The compact 💸 task badge opens Context Press inside AiderDesk's native modal.
 **Control** shows the current state and a measured illustration of the last
 observed context: a bar of real characters against `maxContextChars` with a
 sealed head and an open rest, the limit as a dashed line with a derived scale,
@@ -215,9 +215,9 @@ this remains a host-version-dependent limitation.
 
 `search.enabled` (default **on**) registers a `broke-search` agent tool
 backed by a per-project keyword index: identifier-aware tokenizer, BM25
-ranking, top-k results with `path:line` plus ┬▒6 context lines around each
+ranking, top-k results with `path:line` plus ±6 context lines around each
 best match - and the snippet summary *is* the token control. Every result
-set stays under `search.maxChars` (default 6000 chars Ôëê 1.5k tokens)
+set stays under `search.maxChars` (default 6000 chars ≈ 1.5k tokens)
 including a one-line footer stating how many results and indexed files it
 came from.
 
@@ -260,7 +260,7 @@ index on disk for later re-enabling. `/broke index [rebuild] | status` and
 Outside AiderDesk, broke runs as a zero-build stdio MCP server (`mcp.ts`),
 CLI and Claude Code `PreToolUse`/`PostToolUse` hook handler (`cli.ts`), backed by
 the host-agnostic `agent-core.ts` module and launched without a build step via
-`node scripts/broke-runner.cjs` (Node.js ÔëÑ 22.15). External agents use
+`node scripts/broke-runner.cjs` (Node.js ≥ 22.15). External agents use
 **pre-ingestion compression** (`broke_search`, `broke_slice`, `broke_diff`,
 `broke_compress`, allowlisted `broke_check`, and `broke_status`) while sharing
 the same `config.json` and appending `<agent>:<projectHash>` records to

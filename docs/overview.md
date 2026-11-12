@@ -1,4 +1,4 @@
-﻿# Project Overview
+# Project Overview
 
 *Snapshot: release v1.4.0 (2026-10-29). Includes AiderDesk 0.88
 message-preparation support, F6 live status and savings breakdown, F7.1's
@@ -74,7 +74,7 @@ surface.
 | `scripts/bench.ts` | Deterministic reference benchmark (npm run bench): a 351,403-char synthetic session through the real pipeline with a stub summarizer, byte-reproducible; F4 keyword-index scenario for the counterfactual estimate model |
 | `scripts/measure.ts` | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
 | `ConfigComponent.jsx` | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
-| `StatusBadge.jsx` | Compact ­şÆ© task badge, per-pass tooltip, summarize auto-disable state, and native Context Press modal with Control / Statistics tabs, fixed draft footer and complete advanced command surface; the badge's 10 s poll runs only while a summarizer backend is active (BRK-029), push refreshes cover the rest |
+| `StatusBadge.jsx` | Compact 💸 task badge, per-pass tooltip, summarize auto-disable state, and native Context Press modal with Control / Statistics tabs, fixed draft footer and complete advanced command surface; the badge's 10 s poll runs only while a summarizer backend is active (BRK-029), push refreshes cover the rest |
 | `scripts/context-press-ui.jsx` / `scripts/context-press-style.js` | Context Press depth controls, the measured context illustration, its replay and recorded charts; scoped `.broke-context-press` runtime tokens; fragments assembled by `scripts/ui-template-source.cjs` with the shared draft helper |
 | `ui-statistics.ts` | Read-only ledger projection for current-task or explicitly selected retained-history scopes; signed net, partial step attribution, fixed 60-run pages, snapshot invalidated by `measurementRevision()` OR a per-file size/mtime/inode fingerprint (so a foreign process appending to the ledger is visible on the next poll), scope-aware skip counts (unattributable lines reported separately, never against a task), four-file / ~20 MiB / 250,000-line read bounds derived from the rotation ceiling; no model request or configuration write |
 | `tests/index.test.ts` | Fake-host integration tests (XF11): real extension against a fake ExtensionContext/task, compression + stats/measure persistence, reentry guard, summarize auto-disable, tool-level archiving on/off, silence when disabled |
@@ -114,7 +114,7 @@ surface.
    may change).
 2. **Trim (`truncate` & `errors` F1)**:
    - **errors**: compiler/test output becomes its diagnostic essence
-   with an explicit `ÔÇĞ [broke: error summary - N lines ÔåÆ M lines]` marker.
+   with an explicit `… [broke: error summary - N lines → M lines]` marker.
    Engages per-message above `errors.minChars` (default 8000), before
    truncate. Only command/compiler/test tools are compressed (same
    `isCommandTool` guard as the tool-level path): file reads, search
@@ -123,16 +123,16 @@ surface.
    (`errors.toolLevel`, archives originals under `<extension>/errors/`;
    the archive can be switched off entirely and is retention-swept,
    default 30 days, XF10).
-   - **truncate**: old tool outputs ÔåÆ head+tail with marker under combined
-   hard limits (Ôëñ 200 lines AND Ôëñ 20 KB after the cut, XF5); tool-call
-   inputs over 2000 chars ÔåÆ `__broke` preview.
-3. **Summarize (`summarize`)**: region ÔëÑ `afterTurns` (8) user turns (or a region with
+   - **truncate**: old tool outputs → head+tail with marker under combined
+   hard limits (≤ 200 lines AND ≤ 20 KB after the cut, XF5); tool-call
+   inputs over 2000 chars → `__broke` preview.
+3. **Summarize (`summarize`)**: region ≥ `afterTurns` (8) user turns (or a region with
    NO user turn at all - autonomous single-prompt tool loops - which would
    otherwise never qualify) and input above
-   `maxContextChars` (60000 Ôëê 15k tokens) ÔåÆ one `[broke-compacted]`
+   `maxContextChars` (60000 ≈ 15k tokens) → one `[broke-compacted]`
    summary message, cached per task and re-validated against the region's
    content fingerprint (F-06: backend/model changes invalidate the cache,
-   tool-loop steps append to it; regeneration only on new user turns or ÔëÑ
+   tool-loop steps append to it; regeneration only on new user turns or ≥
    `minChars` of new content). Regions larger than the summarizer input
    cap are chunked at message boundaries and summarized hierarchically
    (F-07): each chunk within the cap, one meta-call combining the parts,
@@ -195,7 +195,7 @@ conversation-message character counts in real runs, not provider billing data.
 - Deploy / update: installed instances update themselves via `/broke
   update` (installs the latest tagged release from GitHub; `update check`
   peeks, `update <vX.Y.Z>` pins or rolls back). `.\scripts\deploy.ps1
-  -Category extensions -Name broke` (from this repo) ÔåÆ
+  -Category extensions -Name broke` (from this repo) →
   `~/.aider-desk/extensions/broke/` stays the bootstrap for fresh machines
   and the dev loop for uncommitted changes (`/broke update` refuses git
   checkouts by design)
