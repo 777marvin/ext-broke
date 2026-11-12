@@ -76,6 +76,22 @@ function taskExtras(raw: unknown): StatisticsTaskExtras {
   };
 }
 
+/**
+ * Everything a query needs, named. The previous positional signature
+ * (rawQuery, taskId, recordingEnabled, extras) put a `string | null` next to a
+ * `boolean` and made the call site guess by position; these four travel together
+ * from the same UI action and have no meaningful order.
+ */
+export type StatisticsRequest = {
+  /** Untrusted renderer payload: only scope/page survive validation. */
+  rawQuery: unknown;
+  /** Host-resolved task, null for the retained scope or when no task is open. */
+  taskId: string | null;
+  recordingEnabled: boolean;
+  /** Cached task counters (provider usage, avoided context). Never a ledger read. */
+  extras: unknown;
+};
+
 type StoredRun = StatisticsRun & { taskId: string };
 type Snapshot = { generatedAt: number; revision: number; rows: StoredRun[]; skipped: Array<string | null> };
 
@@ -85,8 +101,9 @@ export class StatisticsService {
   private pending: { revision: number; promise: Promise<Snapshot> } | null = null;
   constructor(private readonly filePath = MEASURE_PATH, private readonly now: () => number = Date.now) {}
 
-  async query(rawQuery: unknown, taskId: string | null | undefined, recordingEnabled: boolean, extras: unknown): Promise<StatisticsPage> {
-    const query = validateStatisticsQuery(rawQuery);
+  async query(request: StatisticsRequest): Promise<StatisticsPage> {
+    const query = validateStatisticsQuery(request.rawQuery);
+    const { taskId, recordingEnabled, extras } = request;
     const base: StatisticsPage = { scope: query.scope, state: 'empty', recordingEnabled, generatedAt: this.now(),
       retainedFrom: null, retainedTo: null, skippedRecords: 0, unattributedRecords: 0, unknownPassRecords: 0, summary: null,
       page: 0, pageSize: 60, totalRuns: 0, taskExtras: null, runs: [] };

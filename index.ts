@@ -2128,9 +2128,14 @@ export default class Broke implements Extension {
         }
         const stats = taskId ? this.statsByTask.get(taskId) ?? this.statsLoader.peek(taskId) : null;
         const usage = (taskId ? this.lastUsageByTask.get(taskId) : null) ?? stats?.lastUsage ?? null;
-        return await this.statisticsService.query(query, taskId, getConfig().stats.measure, {
-          providerUsage: usage,
-          avoidedChars: { slice: stats?.savedChars?.slice, search: stats?.estimates?.search, flush: stats?.estimates?.flush },
+        return await this.statisticsService.query({
+          rawQuery: query,
+          taskId,
+          recordingEnabled: getConfig().stats.measure,
+          extras: {
+            providerUsage: usage,
+            avoidedChars: { slice: stats?.savedChars?.slice, search: stats?.estimates?.search, flush: stats?.estimates?.flush },
+          },
         });
       } catch (error) {
         const failure = error instanceof StatisticsError ? error : new StatisticsError('read-failed');
