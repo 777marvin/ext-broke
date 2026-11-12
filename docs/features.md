@@ -1,4 +1,4 @@
-# Feature deep dives
+﻿# Feature deep dives
 
 One page per feature that needs more than a line of explanation. The
 command list, the configuration table and the honest cost numbers live in
@@ -8,7 +8,7 @@ in [docs/overview.md](overview.md); the tuning matrices are in
 
 ## Context Press and recorded statistics
 
-The compact 💸 task badge opens Context Press inside AiderDesk's native modal.
+The compact ­şÆ© task badge opens Context Press inside AiderDesk's native modal.
 **Control** shows the current state and a measured illustration of the last
 observed context: a bar of real characters against `maxContextChars` with a
 sealed head and an open rest, the limit as a dashed line with a derived scale,
@@ -37,6 +37,28 @@ draft preset. This task is the default scope. Retained history must be chosen
 explicitly and covers the installation's currently retained records, across
 tasks and projects. With no current task, select that broader scope explicitly.
 
+The snapshot refreshes when either of two things changes: this process records a
+run or resets a task, or the ledger files themselves change on disk. The second
+check is what makes the tab correct when another process appends - the CLI and
+MCP agents write to the same `measure.jsonl`. The cost is a file fingerprint per
+poll (size, mtime and file id for each of the four ledger files), not a re-read,
+so a poll in an unchanged ledger parses nothing. A changed fingerprint re-reads
+on that poll.
+
+One run, in characters and in rounded estimated tokens (`characters / 4`):
+
+```
+Net reduction                        14,820 est. tokens   (59,280 characters)
+  before 118,400 chars  ->  after 59,120 chars
+  Clean 12,400 | Errors & logs 31,000 | Trim 9,600 | Summarize 6,280
+  Net reconciliation -2,720   (overlap and marker overhead; not an extra saving)
+```
+
+The reconciliation row is why the step numbers do not add up to the net: passes
+overlap on the same bytes. A record whose step counters are incomplete shows
+`Unavailable` for that step instead of a zero, and the panel says how many
+records are affected.
+
 - **By step:** Clean, Errors & logs, Trim and Summarize contributions, with
   explanations and a table. Contributions can overlap and are not additive shares.
 - **Over time:** chronological run bars, run inspection and Older / Newer pages
@@ -62,10 +84,13 @@ four-file rotation ceiling - about 20 MiB, since a rotated file may hold one
 record past its 5 MiB trigger - and 250,000 physical lines, and reports a limit
 error rather than calling partial totals complete. Statistics refresh only
 while visible, at most every five seconds. The query reuses its snapshot while
-`measurementRevision()` is unchanged and re-reads the ledger only after a
-recorded run or a reset, so an unchanged ledger costs one comparison instead of
-a full re-parse; a ledger changed outside the extension is not a freshness
-source. Skipped-record counts follow the selected scope: `This task` counts only
+`measurementRevision()` is unchanged AND the ledger files are unchanged on disk,
+so an unchanged ledger costs one integer comparison plus a four-file fingerprint
+(size, mtime and file id) instead of a full re-parse. The second check is what
+makes the tab correct when another process appends to the same ledger - the CLI
+and MCP agents do, because every agent shares `ledgers/measure.jsonl` (see
+`docs/agents/multi-agent-setup.md`) - and a changed fingerprint re-reads on that
+poll. Skipped-record counts follow the selected scope: `This task` counts only
 records attributable to the open task, ledger lines no task can be derived from
 are reported on their own line, and `Retained history` reports the full skipped
 count. Loading, no-task, empty, partial and read-error states are distinct;
@@ -190,9 +215,9 @@ this remains a host-version-dependent limitation.
 
 `search.enabled` (default **on**) registers a `broke-search` agent tool
 backed by a per-project keyword index: identifier-aware tokenizer, BM25
-ranking, top-k results with `path:line` plus ±6 context lines around each
+ranking, top-k results with `path:line` plus ┬▒6 context lines around each
 best match - and the snippet summary *is* the token control. Every result
-set stays under `search.maxChars` (default 6000 chars ≈ 1.5k tokens)
+set stays under `search.maxChars` (default 6000 chars Ôëê 1.5k tokens)
 including a one-line footer stating how many results and indexed files it
 came from.
 
@@ -235,7 +260,7 @@ index on disk for later re-enabling. `/broke index [rebuild] | status` and
 Outside AiderDesk, broke runs as a zero-build stdio MCP server (`mcp.ts`),
 CLI and Claude Code `PreToolUse`/`PostToolUse` hook handler (`cli.ts`), backed by
 the host-agnostic `agent-core.ts` module and launched without a build step via
-`node scripts/broke-runner.cjs` (Node.js ≥ 22.15). External agents use
+`node scripts/broke-runner.cjs` (Node.js ÔëÑ 22.15). External agents use
 **pre-ingestion compression** (`broke_search`, `broke_slice`, `broke_diff`,
 `broke_compress`, allowlisted `broke_check`, and `broke_status`) while sharing
 the same `config.json` and appending `<agent>:<projectHash>` records to

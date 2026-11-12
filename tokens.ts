@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+﻿import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContextMessage } from '@aiderdesk/extensions';
 import type { CompressReport } from './compress';
@@ -17,7 +17,7 @@ export function measurementRevision(): number { return measureRevision; }
 
 /**
  * Token estimation. chars/4 is a deliberately crude heuristic (English prose
- * ≈ 4 chars/token; code ≈ 3-3.5). Broke never claims provider-exact numbers
+ * Ôëê 4 chars/token; code Ôëê 3-3.5). Broke never claims provider-exact numbers
  * - every figure is labeled as an estimate. The heuristic is consistent,
  * which is what matters for comparing before/after.
  */
@@ -146,12 +146,15 @@ export function modeledCounterfactualChars(stats: TaskStats): number {
 }
 
 const MAX_STATS_FILE_BYTES = 5 * 1024 * 1024;
-/**
- * Rotation trigger for `measure.jsonl`. Exported because the read-only
- * statistics budget derives from it: each file may hold one record more than
- * this value (appendJsonLine checks the size before appending).
- */
+/** Rotation trigger for `measure.jsonl`. */
 export const MAX_MEASURE_FILE_BYTES = 5 * 1024 * 1024;
+/**
+ * One record past the rotation trigger: `appendJsonLine` checks the size BEFORE
+ * appending, so a file already at `maxBytes` still takes one more record. Every
+ * reader that budgets from the rotation ceiling must add this headroom, or it
+ * rejects the ledger's own steady state as `data-limit`.
+ */
+export const MAX_RECORD_HEADROOM_BYTES = 4 * 1024;
 /** Rotation chain length: <file>.1 (newest) .. <file>.3 (oldest) are kept. */
 export const MAX_ROTATED_FILES = 3;
 

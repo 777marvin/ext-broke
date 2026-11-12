@@ -1,6 +1,7 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, truncateSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, statSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -141,6 +142,8 @@ describe('bounded read-only statistics', () => {
 
   it('rejects files, aggregate bytes, physical lines, and unsafe totals past the documented budget', async () => {
     const large = fixture();
+    // Sparse: truncateSync sets the length without writing 20 MiB of zeroes, so
+    // this budget case costs under a millisecond and allocates nothing.
     writeFileSync(large, '');
     truncateSync(large, MAX_LEDGER_READ_BYTES + 1);
     await assert.rejects(new StatisticsService(large).query({ rawQuery: { scope: 'retained', page: 0 }, taskId: null, recordingEnabled: true, extras: null }), { code: 'data-limit' });
@@ -156,7 +159,7 @@ describe('bounded read-only statistics', () => {
     await assert.rejects(new StatisticsService(overflow).query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null }), { code: 'unsafe-totals' });
   });
 
-  it('coalesces concurrent snapshots, reuses one snapshot until a revision bump, and reflects recorded runs and resets', async () => {
+  it('coalesces concurrent snapshots, reuses one snapshot while the ledger is unchanged, and reflects recorded runs and resets', async () => {
     const path = fixture();
     write(path, [row(1)]);
     let now = 10000;
@@ -166,21 +169,82 @@ describe('bounded read-only statistics', () => {
       service.query({ rawQuery: { scope: 'retained', page: 0 }, taskId: null, recordingEnabled: true, extras: null }),
     ]);
     assert.equal(first.generatedAt, concurrent.generatedAt);
-    // A visible poll must not rescan the ledger: lines that appear without a
-    // measurementRevision() bump stay invisible, however old the snapshot gets.
-    write(path, [row(1), row(2)]);
+    // A visible poll with an unchanged ledger costs stat() calls, not a re-read:
+    // the snapshot keeps its original generation, however old the poll gets.
     now = first.generatedAt + 600_000;
     const polled = await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null });
     assert.equal(polled.totalRuns, 1);
     assert.equal(polled.generatedAt, first.generatedAt);
+
+    // Another process appends to the same ledger. measurementRevision() is
+    // process-local, so ONLY the file fingerprint can reveal this - and it must,
+    // on the very next poll, without waiting for our own next write.
+    write(path, [row(1), row(2)]);
+    const foreign = await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null });
+    assert.equal(foreign.totalRuns, 2, 'a write from another process invalidates the snapshot immediately');
+
     const { persistRunRecord, clearTaskStats } = await import('../tokens');
-    // A recorded run bumps the revision, so the next poll sees the two lines
-    // written directly above plus the newly recorded one.
+    // A recorded run bumps the revision, so the next poll sees the three lines.
     persistRunRecord(row(3) as import('../tokens').RunRecord, path);
     assert.equal((await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null })).totalRuns, 3);
     write(path, []);
     clearTaskStats('a', join(root, 'absent-stats'));
     assert.equal((await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null })).state, 'empty');
+  });
+
+  it('sees a rotation that replaces the ledger with a same-sized file', async () => {
+    const path = fixture();
+    write(path, [row(1)]);
+    const service = new StatisticsService(path);
+    assert.equal((await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null })).totalRuns, 1);
+    // Rotate the way appendJsonLine does: the current file becomes <path>.1 and
+    // a fresh current file takes its place. The inode of the current file
+    // changes, so the fingerprint must differ even though a same-sized rewrite
+    // would have been invisible to size alone.
+    rmSync(path);
+    writeFileSync(path, [row(2)].map(value => JSON.stringify(value)).join('\n') + '\n');
+    const rotated = await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null });
+    assert.equal(rotated.totalRuns, 1, 'the replacement file is read, not the cached generation');
+    assert.equal(rotated.runs[0].at, 2, 'and it is the NEW content, not the old one');
+  });
+
+  it('sees a ledger written by another process, whose revision this process cannot observe', async () => {
+    // measurementRevision() is process-local. A real second process (the CLI /
+    // MCP agents in docs/agents/multi-agent-setup.md append to the same ledger)
+    // bumps ITS copy, never ours - so this test spawns one and proves the
+    // fingerprint is what makes the write visible.
+    const path = fixture();
+    write(path, [row(1)]);
+    const service = new StatisticsService(path);
+    assert.equal((await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null })).totalRuns, 1);
+
+    const { measurementRevision } = await import('../tokens');
+    const before = measurementRevision();
+    const script = join(root, `external-writer-${nextFixture++}.mjs`);
+    writeFileSync(script, [
+      `import { appendFileSync } from 'node:fs';`,
+      `appendFileSync(${JSON.stringify(path)}, ${JSON.stringify(JSON.stringify(row(2)) + '\n')});`,
+    ].join('\n'));
+    execFileSync(process.execPath, [script], { stdio: 'pipe' });
+
+    assert.equal(measurementRevision(), before, 'the other process cannot bump our revision');
+    const after = await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null });
+    assert.equal(after.totalRuns, 2, 'the fingerprint exposes the foreign write on the next poll');
+  });
+
+  it('re-reads a same-size rewrite whose mtime changed', async () => {
+    const path = fixture();
+    write(path, [row(1)]);
+    const service = new StatisticsService(path);
+    assert.equal((await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null })).totalRuns, 1);
+    // A rewrite that keeps the byte count identical is invisible to `size`
+    // alone. mtime is the signal that carries it, so a poll after the rewrite
+    // must re-read instead of serving the previous generation.
+    const stamped = statSync(path);
+    write(path, [row(9)]);
+    utimesSync(path, new Date(stamped.mtimeMs + 5_000), new Date(stamped.mtimeMs + 5_000));
+    const after = await service.query({ rawQuery: { scope: 'task', page: 0 }, taskId: 'a', recordingEnabled: true, extras: null });
+    assert.equal(after.runs[0].at, 9, 'a same-size rewrite still invalidates through mtime');
   });
 
   it('validates optional task metadata without making an empty ledger nonempty', async () => {
