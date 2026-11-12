@@ -333,7 +333,14 @@
   };
 
   const dialogKeyDown = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeOverlay(); }
+    if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      // closeOverlay() refuses silently while a save or command runs (that guard
+      // is deliberate: closing must not imply an in-flight write was cancelled).
+      // Escape has no disabled state, so it has to say why nothing happened.
+      if (savingRef.current || executingCmd) setOverlayError('Wait for the running operation to finish before closing.');
+      else closeOverlay();
+    }
     if (e.key === 'Tab') {
       const controls = (Array.from(dialogRef.current.querySelectorAll('button:not(:disabled),select:not(:disabled),input:not(:disabled),summary')) as HTMLElement[])
         .filter((el) => {
