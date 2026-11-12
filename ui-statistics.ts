@@ -25,13 +25,14 @@ export type StatisticsPage = {
     passChars: PassChars; reconciliationChars: number | null };
   page: number; pageSize: 60; totalRuns: number; taskExtras: StatisticsTaskExtras | null; runs: StatisticsRun[];
 };
-export type StatisticsErrorCode = 'invalid-query' | 'read-failed' | 'data-limit' | 'unsafe-totals';
+export type StatisticsErrorCode = 'invalid-query' | 'read-failed' | 'data-limit' | 'unsafe-totals' | 'task-unavailable';
 export class StatisticsError extends Error {
   constructor(readonly code: StatisticsErrorCode) {
     super({ 'invalid-query': 'Choose a valid statistics scope and page.',
       'read-failed': 'Recorded history could not be read. Retry to refresh it.',
       'data-limit': 'Recorded history exceeds the safe reading limit. Full totals are unavailable.',
-      'unsafe-totals': 'Recorded history totals exceed the safe numeric range.' }[code]);
+      'unsafe-totals': 'Recorded history totals exceed the safe numeric range.',
+      'task-unavailable': 'The current task could not be resolved. Reopen this panel to retry.' }[code]);
     this.name = 'StatisticsError';
   }
 }

@@ -2076,8 +2076,17 @@ export default class Broke implements Extension {
         const query = validateStatisticsQuery(args[0]);
         // Resolve this supplied host context once; never borrow another task
         // from the extension's onLoad context or re-read conversation content.
-        const task = query.scope === 'task' && typeof context?.getTaskContext === 'function' ? context.getTaskContext() : null;
-        const taskId = typeof task?.data.id === 'string' && task.data.id.length ? task.data.id : null;
+        // A host context that cannot name its task is its own failure, not an
+        // unreadable ledger: 'read-failed' would blame the recorded history.
+        let taskId: string | null = null;
+        if (query.scope === 'task') {
+          try {
+            const task = typeof context?.getTaskContext === 'function' ? context.getTaskContext() : null;
+            taskId = typeof task?.data.id === 'string' && task.data.id.length ? task.data.id : null;
+          } catch {
+            throw new StatisticsError('task-unavailable');
+          }
+        }
         const stats = taskId ? this.statsByTask.get(taskId) ?? this.statsLoader.peek(taskId) : null;
         const usage = (taskId ? this.lastUsageByTask.get(taskId) : null) ?? stats?.lastUsage ?? null;
         return await this.statisticsService.query(query, taskId, getConfig().stats.measure, {

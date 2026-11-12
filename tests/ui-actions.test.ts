@@ -132,6 +132,12 @@ describe('Context Press read-only statistics action', () => {
     absent.getTaskContext = () => null;
     const noTask = await ext.executeUIExtensionAction('broke-status', 'getStatistics', [{ scope: 'task', page: 0 }], absent) as any;
     assert.equal(noTask.state, 'no-task');
+    // A host context that throws is not an unreadable ledger: name the real cause.
+    const throwing = makeHost();
+    throwing.getTaskContext = () => { throw new Error('host task store unavailable'); };
+    const unresolved = await new Broke().executeUIExtensionAction('broke-status', 'getStatistics', [{ scope: 'task', page: 0 }], throwing) as any;
+    assert.equal(unresolved.error.code, 'task-unavailable');
+    assert.doesNotMatch(unresolved.error.message, /Recorded history/);
     const path = process.env.BROKE_MEASURE_PATH!;
     if (existsSync(path)) rmSync(path);
     mkdirSync(path);
