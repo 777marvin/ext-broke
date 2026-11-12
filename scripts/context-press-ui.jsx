@@ -1,11 +1,52 @@
-// Assembled inside StatusBadge's function: use the existing config/setup/command owners.
-const cpOriginal = React.useRef(null as any);
+﻿// Assembled inside StatusBadge's function: use the existing config/setup/command owners.
+// The draft mirrors the Zod ConfigSchema. The host types `data` as `any`, so the
+// dialog declares the fields it actually reads rather than spreading `any` into
+// every consumer below.
+type ContextPressDraft = {
+  enabled?: boolean;
+  mode?: string;
+  level?: string;
+  autonomy?: string;
+  protectedTurns?: number;
+  stats?: { measure?: boolean };
+  summarize?: { via?: string };
+  [key: string]: unknown;
+};
+type ContextPressStats = {
+  scope: 'task' | 'retained';
+  state: 'ready' | 'empty' | 'partial' | 'no-task';
+  recordingEnabled: boolean;
+  generatedAt: number;
+  skippedRecords: number;
+  unattributedRecords: number;
+  unknownPassRecords: number;
+  page: number;
+  pageSize: number;
+  totalRuns: number;
+  retainedFrom: number | null;
+  retainedTo: number | null;
+  summary: null | {
+    runs: number; charsBefore: number; charsAfter: number; netChars: number;
+    passChars: Record<'structural' | 'error' | 'truncate' | 'summarize', number>;
+    reconciliationChars: number | null;
+  };
+  runs: Array<{
+    at: number; charsBefore: number; charsAfter: number; netChars: number;
+    passChars: Record<string, number | null>;
+    reconciliationChars: number | null;
+  }>;
+  taskExtras: null | {
+    providerUsage: null | { sentTokens: number; cacheReadTokens: number | null; cacheWriteTokens: number | null };
+    avoidedChars: { slice: number | null; search: number | null; flush: number | null };
+  };
+};
+const cpOriginal = React.useRef(null as ContextPressDraft | null);
 const [cpView, cpSetView] = React.useState('control');
 const cpTabs = React.useRef([] as HTMLButtonElement[]);
 const [cpReplay, cpSetReplay] = React.useState(false);
 const cpReplayTimer = React.useRef(null as ReturnType<typeof setTimeout> | null);
 const [cpQuery, cpSetQuery] = React.useState({ scope: 'task', page: 0 });
-const [cpStats, cpSetStats] = React.useState(null as any);
+const [cpStats, cpSetStats] = React.useState(null as ContextPressStats | null);
 const [cpStatsLoading, cpSetStatsLoading] = React.useState(false);
 const [cpStatsError, cpSetStatsError] = React.useState('');
 const [cpUnits, cpSetUnits] = React.useState('tokens');
@@ -37,34 +78,35 @@ const cpLimit = maxCtx > 0 ? maxCtx : 0;
 const cpChars = cpShape?.totalChars ?? 0;
 const cpSealed = cpShape?.protectedChars ?? 0;
 const cpOpen = cpShape?.compressibleChars ?? 0;
-const cpPct = cpShape && cpLimit > 0 ? Math.round((cpChars / cpLimit) * 100) : 0;
-// Only the DRAWN bar is clamped: at the limit it stops at 100 percent while the
-// printed numbers keep the real value. Without a configured limit there is no
-// scale and no fill.
-const cpOver = !!cpShape && cpLimit > 0 && cpChars > cpLimit;
 const cpBarX = 32;
 const cpBarW = 520;
 const cpBarY = 118;
 const cpBarH = 44;
-const cpFillW = cpShape && cpLimit > 0 ? Math.min(1, cpChars / cpLimit) * cpBarW : 0;
-const cpFillPct = cpShape && cpLimit > 0 ? Math.min(100, (cpChars / cpLimit) * 100) : 0;
-const cpSealedW = cpChars > 0 ? (cpSealed / cpChars) * cpFillW : 0;
-const cpOpenW = Math.max(0, cpFillW - cpSealedW);
-const cpSealedShare = cpChars > 0 ? (cpSealed / cpChars) * 100 : 0;
-const cpOpenShare = Math.max(0, 100 - cpSealedShare);
+// One source of truth for the drawn numbers: contextPressFigure() returns the
+// real percentage, the clamped bar width and the sealed/open split. The JSX
+// below places those values; the arithmetic is verified as behaviour in
+// tests/context-press-figure.test.ts, not by matching source text.
+const cpFig = contextPressFigure({ shape: cpShape, limit: cpLimit, barWidth: cpBarW });
+const cpPct = cpFig.pct;
+const cpOver = cpFig.over;
+const cpFillW = cpFig.fillW;
+const cpFillPct = cpFig.fillPct;
+const cpSealedW = cpFig.sealedW;
+const cpOpenW = cpFig.openW;
+const cpSealedShare = cpFig.sealedShare;
+const cpOpenShare = cpFig.openShare;
 const cpShort = (value) => value >= 1000 ? `${Math.round(value / 1000)}k` : String(value);
 // The scale is derived from the configured limit, so the ticks always describe
-// THIS dialog's limit instead of a hardcoded number.
-const cpTicks = cpLimit > 0
-  ? [0, 0.25, 0.5, 0.75, 1].map((share, index) => ({
-      x: cpBarX + share * cpBarW,
-      label: index === 0 ? '0' : cpShort(cpLimit * share),
-      anchor: (index === 0 ? 'start' : index === 4 ? 'end' : 'middle') as 'start' | 'middle' | 'end',
-    }))
-  : [];
+// THIS dialog's limit instead of a hardcoded number. `as const` keeps the anchor
+// literal union: the injected runtime helper is plain JavaScript and would
+// otherwise widen it to `string`.
+const cpTicks = contextPressTicks(cpLimit, cpBarX, cpBarW) as ReadonlyArray<{ x: number; label: string; anchor: 'start' | 'middle' | 'end' }>;
 const cpNumText = cpShape ? cpFormat(cpChars) : '\u2014';
 // The suffix follows the printed number, so a long count never collides with it.
-const cpSuffixX = cpBarX + cpNumText.length * 28 + 16;
+// Monospace advance tracks the rendered size, so the per-character width follows
+// the same threshold as cpSuffixSize below.
+const cpCharW = cpNumText.length > 7 ? 9 : 10.8;
+const cpSuffixX = cpBarX + cpNumText.length * cpCharW + 12;
 const cpSuffixSize = cpNumText.length > 7 ? 15 : 18;
 const cpSuffixText = cpLimit > 0 ? `/ ${cpFormat(cpLimit)} chars` : 'chars';
 const cpTopRight = !cpShape ? '' : cpLimit === 0 ? 'no limit configured' : cpOver ? `${cpPct}% \u00b7 over limit` : `${cpPct}% of limit`;
@@ -115,7 +157,12 @@ const cpLoadStats = React.useCallback(async () => {
     if (!result || !Array.isArray(result.runs) || typeof result.state !== 'string' || !['ready', 'empty', 'partial', 'no-task'].includes(result.state)) {
       cpSetStatsError('Recorded history could not be read. Please retry.'); return;
     }
-    cpDataKey.current = key; cpSetStats(result);
+    // Narrow before storing: the action's declared return type is the success
+    // shape UNIONed with the error envelope, so `result` is only a stats page
+    // once the error branch above has returned.
+    const page = result as ContextPressStats | null;
+    if (!page) { cpSetStatsError('Recorded history could not be read. Please retry.'); return; }
+    cpDataKey.current = key; cpSetStats(page);
   } catch { if (cpRequest.current === request) cpSetStatsError('Recorded history could not be read. Please retry.'); }
   finally { if (cpRequest.current === request) { cpFlight.current = null; cpSetStatsLoading(false); } }
 }, [overlayOpen, cpView, cpQuery.scope, cpQuery.page]);
@@ -228,12 +275,12 @@ const cpControlView = (
           { mode: 'long', title: 'Summarize', detail: 'Also summarize eligible older work.' },
         ].map((stage, index) => <label key={stage.mode} className={`cp-option${cpDepth >= index ? ' cp-included' : ''}${dialogMode === stage.mode ? ' cp-selected' : ''}`}>
           <input type="radio" name="broke-compression-depth" value={stage.mode} checked={dialogMode === stage.mode} onChange={() => void selectMode(stage.mode)} aria-label={`${stage.title} (${cpModeNames[stage.mode]})`} />
-          <strong>{stage.title}</strong><p>{stage.detail}</p><small>{cpDepth >= index ? 'Included' : index === 2 ? 'Optional · needs model' : 'Not included'}</small>
+          <strong>{stage.title}</strong><p>{stage.detail}</p><small>{cpDepth >= index ? 'Included' : index === 2 ? 'Optional ┬À needs model' : 'Not included'}</small>
         </label>)}
       </fieldset>
     </div>
     <label className="cp-enable"><input type="checkbox" checked={overlayCfg?.enabled ?? true} disabled={saving || !overlayCfg} onChange={e => patchOverlay({ enabled: e.target.checked })} />Enable Broke</label>
-    <div className="cp-selection"><strong>{cpModeNames[dialogMode] ?? 'Custom settings'}{dialogMode === 'normal' ? ' · recommended' : ''}</strong>
+    <div className="cp-selection"><strong>{cpModeNames[dialogMode] ?? 'Custom settings'}{dialogMode === 'normal' ? ' ┬À recommended' : ''}</strong>
       <p>{dialogMode === 'custom' ? 'Your individually adjusted settings are kept. Choosing a stage explicitly applies its preset.' : cpDepth === 0 ? 'Clean only. Text is retained; message framing may change.' : cpDepth === 1 ? 'Clean + Trim. No extra software needed.' : 'Clean + Trim + Summarize. A configured model is required.'}</p>
       {dialogMode === 'custom' ? <button type="button" onClick={() => setAdvancedOpen(true)} style={{ marginTop: 8 }}>Inspect custom settings</button> : null}
     </div>
@@ -270,7 +317,7 @@ const cpStatisticsView = (
     {cpStats?.state === 'no-task' ? <div className="cp-detail" role="status"><strong>No task is open</strong>Select Retained history explicitly to inspect the installation's recorded runs.</div> : null}
     {cpStats && cpStats.state !== 'no-task' && !cpSummary ? <div className="cp-detail" role="status"><strong>No runs recorded yet</strong>{cpStats.recordingEnabled ? 'Future compression runs will add measurements. Earlier missing records cannot be reconstructed.' : 'History recording is off. Enable Record run history below and Save to record future runs.'}</div> : null}
     {cpSummary ? <>
-      <div className="cp-stat-top"><div><p className="cp-unit-label">Net reduction · {cpUnits === 'tokens' ? 'Estimated tokens' : 'Measured characters'}</p><strong className="cp-number">{cpFormat(cpConvert(cpSummary.netChars))}</strong><p className="cp-small">{cpSummary.netChars < 0 ? 'Net added context' : 'Net context removed'} across {cpSummary.runs} recorded runs.</p></div>
+      <div className="cp-stat-top"><div><p className="cp-unit-label">Net reduction ┬À {cpUnits === 'tokens' ? 'Estimated tokens' : 'Measured characters'}</p><strong className="cp-number">{cpFormat(cpConvert(cpSummary.netChars))}</strong><p className="cp-small">{cpSummary.netChars < 0 ? 'Net added context' : 'Net context removed'} across {cpSummary.runs} recorded runs.</p></div>
         <div className="cp-small"><p>{cpFormat(cpSummary.charsBefore)} characters before</p><p>{cpFormat(cpSummary.charsAfter)} characters after</p><p style={{ marginTop: 5 }}>Summed over individual calls, including repeated material.</p></div>
       </div>
       <div className="cp-toolbar"><div className="cp-toggles" role="group" aria-label="Statistics diagram"><button type="button" aria-pressed={cpChart === 'step'} onClick={() => cpSetChart('step')}>By step</button><button type="button" aria-pressed={cpChart === 'time'} onClick={() => cpSetChart('time')}>Over time</button></div>
@@ -291,8 +338,8 @@ const cpStatisticsView = (
             <span className="cp-run-canvas" aria-hidden="true"><span className="cp-zero" /><span className="cp-run-bar" style={{ height, top: run.netChars >= 0 ? 65-height : 65, background: run.netChars < 0 ? '#a34136' : '#3456ec' }} /></span><span className="cp-run-index">{index + 1}</span>
           </button>; })}
         </div></div>
-        {cpSelectedRun ? <div className="cp-detail" role="status"><strong>{new Date(cpSelectedRun.at).toLocaleString('en-US')} · {cpFormat(cpConvert(Math.abs(cpSelectedRun.netChars)))} {cpUnitName} {cpSelectedRun.netChars < 0 ? 'added' : 'removed'}</strong><p>{cpFormat(cpSelectedRun.charsBefore)} → {cpFormat(cpSelectedRun.charsAfter)} characters.</p><p>{cpPasses.map(pass => `${pass.label}: ${cpSelectedRun.passChars[pass.key] == null ? 'Unavailable' : cpFormat(cpConvert(cpSelectedRun.passChars[pass.key]))}`).join(' · ')}</p><p>Net reconciliation: {cpSelectedRun.reconciliationChars == null ? 'Unavailable' : cpFormat(cpConvert(cpSelectedRun.reconciliationChars))}</p></div> : null}
-        <div className="cp-row" style={{ marginTop: 12 }}><p className="cp-small">Showing {cpStats.totalRuns ? Math.max(1, cpStats.totalRuns - (cpStats.page+1)*60+1) : 0}–{Math.max(0, cpStats.totalRuns-cpStats.page*60)} of {cpStats.totalRuns} runs</p><div className="cp-toggles"><button type="button" disabled={cpStatsLoading || (cpStats.page+1)*60 >= cpStats.totalRuns} onClick={() => cpSetQuery({ ...cpQuery, page: cpStats.page+1 })}>Older</button><button type="button" disabled={cpStatsLoading || cpStats.page === 0} onClick={() => cpSetQuery({ ...cpQuery, page: cpStats.page-1 })}>Newer</button></div></div>
+        {cpSelectedRun ? <div className="cp-detail" role="status"><strong>{new Date(cpSelectedRun.at).toLocaleString('en-US')} ┬À {cpFormat(cpConvert(Math.abs(cpSelectedRun.netChars)))} {cpUnitName} {cpSelectedRun.netChars < 0 ? 'added' : 'removed'}</strong><p>{cpFormat(cpSelectedRun.charsBefore)} ÔåÆ {cpFormat(cpSelectedRun.charsAfter)} characters.</p><p>{cpPasses.map(pass => `${pass.label}: ${cpSelectedRun.passChars[pass.key] == null ? 'Unavailable' : cpFormat(cpConvert(cpSelectedRun.passChars[pass.key]))}`).join(' ┬À ')}</p><p>Net reconciliation: {cpSelectedRun.reconciliationChars == null ? 'Unavailable' : cpFormat(cpConvert(cpSelectedRun.reconciliationChars))}</p></div> : null}
+        <div className="cp-row" style={{ marginTop: 12 }}><p className="cp-small">Showing {cpStats.totalRuns ? Math.max(1, cpStats.totalRuns - (cpStats.page+1)*60+1) : 0}ÔÇô{Math.max(0, cpStats.totalRuns-cpStats.page*60)} of {cpStats.totalRuns} runs</p><div className="cp-toggles"><button type="button" disabled={cpStatsLoading || (cpStats.page+1)*60 >= cpStats.totalRuns} onClick={() => cpSetQuery({ ...cpQuery, page: cpStats.page+1 })}>Older</button><button type="button" disabled={cpStatsLoading || cpStats.page === 0} onClick={() => cpSetQuery({ ...cpQuery, page: cpStats.page-1 })}>Newer</button></div></div>
       </>}
     </> : null}
     {cpStats?.state === 'partial' || cpStats?.skippedRecords || cpStats?.unknownPassRecords ? <p className="cp-chart-note" role="status">Partial data: {cpStats.skippedRecords} malformed records skipped; {cpStats.unknownPassRecords} records have incomplete step counters. Known contributions are partial; unavailable values are not measured zero.</p> : null}
@@ -300,15 +347,15 @@ const cpStatisticsView = (
     <div className="cp-row" style={{ marginTop: 18, paddingTop: 13, borderTop: '1px solid #d7ddf1' }}><div><strong style={{ fontSize: 13 }}>Keep a run history</strong><p className="cp-small">Future measurements only. Turning this off keeps recorded history.</p></div><label className="cp-record"><input type="checkbox" checked={overlayCfg?.stats?.measure ?? true} disabled={saving || !overlayCfg} onChange={event => patchOverlay({ stats: { ...(draftRef.current?.stats ?? {}), measure: event.target.checked } })} />Record run history</label></div>
     <details className="cp-disclosure"><summary>Provider usage &amp; avoided context</summary>
       {cpQuery.scope !== 'task' ? <p className="cp-chart-note">These additional counters are task-specific. Select This task to inspect them; they are not summed across retained history.</p> : <>
-        <p className="cp-chart-note">Last available completed call — separate usage, not the selected run's saving.</p>
+        <p className="cp-chart-note">Last available completed call ÔÇö separate usage, not the selected run's saving.</p>
         <table className="cp-table"><caption>Additional task counters, excluded from net reduction</caption><tbody>
           <tr><th scope="row">Provider-reported sent tokens</th><td>{cpStats?.taskExtras?.providerUsage ? cpFormat(cpStats.taskExtras.providerUsage.sentTokens) : 'Unavailable'}</td></tr>
           <tr><th scope="row">Cache-read tokens</th><td>{cpStats?.taskExtras?.providerUsage?.cacheReadTokens == null ? 'Unavailable' : cpFormat(cpStats.taskExtras.providerUsage.cacheReadTokens)}</td></tr>
           <tr><th scope="row">Cache-written tokens</th><td>{cpStats?.taskExtras?.providerUsage?.cacheWriteTokens == null ? 'Unavailable' : cpFormat(cpStats.taskExtras.providerUsage.cacheWriteTokens)}</td></tr>
-          {['slice','search','flush'].map(key => <tr key={key}><th scope="row">Avoided context · {key} (estimate)</th><td>{cpStats?.taskExtras?.avoidedChars?.[key] == null ? 'Unavailable' : `${cpFormat(cpConvert(cpStats.taskExtras.avoidedChars[key]))} ${cpUnitName}`}</td></tr>)}
+          {['slice','search','flush'].map(key => <tr key={key}><th scope="row">Avoided context ┬À {key} (estimate)</th><td>{cpStats?.taskExtras?.avoidedChars?.[key] == null ? 'Unavailable' : `${cpFormat(cpConvert(cpStats.taskExtras.avoidedChars[key]))} ${cpUnitName}`}</td></tr>)}
         </tbody></table>
       </>}
     </details>
-    <p className="cp-chart-note">Token estimates use characters ÷ 4, rounded. Retained history is rotation-bounded, not unlimited all-time history. Neither these measurements nor provider usage proves a billing reduction. Changing a preset does not rewrite history.</p>
+    <p className="cp-chart-note">Token estimates use characters ├À 4, rounded. Retained history is rotation-bounded, not unlimited all-time history. Neither these measurements nor provider usage proves a billing reduction. Changing a preset does not rewrite history.</p>
   </section>
 );

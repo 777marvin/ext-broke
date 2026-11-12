@@ -15,6 +15,9 @@ has a tag but no published release (see the 1.2.1 entry).
 
 ### Added
 
+- Extract the Context Press illustration's arithmetic into `context-press-figure.ts` (`contextPressFigure`, `contextPressTicks`) and unit-test it directly instead of asserting the JSX as source text. The same numbers are injected into the JSX template as plain JavaScript, because the host template is a string with no module system; a drift test compares the injected copy against the module for eight representative shapes so the two cannot diverge silently.
+- Type the Context Press draft and statistics payload in `StatusBadge.jsx` instead of `any` (`ContextPressDraft`, `ContextPressStats`). The dialog now declares the fields it reads, so an action result is narrowed before it reaches state.
+
 - Move the per-record headroom constant next to the other ledger constants in `tokens.ts` as `MAX_RECORD_HEADROOM_BYTES`, so the read budget and its ceiling are derived from one place instead of a local `4 * 1024` in `ui-statistics.ts`.
 
 - Name the four arguments of `StatisticsService.query()` instead of passing them positionally: the previous `(rawQuery, taskId, recordingEnabled, extras)` put a `string | null` beside a `boolean` and made the call site count positions. The new `StatisticsRequest` type is checked at every call site and in all statistics tests.

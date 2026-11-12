@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The Context Press illustration must draw MEASURED state: the printed context
  * count against maxContextChars, a bar whose sealed head and open rest are
  * proportional to the real characters, a limit line at the configured scale and
@@ -21,16 +21,21 @@ describe('context press illustration', () => {
     assert.match(ui, /aria-label=\{cpAria\}/, 'the drawing carries the measured values as text');
     assert.match(ui, /data\?\.contextShape/, 'the numbers come from the measured context shape');
     assert.match(ui, /const cpLimit = maxCtx > 0 \? maxCtx : 0/, 'the scale is the configured limit');
-    assert.match(ui, /const cpPct = cpShape && cpLimit > 0 \? Math\.round\(\(cpChars \/ cpLimit\) \* 100\) : 0/, 'the printed percentage keeps the real value');
-    assert.match(ui, /const cpFillW = cpShape && cpLimit > 0 \? Math\.min\(1, cpChars \/ cpLimit\) \* cpBarW : 0/, 'only the drawn bar is clamped');
-    assert.match(ui, /const cpOver = !!cpShape && cpLimit > 0 && cpChars > cpLimit/, 'over limit is a measured comparison, not a guess');
+    // The arithmetic behind these three claims is verified as behaviour in
+    // tests/context-press-figure.test.ts; what matters here is that the JSX
+    // consumes that function instead of recomputing them inline.
+    assert.match(ui, /contextPressFigure\(\{ shape: cpShape, limit: cpLimit, barWidth: cpBarW \}\)/, 'every drawn number comes from the tested figure helper');
+    assert.match(ui, /const cpPct = cpFig\.pct/, 'the printed percentage keeps the real value');
+    assert.match(ui, /const cpFillW = cpFig\.fillW/, 'only the drawn bar is clamped');
+    assert.match(ui, /const cpOver = cpFig\.over/, 'over limit is a measured comparison, not a guess');
     assert.match(ui, /% \\u00b7 over limit/, 'the over-limit state is labelled in the header');
+    assert.doesNotMatch(ui, /const cpPct = cpShape && cpLimit > 0/, 'the percentage is no longer recomputed inline');
     assert.doesNotMatch(ui, /cpShort\(Math\.round\(\(maxCtx \* i\) \/ 4\)\)/, 'the old fixed four-step scale is gone');
   });
 
   it('splits the bar into a sealed head and an open rest', () => {
-    assert.match(ui, /const cpSealedW = cpChars > 0 \? \(cpSealed \/ cpChars\) \* cpFillW : 0/, 'the sealed head is the protected share of the fill');
-    assert.match(ui, /const cpOpenW = Math\.max\(0, cpFillW - cpSealedW\)/, 'the open rest is the remainder of the fill');
+    assert.match(ui, /const cpSealedW = cpFig\.sealedW/, 'the sealed head comes from the measured split');
+    assert.match(ui, /const cpOpenW = cpFig\.openW/, 'the open rest comes from the measured split');
     assert.match(ui, /\{cpSealedW > 0 \? <rect className="cp-fig-sealed"/, 'an empty protected tail draws no sealed head');
     assert.match(ui, /url\(#cpBarClip\)/, 'the fill is clipped to the bar instead of overflowing the scale');
     assert.match(ui, /Sealed, never trimmed/, 'the sealed part is named');
@@ -40,8 +45,8 @@ describe('context press illustration', () => {
   });
 
   it('draws the limit line and ticks from the configured limit', () => {
-    assert.match(ui, /const cpTicks = cpLimit > 0/, 'ticks only exist with a real scale');
-    assert.match(ui, /label: index === 0 \? '0' : cpShort\(cpLimit \* share\)/, 'tick labels are derived from the limit');
+    // tickLabels are verified in context-press-figure.test.ts; here only the call.
+    assert.match(ui, /contextPressTicks\(cpLimit, cpBarX, cpBarW\)/, 'the ticks are derived from the configured limit');
     assert.match(ui, /\{`limit \$\{cpFormat\(cpLimit\)\}`\}/, 'the limit line prints the limit it marks');
     assert.match(ui, /strokeDasharray=\{cpShape \? undefined : '7 6'\}/, 'an unmeasured bar is an empty dashed track');
   });
@@ -64,7 +69,6 @@ describe('context press illustration', () => {
     assert.match(ui, /No guessed split\. The next request will be measured\./, 'the unmeasured footnote names the guarantee');
     assert.match(ui, /const cpNumText = cpShape \? cpFormat\(cpChars\) : '\\u2014'/, 'an unmeasured count prints a dash, never a zero');
   });
-
   it('repeats the same numbers in a compact variant for narrow dialogs', () => {
     assert.match(ui, /className="cp-figure-wide"/, 'the wide canvas is addressable');
     assert.match(ui, /className="cp-figure-compact" aria-hidden="true"/, 'the compact block is decorative because the svg already carries the description');

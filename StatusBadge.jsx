@@ -173,7 +173,7 @@
     try {
       const c = await executeExtensionAction?.('getConfig');
       if (!c || typeof c !== 'object') throw new Error('Missing config');
-      if (revision.current === request) { cpOriginal.current = c; setDraft(c); }
+      if (revision.current === request) { cpOriginal.current = c as typeof cpOriginal.current; setDraft(c); }
       const setup = (await executeExtensionAction?.('getSetupState')) as { dismissed?: boolean } | undefined;
       if (overlaySession.current === session && guideRevision.current === guideRequest) setGuideVisible(setup?.dismissed === false);
     } catch {
@@ -320,7 +320,7 @@
           cmd.startsWith('config set ')
         ) {
           const fresh = await executeExtensionAction?.('getConfig');
-          if (fresh && typeof fresh === 'object') { cpOriginal.current = fresh; setDraft(fresh); }
+          if (fresh && typeof fresh === 'object') { cpOriginal.current = fresh as typeof cpOriginal.current; setDraft(fresh); }
         }
       } else {
         setCommandResult({ ok: false, text: res?.error ?? 'the command returned no result', cmd });
