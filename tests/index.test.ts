@@ -452,6 +452,100 @@ describe('index.ts orchestration (fake host, XF11)', () => {
     assert.ok(data.maxContextChars > 0);
   });
 
+  it('publishes the measured context shape with a proportional protected split', async () => {
+    writeConfig({ maxContextChars: 10_000, protectedTurns: 1 });
+    const ext = new Broke();
+    const messages = [
+      { id: 'm1', role: 'user', content: 'x'.repeat(2000) },
+      { id: 'a1', role: 'assistant', content: 'y'.repeat(4000) },
+      { id: 'm2', role: 'user', content: 'z'.repeat(2000) },
+    ] as unknown as ContextMessage[];
+    const { context } = makeHost('task-shape', () => 'stub', messages);
+
+    const unmeasured = (await ext.getUIExtensionData('broke-status', context)) as { contextShape: unknown };
+    assert.equal(unmeasured.contextShape, null, 'no observation yet - the drawing must not invent a split');
+
+    await ext.onTransformMessages(
+      { originalMessages: messages, transformedMessages: messages.slice() } as never,
+      context,
+    );
+
+    const data = (await ext.getUIExtensionData('broke-status', context)) as {
+      maxContextChars: number;
+      contextShape: {
+        at: number;
+        totalChars: number;
+        inputTokens: number;
+        protectedChars: number;
+        compressibleChars: number;
+        fillPct: number;
+        belowThreshold: boolean;
+      } | null;
+    };
+    assert.ok(data.contextShape, 'the transform hook must publish the measured shape');
+    const shape = data.contextShape;
+    assert.equal(shape.totalChars, messagesChars(messages));
+    assert.equal(shape.inputTokens, Math.round(shape.totalChars / 4));
+    assert.equal(shape.protectedChars + shape.compressibleChars, shape.totalChars, 'the split covers the whole column');
+    assert.ok(shape.compressibleChars > 0, 'the older assistant turn is compressible');
+    assert.ok(shape.protectedChars > 0, 'the last user turn stays protected');
+    assert.equal(shape.fillPct, Math.round((shape.totalChars / data.maxContextChars) * 100));
+    assert.equal(shape.belowThreshold, shape.totalChars <= data.maxContextChars);
+  });
+
+  it('reports everything as protected when no region is compressible', async () => {
+    writeConfig({ protectedTurns: 2 });
+    const ext = new Broke();
+    const messages = [{ id: 'm1', role: 'user', content: 'brief' }] as unknown as ContextMessage[];
+    const { context } = makeHost('task-shape-none', () => 'stub', messages);
+
+    await ext.onTransformMessages(
+      { originalMessages: messages, transformedMessages: messages.slice() } as never,
+      context,
+    );
+
+    const data = (await ext.getUIExtensionData('broke-status', context)) as {
+      contextShape: { totalChars: number; protectedChars: number; compressibleChars: number } | null;
+    };
+    assert.ok(data.contextShape);
+    assert.equal(data.contextShape.compressibleChars, 0, 'nothing may be touched');
+    assert.equal(data.contextShape.protectedChars, data.contextShape.totalChars);
+  });
+
+  it('flags an over-threshold context without clamping the percentage', async () => {
+    writeConfig({ maxContextChars: 100 });
+    const ext = new Broke();
+    const messages = [{ id: 'm1', role: 'user', content: 'x'.repeat(400) }] as unknown as ContextMessage[];
+    const { context } = makeHost('task-shape-over', () => 'stub', messages);
+
+    await ext.onTransformMessages(
+      { originalMessages: messages, transformedMessages: messages.slice() } as never,
+      context,
+    );
+
+    const data = (await ext.getUIExtensionData('broke-status', context)) as {
+      contextShape: { fillPct: number; belowThreshold: boolean } | null;
+    };
+    assert.ok(data.contextShape);
+    assert.equal(data.contextShape.belowThreshold, false, 'a context above the limit must say so');
+    assert.ok(data.contextShape.fillPct > 100, 'the drawing clamps, the data does not');
+  });
+
+  it('publishes no context shape while the extension is disabled', async () => {
+    writeConfig({ enabled: false });
+    const ext = new Broke();
+    const messages = [{ id: 'm1', role: 'user', content: 'x'.repeat(80) }] as unknown as ContextMessage[];
+    const { context } = makeHost('task-shape-off', () => 'stub', messages);
+
+    await ext.onTransformMessages(
+      { originalMessages: messages, transformedMessages: messages.slice() } as never,
+      context,
+    );
+
+    const data = (await ext.getUIExtensionData('broke-status', context)) as { contextShape: unknown };
+    assert.equal(data.contextShape, null, 'a disabled extension observes nothing');
+  });
+
   it('/broke why reports the live gate state for an honest zero', async () => {
     writeConfig({ level: 'truncate' });
     const ext = new Broke();

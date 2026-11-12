@@ -74,7 +74,9 @@ surface.
 | `scripts/bench.ts` | Deterministic reference benchmark (npm run bench): a 351,403-char synthetic session through the real pipeline with a stub summarizer, byte-reproducible; F4 keyword-index scenario for the counterfactual estimate model |
 | `scripts/measure.ts` | `npm run measure`: CLI wrapper that loads `measure.jsonl` and prints `formatMeasure` |
 | `ConfigComponent.jsx` | Settings dialog (gear icon on the extension card), schema-bounded numeric fields, measurement toggle |
-| `StatusBadge.jsx` | 💸 badge in the task status bar, per-pass breakdown in the tooltip, shows the summarize auto-disable state; always renders; the 10 s poll runs only while a summarizer backend is active (BRK-029), push refreshes cover the rest |
+| `StatusBadge.jsx` | Compact 💸 task badge, per-pass tooltip, summarize auto-disable state, and native Context Press modal with Control / Statistics tabs, fixed draft footer and complete advanced command surface; the badge's 10 s poll runs only while a summarizer backend is active (BRK-029), push refreshes cover the rest |
+| `scripts/context-press-ui.jsx` / `scripts/context-press-style.js` | Context Press depth controls, the measured context illustration, its replay and recorded charts; scoped `.broke-context-press` runtime tokens; fragments assembled by `scripts/ui-template-source.cjs` with the shared draft helper |
+| `ui-statistics.ts` | Read-only ledger projection for current-task or explicitly selected retained-history scopes; signed net, partial step attribution, fixed 60-run pages, snapshot invalidated by `measurementRevision()` OR a per-file size/mtime/inode fingerprint (so a foreign process appending to the ledger is visible on the next poll), scope-aware skip counts (unattributable lines reported separately, never against a task), four-file / ~20 MiB / 250,000-line read bounds derived from the rotation ceiling; no model request or configuration write |
 | `tests/index.test.ts` | Fake-host integration tests (XF11): real extension against a fake ExtensionContext/task, compression + stats/measure persistence, reentry guard, summarize auto-disable, tool-level archiving on/off, silence when disabled |
 | `tests/commands.test.ts` | Unit tests: `/broke` parse/apply/format (incl. `update` subcommands), generated help text, Ollama model-tag matching, measure parsing + `formatMeasure` |
 | `tests/measure.test.ts` | Unit tests: run-record mapping, ledger append/rotation/malformed-skip, summary math incl. summarizer cost side (mean/median/max/byTask) |
@@ -168,7 +170,7 @@ The benchmark is a synthetic reference, not a real-session claim.
 The real-session counterpart is the measurement ledger: with
 `stats.measure` on (default), broke appends one `RunRecord` per real
 compression run to `measure.jsonl` (sizes + per-pass removals, no content,
-no paths, rotation-capped at 5 MB). `/broke measure` (in a task) or
+no paths, a 5 MiB current ledger plus three rotations). `/broke measure` (in a task) or
 `npm run measure` (in the extension directory) aggregates the records:
 runs, tasks, per-run mean/median/max and per-task breakdowns - explicitly
 labeled as a sum over individual runs, not a cumulative context claim.

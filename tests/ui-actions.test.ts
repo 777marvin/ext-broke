@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, rmdirSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -61,6 +61,92 @@ describe('F7.2 setup actions', () => {
     assert.equal(result?.basic.state, 'off');
     await assert.rejects(() => ext.executeUIExtensionAction('broke-status', 'getSetupReadiness', [{ level: 'invalid' }], host));
     assert.deepEqual(await ext.executeUIExtensionAction('broke-status', 'getConfig', [], host), before);
+  });
+});
+
+describe('Context Press read-only statistics action', () => {
+  it('uses already loaded metadata without reopening even an expired task-statistics ledger', async () => {
+    const { createStatsLoader, emptyStats } = await import('../tokens');
+    const path = join(tmp, 'cached-extras.jsonl');
+    writeFileSync(path, JSON.stringify({ ...emptyStats('ui-actions'), lastUsage: { sentTokens: 7 } }) + '\n');
+    const loader = createStatsLoader(path, -1);
+    loader.get('ui-actions');
+    rmSync(path);
+    mkdirSync(path);
+    const ext = new Broke();
+    Object.assign(ext, { statsLoader: loader });
+    const result = await ext.executeUIExtensionAction('broke-status', 'getStatistics', [{ scope: 'task', page: 0 }], makeHost()) as any;
+    assert.equal(result.taskExtras?.providerUsage?.sentTokens, 7);
+  });
+
+  it('resolves the supplied task once and returns only its records and cached additional counters', async () => {
+    const { persistStats, emptyStats } = await import('../tokens');
+    const { saveConfig, DEFAULT_CONFIG } = await import('../config');
+    saveConfig({ ...DEFAULT_CONFIG, stats: { ...DEFAULT_CONFIG.stats, measure: false } });
+    const before = readFileSync(process.env.BROKE_CONFIG_PATH!, 'utf8');
+    const measurementPath = process.env.BROKE_MEASURE_PATH!;
+    const records = [
+      { kind: 'run', taskId: 'statistics-task', at: 5, charsBefore: 80, charsAfter: 90,
+        structuralChars: 3, errorChars: 0, truncateChars: 0, summarizeChars: 0 },
+      { kind: 'run', taskId: 'other-secret-task', at: 6, charsBefore: 9999, charsAfter: 0,
+        structuralChars: 9999, errorChars: 0, truncateChars: 0, summarizeChars: 0 },
+    ];
+    writeFileSync(measurementPath, records.map(record => JSON.stringify(record)).join('\n') + '\n');
+    persistStats({ ...emptyStats('statistics-task'), savedChars: { structural: 0, error: 0, truncate: 0, summarize: 0, slice: 400 },
+      estimates: { search: 70, flush: 30 }, lastUsage: { sentTokens: 123, cacheReadTokens: 15 } });
+    const host = makeHost();
+    let resolutions = 0;
+    const task = host.getTaskContext()!;
+    task.data.id = 'statistics-task';
+    task.getContextMessages = async () => { throw new Error('statistics must not read conversation content'); };
+    task.getTaskAgentProfile = async () => { throw new Error('statistics must not resolve a model'); };
+    task.addLogMessage = async () => { throw new Error('statistics must not execute a command'); };
+    host.getTaskContext = () => { resolutions++; return task; };
+    const ext = new Broke();
+    // Ordinary badge/task loading primes this production cache; the query itself
+    // must use that cached metadata rather than opening a second ledger.
+    (ext as any).statsLoader.get('statistics-task');
+    const page = await ext.executeUIExtensionAction('broke-status', 'getStatistics', [{ scope: 'task', page: 0 }], host) as any;
+    assert.equal(page.state, 'ready');
+    assert.equal(page.recordingEnabled, false);
+    assert.equal(page.summary.netChars, -10);
+    assert.equal(page.totalRuns, 1);
+    assert.equal(resolutions, 1);
+    assert.deepEqual(page.taskExtras, { providerUsage: { provenance: 'last-available-completed-call', sentTokens: 123,
+      cacheReadTokens: 15, cacheWriteTokens: null }, avoidedChars: { slice: 400, search: 70, flush: 30 } });
+    assert.equal(JSON.stringify(page).includes('other-secret-task'), false);
+    assert.equal(readFileSync(process.env.BROKE_CONFIG_PATH!, 'utf8'), before);
+    assert.equal(readFileSync(measurementPath, 'utf8'), records.map(record => JSON.stringify(record)).join('\n') + '\n');
+    saveConfig(DEFAULT_CONFIG);
+  });
+
+  it('validates before task resolution and reports safe read failures separately from empty or no task', async () => {
+    const ext = new Broke();
+    const host = makeHost();
+    host.getTaskContext = () => { throw new Error('invalid requests must not resolve host task'); };
+    for (const query of [{ scope: 'task', page: -1 }, { scope: 'all', page: 0 }, { scope: 'task', page: 0, taskId: 'other' }]) {
+      const result = await ext.executeUIExtensionAction('broke-status', 'getStatistics', [query], host) as any;
+      assert.equal(result.error.code, 'invalid-query');
+    }
+    const absent = makeHost();
+    absent.getTaskContext = () => null;
+    const noTask = await ext.executeUIExtensionAction('broke-status', 'getStatistics', [{ scope: 'task', page: 0 }], absent) as any;
+    assert.equal(noTask.state, 'no-task');
+    // A host context that throws is not an unreadable ledger: name the real cause.
+    const throwing = makeHost();
+    throwing.getTaskContext = () => { throw new Error('host task store unavailable'); };
+    const unresolved = await new Broke().executeUIExtensionAction('broke-status', 'getStatistics', [{ scope: 'task', page: 0 }], throwing) as any;
+    assert.equal(unresolved.error.code, 'task-unavailable');
+    assert.doesNotMatch(unresolved.error.message, /Recorded history/);
+    const path = process.env.BROKE_MEASURE_PATH!;
+    if (existsSync(path)) rmSync(path);
+    mkdirSync(path);
+    const failed = await new Broke().executeUIExtensionAction('broke-status', 'getStatistics', [{ scope: 'retained', page: 0 }], absent) as any;
+    assert.equal(failed.error.code, 'read-failed');
+    assert.equal(JSON.stringify(failed).includes(tmp), false);
+    rmdirSync(path);
+    const empty = await new Broke().executeUIExtensionAction('broke-status', 'getStatistics', [{ scope: 'retained', page: 0 }], absent) as any;
+    assert.equal(empty.state, 'empty');
   });
 });
 

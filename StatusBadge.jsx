@@ -9,7 +9,6 @@
   const [saving, setSaving] = React.useState(false);
   const [previewing, setPreviewing] = React.useState(false);
   const [guideVisible, setGuideVisible] = React.useState(false);
-  const [guideStep, setGuideStep] = React.useState(1);
   const [setupReadiness, setSetupReadiness] = React.useState(null);
   const [checkingSetup, setCheckingSetup] = React.useState(false);
   const [cmdCategory, setCmdCategory] = React.useState('all');
@@ -46,7 +45,6 @@
   const overlaySession = React.useRef(0);
   const guideButtonRef = React.useRef(null);
   const checkButtonRef = React.useRef(null);
-  const onboardingCheckButtonRef = React.useRef(null);
   const restoreCheckFocus = React.useRef(false);
   const guideRevision = React.useRef(0);
   const restoreGuideFocus = React.useRef(false);
@@ -114,6 +112,8 @@
 
   const closeOverlay = () => {
     if (savingRef.current || executingCmd) return;
+    cpRequest.current++;
+    cpFlight.current = null;
     invalidatePreview();
     overlaySession.current++;
     setPendingCommand(null);
@@ -143,15 +143,11 @@
   React.useEffect(() => {
     if (!checkingSetup && restoreCheckFocus.current) {
       restoreCheckFocus.current = false;
-      if (overlayOpen) {
-        if (guideVisible && guideStep === 2 && onboardingCheckButtonRef.current) {
-          onboardingCheckButtonRef.current.focus();
-        } else if (document.activeElement === document.body || document.activeElement === dialogRef.current) {
-          checkButtonRef.current?.focus();
-        }
+      if (overlayOpen && (document.activeElement === document.body || document.activeElement === dialogRef.current)) {
+        checkButtonRef.current?.focus();
       }
     }
-  }, [checkingSetup, overlayOpen, guideVisible, guideStep]);
+  }, [checkingSetup, overlayOpen]);
 
   const openOverlay = async () => {
     const request = ++revision.current;
@@ -161,11 +157,14 @@
     setCheckingSetup(false);
     setSetupReadiness(null);
     setGuideVisible(false);
-    setGuideStep(1);
     setAdvancedOpen(false);
     setCmdCategory('all');
     restoreGuideFocus.current = false;
     setReadinessMatchesSaved(true);
+    cpSetView('control');
+    cpSetStats(null);
+    cpDataKey.current = '';
+    cpOriginal.current = null;
     setOverlayOpen(true);
     setDraft(null);
     setOverlayError(null);
@@ -174,7 +173,7 @@
     try {
       const c = await executeExtensionAction?.('getConfig');
       if (!c || typeof c !== 'object') throw new Error('Missing config');
-      if (revision.current === request) setDraft(c);
+      if (revision.current === request) { cpOriginal.current = c as typeof cpOriginal.current; setDraft(c); }
       const setup = (await executeExtensionAction?.('getSetupState')) as { dismissed?: boolean } | undefined;
       if (overlaySession.current === session && guideRevision.current === guideRequest) setGuideVisible(setup?.dismissed === false);
     } catch {
@@ -204,7 +203,7 @@
   const checkSetup = async () => {
     if (!draftRef.current || savingRef.current || checkingSetup) return;
     const request = ++setupRequest.current;
-    restoreCheckFocus.current = document.activeElement === checkButtonRef.current || document.activeElement === onboardingCheckButtonRef.current;
+    restoreCheckFocus.current = document.activeElement === checkButtonRef.current;
     setCheckingSetup(true);
     setSetupReadiness(null);
     setOverlayError(null);
@@ -220,6 +219,7 @@
   };
 
   const selectMode = async (mode) => {
+    invalidatePreview();
     const request = ++revision.current;
     setPreviewing(true);
     setOverlayError(null);
@@ -244,6 +244,7 @@
         setOverlayError('invalid value - the previous config was kept');
         return;
       }
+      cpOriginal.current = res.config;
       setDraft(res.config);
       revision.current++;
       setOverlayOpen(false);
@@ -319,7 +320,7 @@
           cmd.startsWith('config set ')
         ) {
           const fresh = await executeExtensionAction?.('getConfig');
-          if (fresh && typeof fresh === 'object') setDraft(fresh);
+          if (fresh && typeof fresh === 'object') { cpOriginal.current = fresh as typeof cpOriginal.current; setDraft(fresh); }
         }
       } else {
         setCommandResult({ ok: false, text: res?.error ?? 'the command returned no result', cmd });
@@ -332,10 +333,23 @@
   };
 
   const dialogKeyDown = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeOverlay(); }
+    if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      // closeOverlay() refuses silently while a save or command runs (that guard
+      // is deliberate: closing must not imply an in-flight write was cancelled).
+      // Escape has no disabled state, so it has to say why nothing happened.
+      if (savingRef.current || executingCmd) setOverlayError('Wait for the running operation to finish before closing.');
+      else closeOverlay();
+    }
     if (e.key === 'Tab') {
       const controls = (Array.from(dialogRef.current.querySelectorAll('button:not(:disabled),select:not(:disabled),input:not(:disabled),summary')) as HTMLElement[])
-        .filter((el) => !el.closest('details:not([open])') || el.tagName === 'SUMMARY');
+        .filter((el) => {
+          if (el.closest('[hidden]') || el.getAttribute('tabindex') === '-1') return false;
+          for (let parent = el.parentElement; parent && parent !== dialogRef.current; parent = parent.parentElement) {
+            if (parent.tagName === 'DETAILS' && !parent.hasAttribute('open') && !(el.tagName === 'SUMMARY' && el.parentElement === parent)) return false;
+          }
+          return true;
+        });
       const first = controls[0];
       const last = controls[controls.length - 1];
       if (!first) { e.preventDefault(); return; }
@@ -443,7 +457,6 @@
     : `${status.heading}. ${total.toLocaleString('en-US')} estimated input tokens saved.`;
 
   const fillPct = obs && obs.inputChars > 0 && maxCtx > 0 ? Math.min(100, Math.round((obs.inputChars / maxCtx) * 100)) : 0;
-  const passTotal = savedTokens.structural + savedTokens.error + savedTokens.truncate + savedTokens.summarize;
 
   // All 1-click commands grouped by category for the Command Studio
   const STUDIO_QUICK_COMMANDS = [
@@ -508,9 +521,11 @@
     ? STUDIO_QUICK_COMMANDS
     : STUDIO_QUICK_COMMANDS.filter((item) => item.cat === cmdCategory);
 
+  /* BROKE_CONTEXT_PRESS_UI */
+
   return (
     <div
-      role="status"
+      role={overlayOpen ? undefined : 'status'}
       aria-label={statusLabel}
       title={title}
       style={{
@@ -613,476 +628,45 @@
       </button>
 
       {overlayOpen ? (
-        <dialog
-          className="broke-settings"
-          ref={dialogRef}
-          tabIndex={-1}
-          aria-label="Broke settings"
-          aria-modal="true"
-          onCancel={(e) => { e.preventDefault(); closeOverlay(); }}
-          onKeyDown={dialogKeyDown}
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            margin: 'auto',
-            padding: 0,
-            border: 0,
-            whiteSpace: 'normal',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(15, 23, 42, 0.55)',
-            fontSize: 12,
-          }}
-        >
-          <div
-            style={{
-              background: '#ffffff',
-              color: '#0f172a',
-              border: '1px solid #cbd5e1',
-              borderRadius: 14,
-              padding: '20px 22px',
-              boxSizing: 'border-box',
-              width: 540,
-              maxWidth: '95vw',
-              maxHeight: '90vh',
-              overflowY: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 16,
-              boxShadow: '0 20px 45px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(15, 23, 42, 0.05)',
-              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-            }}
-          >
-            {/* Precision Instrument Cockpit Header */}
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'flex-start',
-                background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
-                color: '#f8fafc',
-                borderRadius: 10,
-                padding: '14px 16px',
-                border: '1px solid #334155',
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 18 }}>💸</span>
-                  <span style={{ fontWeight: 800, fontSize: 18, color: '#ffffff', letterSpacing: '-0.02em' }}>Broke</span>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.06em',
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                      background: 'rgba(56, 189, 248, 0.18)',
-                      color: '#7dd3fc',
-                      border: '1px solid rgba(56, 189, 248, 0.3)',
-                    }}
-                  >
-                    Instrument Cockpit
-                  </span>
-                </div>
-                <div style={{ color: '#cbd5e1', fontSize: 12 }}>Context savings for every task</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
-                  <span style={{ fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, color: '#e2e8f0' }}>
-                    MODE: {String(dialogMode).toUpperCase()}
-                  </span>
-                  <span style={{ fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, color: '#e2e8f0' }}>
-                    LEVEL: {String(dialogEnabled ? dialogLevel : 'off').toUpperCase()}
-                  </span>
-                  <span style={{ fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, color: '#e2e8f0' }}>
-                    AUTO: {String(dialogAutonomy).toUpperCase()}
-                  </span>
-                  <span style={{ fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, color: '#e2e8f0' }}>
-                    RUNS: {passes}
-                  </span>
-                </div>
-              </div>
-              <button
-                aria-label="Close settings"
-                onClick={closeOverlay}
-                style={{
-                  background: 'rgba(255,255,255,0.08)',
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  fontSize: 18,
-                  lineHeight: 1,
-                  color: '#e2e8f0',
-                  padding: '4px 8px',
-                }}
-                title="Close settings"
-              >
-                ×
-              </button>
-            </div>
-
-            {overlayError ? (
-              <div role="alert" style={{ color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600 }}>
-                {overlayError}
-              </div>
-            ) : null}
-
-            {/* Live Status & Context Budget Instrument Card */}
-            <div
-              role="status"
-              style={{
-                fontSize: 13,
-                color: status.color,
-                lineHeight: 1.5,
-                background: status.background,
-                padding: '13px 14px',
-                borderRadius: 10,
-                border: `1px solid ${status.border}`,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 14 }}>
-                  <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: '50%', background: status.color, flex: '0 0 auto' }} />
-                  {status.heading}
-                </div>
-                {cost.savedUsd != null && cost.savedUsd > 0 ? (
-                  <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(255,255,255,0.85)', padding: '2px 7px', borderRadius: 99, border: `1px solid ${status.border}` }}>
-                    {money.trim()} est.
-                  </span>
-                ) : null}
-              </div>
-              <p style={{ margin: '0 0 0 17px', color: '#34424a' }}>{status.detail}</p>
-
-              {/* Context Budget Gauge Bar */}
-              {(obs && obs.inputChars > 0 && maxCtx > 0) || passTotal > 0 ? (
-                <div style={{ marginLeft: 17, marginTop: 2, paddingTop: 8, borderTop: `1px solid ${status.border}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {obs && obs.inputChars > 0 && maxCtx > 0 ? (
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#334155', marginBottom: 3, fontVariantNumeric: 'tabular-nums' }}>
-                        <span>Context Budget Fill: <strong>{obs.inputChars.toLocaleString('en-US')}</strong> / {maxCtx.toLocaleString('en-US')} chars</span>
-                        <span>{fillPct}% ({obs.belowThreshold ? 'below threshold' : 'lossy passes engaged'})</span>
-                      </div>
-                      <div style={{ height: 6, borderRadius: 3, background: 'rgba(15,23,42,0.1)', overflow: 'hidden' }}>
-                        <div
-                          style={{
-                            height: '100%',
-                            width: `${fillPct}%`,
-                            background: obs.belowThreshold ? '#0284c7' : '#16a34a',
-                            transition: 'width 0.25s ease',
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {passTotal > 0 ? (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11, color: '#334155', fontVariantNumeric: 'tabular-nums' }}>
-                      <span>Removed by pass:</span>
-                      <span><strong>Structural</strong> {savedTokens.structural.toLocaleString('en-US')}t</span>
-                      <span>· <strong>Errors</strong> {savedTokens.error.toLocaleString('en-US')}t</span>
-                      <span>· <strong>Truncate</strong> {savedTokens.truncate.toLocaleString('en-US')}t</span>
-                      <span>· <strong>Summarize</strong> {savedTokens.summarize.toLocaleString('en-US')}t</span>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-
-            {previewing ? (
-              <div role="status" style={{ color: '#856404', fontSize: 13, padding: '10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>⏳</span> Previewing preset...
-              </div>
-            ) : null}
-
-            {!overlayCfg ? (
-              <div style={{ opacity: 0.9, color: '#666', textAlign: 'center', padding: '40px', fontSize: 14 }}>
-                <span style={{ display: 'block', fontSize: 24, marginBottom: 12 }}>🔄</span>
-                Loading configuration...
-              </div>
-            ) : (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <button
-                    ref={guideButtonRef}
-                    type="button"
-                    onClick={() => { guideRevision.current++; setGuideVisible(true); }}
-                    disabled={saving}
-                    style={{ ...buttonStyle, minHeight: 34, fontWeight: 600, background: '#f8fafc' }}
-                  >
-                    Setup guide
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAdvancedOpen((prev) => !prev)}
-                    disabled={saving}
-                    style={{ ...buttonStyle, minHeight: 34, fontWeight: 600, color: '#0369a1', border: '1px solid #bae6fd', background: '#f0f9ff' }}
-                  >
-                    {advancedOpen ? 'Hide Command Studio' : 'Open Command Studio (All Commands)'}
-                  </button>
-                </div>
-
-                {/* Interactive 3-Step Onboarding Flow (F7.2 + Full UI Command Integration) */}
-                {guideVisible ? (
-                  <section
-                    aria-label="Getting started"
-                    style={{
-                      padding: 15,
-                      border: '1px solid #93c5fd',
-                      borderRadius: 10,
-                      background: 'linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%)',
-                      color: '#1e293b',
-                      fontSize: 12.5,
-                      lineHeight: 1.55,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 10,
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                      <h2 style={{ margin: 0, fontSize: 16, color: '#0f172a', fontWeight: 750 }}>Welcome to Broke</h2>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                        {[
-                          { step: 1, label: '1. Approach' },
-                          { step: 2, label: '2. Readiness' },
-                          { step: 3, label: '3. Command Studio' },
-                        ].map((s) => (
-                          <button
-                            key={s.step}
-                            type="button"
-                            onClick={() => setGuideStep(s.step)}
-                            disabled={saving}
-                            style={{
-                              padding: '3px 8px',
-                              fontSize: 11,
-                              fontWeight: guideStep === s.step ? 700 : 500,
-                              borderRadius: 99,
-                              border: `1px solid ${guideStep === s.step ? '#0284c7' : '#cbd5e1'}`,
-                              background: guideStep === s.step ? '#0284c7' : '#ffffff',
-                              color: guideStep === s.step ? '#ffffff' : '#334155',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {s.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <p style={{ margin: 0 }}>
-                      Balanced is recommended: shorten older technical output without extra software. Your first request and recent turns stay protected.
-                    </p>
-                    <p style={{ margin: 0 }}>
-                      Your approach applies to every task. This guide keeps your current settings; changes take effect only when you Save.
-                    </p>
-                    <p style={{ margin: 0 }}>
-                      A short conversation may show zero savings. Maximum savings optionally uses a local or cloud summarizer; checking setup does not generate a summary or measure its quality.
-                    </p>
-
-                    {/* Interactive Onboarding Step Cards */}
-                    <div style={{ background: '#ffffff', border: '1px solid #dbeafe', borderRadius: 8, padding: '10px 12px' }}>
-                      {guideStep === 1 ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ fontWeight: 700, color: '#0f172a' }}>Step 1: Choose your operating approach</div>
-                          <div style={{ fontSize: 12, color: '#475569' }}>
-                            <strong>Safe</strong> tidies duplicates only · <strong>Balanced</strong> trims old logs &amp; tool outputs · <strong>Maximum savings</strong> summarizes old turns via Ollama or Cloud.
-                          </div>
-                        </div>
-                      ) : guideStep === 2 ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ fontWeight: 700, color: '#0f172a' }}>Step 2: Verify readiness in one click</div>
-                          <div style={{ fontSize: 12, color: '#475569' }}>
-                            Run a metadata-only readiness check for your current draft without sending conversation content:
-                          </div>
-                          <div>
-                            <button
-                              ref={onboardingCheckButtonRef}
-                              type="button"
-                              onClick={() => void checkSetup()}
-                              disabled={saving || checkingSetup}
-                              style={{ ...buttonStyle, padding: '5px 10px', fontWeight: 600, background: '#f0f9ff', border: '1px solid #7dd3fc', color: '#0369a1' }}
-                            >
-                              {checkingSetup ? 'Checking setup...' : 'Run Readiness Check Now'}
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ fontWeight: 700, color: '#0f172a' }}>Step 3: Every command is clickable in the UI</div>
-                          <div style={{ fontSize: 12, color: '#475569' }}>
-                            No need to memorize CLI syntax: launch diagnostics, snapshots, flush, local search, ST-slicing, diffs, and updates directly from the <strong>Command Studio</strong> below.
-                          </div>
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            <button
-                              type="button"
-                              onClick={() => { setAdvancedOpen(true); setCmdCategory('all'); }}
-                              disabled={saving}
-                              style={{ ...buttonStyle, padding: '4px 9px', fontSize: 11, fontWeight: 600, background: '#0f172a', color: '#fff' }}
-                            >
-                              Explore All Commands
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void runQuickCommand('index status')}
-                              disabled={saving}
-                              style={{ ...buttonStyle, padding: '4px 9px', fontSize: 11, fontWeight: 600 }}
-                            >
-                              Try: Check Search Index
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void runQuickCommand('snapshot list')}
-                              disabled={saving}
-                              style={{ ...buttonStyle, padding: '4px 9px', fontSize: 11, fontWeight: 600 }}
-                            >
-                              Try: List Snapshots
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button type="button" onClick={finishGuide} disabled={saving} style={{ ...buttonStyle, minHeight: 38, fontWeight: 700, background: '#0066cc', color: '#fff', border: '1px solid #005bb7' }}>
-                          Got it
-                        </button>
-                        <button type="button" onClick={finishGuide} disabled={saving} style={{ ...buttonStyle, minHeight: 38 }}>
-                          Skip introduction
-                        </button>
-                      </div>
-                      {guideStep < 3 ? (
-                        <button
-                          type="button"
-                          onClick={() => setGuideStep((s) => Math.min(3, s + 1))}
-                          disabled={saving}
-                          style={{ ...buttonStyle, minHeight: 34, fontSize: 11, fontWeight: 600 }}
-                        >
-                          Next step →
-                        </button>
-                      ) : null}
-                    </div>
-                  </section>
-                ) : null}
-
-                {/* Everyday Controls */}
-                <fieldset
-                  disabled={saving}
-                  onChangeCapture={invalidatePreview}
-                  style={{
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 10,
-                    padding: '12px 14px',
-                    margin: 0,
-                    background: '#f8fafc',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                  }}
+        <dialog className="broke-settings broke-context-press" ref={dialogRef} tabIndex={-1} aria-label="Broke settings" aria-modal="true"
+          onCancel={(event) => { event.preventDefault(); closeOverlay(); }}
+          onKeyDown={dialogKeyDown} onClick={event => event.stopPropagation()}>
+          <style>{cpCss}</style>
+          <div className="cp-shell">
+            <header className="cp-head"><div><h1 className="cp-title">Broke · Context Press</h1><p className="cp-subtitle">Less repeated context. More room for your work.</p></div>
+              <div className="cp-head-actions"><div className="cp-tabs" role="tablist" aria-label="Broke views">
+                <button type="button" id="broke-control-tab" className="cp-tab" role="tab" ref={el => { if (el) cpTabs.current[0] = el; }} aria-selected={cpView === 'control'} aria-controls="broke-control-panel" tabIndex={cpView === 'control' ? 0 : -1} onClick={() => cpSetView('control')} onKeyDown={event => cpTabKey(event, 0)}>Control</button>
+                <button type="button" id="broke-statistics-tab" className="cp-tab" role="tab" ref={el => { if (el) cpTabs.current[1] = el; }} aria-selected={cpView === 'statistics'} aria-controls="broke-statistics-panel" tabIndex={cpView === 'statistics' ? 0 : -1} onClick={() => cpSetView('statistics')} onKeyDown={event => cpTabKey(event, 1)}>Statistics</button>
+              </div><button type="button" className="cp-close" aria-label="Close settings" onClick={closeOverlay} disabled={saving || !!executingCmd}>×</button></div>
+            </header>
+            <div className="cp-body">
+              {overlayError ? <div className="cp-error" role="alert">{overlayError}</div> : null}
+              {overlayCfg ? <>
+                {cpControlView}
+                {cpStatisticsView}
+                <details
+                  className="cp-advanced"
+                  open={advancedOpen}
+                  onToggle={(e) => setAdvancedOpen((e.currentTarget as HTMLDetailsElement).open)}
+                  style={{ borderTop: '1px solid #e2e8f0', paddingTop: 14 }}
                 >
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', fontWeight: 650, fontSize: 13, color: '#0f172a' }}>
-                    <input
-                      type="checkbox"
-                      checked={overlayCfg.enabled ?? true}
-                      onChange={(e) => patchOverlay({ enabled: e.target.checked })}
-                      style={{ width: 17, height: 17, accentColor: '#0066cc', cursor: 'pointer' }}
-                    />
-                    Use Broke automatically
-                  </label>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontWeight: 650, fontSize: 12, color: '#0f172a' }}>
+                  <summary style={{ cursor: 'pointer', color: '#0f172a', fontSize: 13, fontWeight: 700, padding: '4px 0' }}>
+                    Advanced settings and diagnostics
+                  </summary>
+                  <p className="cp-small" style={{ margin: '10px 0' }}>Commands here execute immediately after their own confirmation. Cancel only discards settings; it does not undo an executed command.</p>
+                  <div className="cp-row" style={{ justifyContent: 'flex-start', margin: '10px 0' }}>
+                    <button type="button" ref={guideButtonRef} onClick={() => { guideRevision.current++; setGuideVisible(true); cpSetView('control'); }} disabled={saving}>Setup guide</button>
+                    <button type="button" onClick={() => setAdvancedOpen(true)} disabled={saving}>Open Command Studio (All Commands)</button>
+                  </div>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, marginTop: 12 }}>
                     Savings approach
-                    <select value={overlayCfg.mode ?? 'custom'} onChange={(e) => void selectMode(e.target.value)} style={{ ...selectStyle, marginTop: 4 }}>
+                    <select value={overlayCfg.mode ?? 'custom'} onChange={(event) => void selectMode(event.target.value)} disabled={saving || previewing} style={selectStyle}>
                       <option value="short">Safe - tidy repeated content only</option>
                       <option value="normal">Balanced - shorten old technical output (recommended)</option>
                       <option value="long">Maximum savings - summarize older work (setup required)</option>
                       <option value="custom">Custom - expert settings</option>
                     </select>
                   </label>
-                  <p style={{ fontSize: 11, color: '#475569', margin: 0, lineHeight: 1.5 }}>
-                    This choice applies to every task. Balanced is the recommended default and does not require extra software.
-                  </p>
-                  {overlayCfg.mode === 'long' ? (
-                    <div style={{ fontSize: 11, color: '#6d4d13', lineHeight: 1.5, background: '#fff8e8', border: '1px solid #ead39b', borderRadius: 6, padding: '8px 10px' }}>
-                      Maximum savings needs local Ollama or a configured cloud model. Cloud summaries can cost money and send older conversation content to that provider.
-                    </div>
-                  ) : null}
-                </fieldset>
-
-                {/* Common Actions */}
-                <div aria-label="Common actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
-                  {[
-                    { label: 'Check setup', cmd: 'setup', desc: 'Check readiness for your current settings without generating a summary' },
-                    { label: 'View savings', cmd: 'stats', desc: 'Show what Broke has removed in this task' },
-                    { label: 'Why no savings yet?', cmd: 'why', desc: 'Explain what Broke is waiting for' },
-                  ].map((item) => (
-                    <button
-                      key={item.cmd}
-                      ref={item.cmd === 'setup' ? checkButtonRef : undefined}
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); if (item.cmd === 'setup') void checkSetup(); else void runQuickCommand(item.cmd); }}
-                      disabled={saving || previewing || (item.cmd === 'setup' && checkingSetup)}
-                      title={item.desc}
-                      style={{
-                        padding: '9px 8px',
-                        minHeight: 42,
-                        fontSize: 12,
-                        lineHeight: 1.25,
-                        background: '#ffffff',
-                        border: '1px solid #94a3b8',
-                        borderRadius: 8,
-                        cursor: saving || previewing ? 'not-allowed' : 'pointer',
-                        color: '#0f172a',
-                        fontWeight: 650,
-                        opacity: saving || previewing ? 0.5 : 1,
-                        boxShadow: '0 1px 2px rgba(15,23,42,0.05)',
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Setup Readiness Inspector */}
-                {checkingSetup || setupReadiness ? (
-                  <section
-                    role="status"
-                    aria-label="Setup readiness"
-                    aria-live="polite"
-                    aria-busy={checkingSetup}
-                    style={{
-                      padding: 14,
-                      border: '1px solid #b8d8e8',
-                      borderRadius: 10,
-                      background: '#eef7fb',
-                      color: '#34424a',
-                      fontSize: 12,
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    <h2 style={{ margin: '0 0 10px', fontSize: 14 }}>{checkingSetup ? 'Checking setup...' : 'Setup readiness'}</h2>
-                    {checkingSetup ? (
-                      <p style={{ margin: 0 }}>Checking the current settings. No summary will be generated.</p>
-                    ) : (
-                      <>
-                        <dl style={{ margin: 0 }}>
-                          {['basic', 'backend', 'model', 'automatic'].map((key) => (
-                            <div key={key} style={{ marginBottom: 10 }}>
-                              <dt style={{ fontWeight: 700 }}>{setupReadiness[key].heading}</dt>
-                              <dd style={{ margin: '3px 0 0' }}>{setupReadiness[key].detail}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                        <p style={{ margin: 0 }}>These checks do not prove summary quality, speed or billing savings. Results describe the settings shown here; Save applies changes.</p>
-                      </>
-                    )}
-                  </section>
-                ) : null}
-
                 {/* Structured Command Result Inspector */}
                 {commandResult ? (
                   <div
@@ -1246,15 +830,7 @@
                   </div>
                 ) : null}
 
-                {/* Progressive Disclosure: Deep Pipeline Controls & Full Command Studio */}
-                <details
-                  open={advancedOpen}
-                  onToggle={(e) => setAdvancedOpen((e.currentTarget as HTMLDetailsElement).open)}
-                  style={{ borderTop: '1px solid #e2e8f0', paddingTop: 14 }}
-                >
-                  <summary style={{ cursor: 'pointer', color: '#0f172a', fontSize: 13, fontWeight: 700, padding: '4px 0' }}>
-                    Advanced settings and diagnostics
-                  </summary>
+
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 12 }}>
                     <p style={{ margin: 0, color: '#475569', fontSize: 12 }}>
                       The selftest below exercises synthetic input with a stub summarizer. It does not check the configured backend or model.
@@ -1840,52 +1416,9 @@
                     </div>
                   </div>
                 </details>
-              </>
-            )}
-
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', borderTop: '1px solid #e2e8f0', paddingTop: 14, marginTop: 2 }}>
-              <button
-                type="button"
-                onClick={closeOverlay}
-                disabled={saving}
-                style={{
-                  padding: '8px 16px',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  background: '#f8fafc',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  color: '#334155',
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = '#e2e8f0'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void saveOverlay()}
-                disabled={saving || previewing || !overlayCfg}
-                style={{
-                  padding: '8px 24px',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  background: '#0066cc',
-                  border: '1px solid #005bb7',
-                  borderRadius: 6,
-                  cursor: (saving || previewing || !overlayCfg) ? 'not-allowed' : 'pointer',
-                  color: '#fff',
-                  transition: 'all 0.15s',
-                  boxShadow: '0 2px 4px rgba(0,102,204,0.2)',
-                }}
-                onMouseEnter={(e) => { if (!saving && !previewing && overlayCfg) { e.currentTarget.style.background = '#005bb7'; e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,102,204,0.3)'; } }}
-                onMouseLeave={(e) => { if (!saving && !previewing && overlayCfg) { e.currentTarget.style.background = '#0066cc'; e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,102,204,0.2)'; } }}
-              >
-                {saving ? 'saving...' : 'Save'}
-              </button>
+              </> : <p role="status" className="cp-small">Loading configuration...</p>}
             </div>
+            <footer className="cp-foot"><div className="cp-meta"><strong>{saving ? 'Saving changes...' : cpDirty ? 'Unsaved changes' : 'Saved settings'}</strong>Applies to every task when saved.</div><div className="cp-foot-actions"><button type="button" onClick={closeOverlay} disabled={saving || !!executingCmd}>Cancel</button><button type="button" className="cp-save" onClick={() => void saveOverlay()} disabled={saving || previewing || !overlayCfg}>{saving ? 'saving...' : 'Save'}</button></div></footer>
           </div>
         </dialog>
       ) : null}

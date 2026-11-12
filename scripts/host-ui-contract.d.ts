@@ -21,8 +21,8 @@
  * Verified consumed props against @aiderdesk/extensions 0.32.1 and
  * @aiderdesk/extensions 0.33.0 (checked against these hotovo/aider-desk source
  * commits), and re-verified against @aiderdesk/extensions 0.35.0,
- * @aiderdesk/extensions 0.37.0, @aiderdesk/extensions 0.38.0 and
- * @aiderdesk/extensions 0.39.0:
+ * @aiderdesk/extensions 0.37.0, @aiderdesk/extensions 0.38.0,
+ * @aiderdesk/extensions 0.39.0 and @aiderdesk/extensions 0.41.0:
  * - 0.32.1: d671c96a5b744d1215b4b9f2938f3bfa171802ea
  * - 0.33.0: ef09179b705eed5acb04b313c9acc5e39e7314f4
  * 0.35.0 was verified against a HOST SOURCE CHECKOUT, AiderDesk v0.85.0 at

@@ -6,6 +6,101 @@ the [README](../README.md); the pipeline internals and the module map live
 in [docs/overview.md](overview.md); the tuning matrices are in
 [docs/tuning.md](tuning.md).
 
+## Context Press and recorded statistics
+
+The compact 💸 task badge opens Context Press inside AiderDesk's native modal.
+**Control** shows the current state and a measured illustration of the last
+observed context: a bar of real characters against `maxContextChars` with a
+sealed head and an open rest, the limit as a dashed line with a derived scale,
+and a receipt for the cumulative, estimated saving in money. Choose the last
+included step: **Clean** is Safe (`short`), **Trim** is
+Balanced (`normal`), and **Summarize** is Maximum savings (`long`). Each choice
+includes the earlier steps and applies the existing canonical preset to a draft.
+An existing Custom configuration stays Custom until a preset is chosen; backend,
+cache and automation settings remain intact. Enable Broke is a separate switch.
+
+Save applies the draft extension-wide. Cancel, Escape and the close control close
+immediately and drop the draft; only Save changes settings. A failed save retains
+the draft for retry.
+The footer stays visible while the body scrolls. Replay only animates the stack,
+respects reduced motion and makes no model request. Check setup reads metadata
+for the displayed settings without generating a summary. The short introduction
+can be skipped and reopened through Setup guide.
+
+Advanced retains technical settings and the complete Command Studio, including
+parameterized builders and the universal command bar. These commands execute
+immediately with their existing confirmations; Cancel does not undo them. The
+full extension settings panel remains the expert surface with host controls.
+
+**Statistics** reads the real measurement ledger, independently of the selected
+draft preset. This task is the default scope. Retained history must be chosen
+explicitly and covers the installation's currently retained records, across
+tasks and projects. With no current task, select that broader scope explicitly.
+
+The snapshot refreshes when either of two things changes: this process records a
+run or resets a task, or the ledger files themselves change on disk. The second
+check is what makes the tab correct when another process appends - the CLI and
+MCP agents write to the same `measure.jsonl`. The cost is a file fingerprint per
+poll (size, mtime and file id for each of the four ledger files), not a re-read,
+so a poll in an unchanged ledger parses nothing. A changed fingerprint re-reads
+on that poll.
+
+One run, in characters and in rounded estimated tokens (`characters / 4`):
+
+```
+Net reduction                        14,820 est. tokens   (59,280 characters)
+  before 118,400 chars  ->  after 59,120 chars
+  Clean 12,400 | Errors & logs 31,000 | Trim 9,600 | Summarize 6,280
+  Net reconciliation -2,720   (overlap and marker overhead; not an extra saving)
+```
+
+The reconciliation row is why the step numbers do not add up to the net: passes
+overlap on the same bytes. A record whose step counters are incomplete shows
+`Unavailable` for that step instead of a zero, and the panel says how many
+records are affected.
+
+- **By step:** Clean, Errors & logs, Trim and Summarize contributions, with
+  explanations and a table. Contributions can overlap and are not additive shares.
+- **Over time:** chronological run bars, run inspection and Older / Newer pages
+  of 60 runs. Totals cover the full selected retained scope, not only that page.
+- **Net reduction:** measured characters before minus after. A negative value
+  means added context. Reconciliation shows net minus known step contributions;
+  incomplete attribution remains unavailable rather than measured zero.
+- **Units:** characters or estimated tokens (`Math.round(characters / 4)`).
+  Aggregate character totals are converted once. Calls may contain repeated
+  evolving context, so their sum is not unique material removed forever.
+
+Provider usage & avoided context is a separate collapsed disclosure. It shows
+cached counters for the current task: provider-reported tokens from the last
+available completed call and slicing/search/flush estimates. Usage always stays
+in tokens; these counters are not the selected run's saving and are not summed
+across retained history. Missing provider/cache values remain unavailable.
+
+Record run history edits `stats.measure`. Save controls future recording only:
+turning it off keeps existing records and leaves compression enabled; turning
+it on does not backfill missing runs. Ordinary rotation retains a current 5 MiB
+ledger and three rotations. The UI query additionally caps reads at that
+four-file rotation ceiling - about 20 MiB, since a rotated file may hold one
+record past its 5 MiB trigger - and 250,000 physical lines, and reports a limit
+error rather than calling partial totals complete. Statistics refresh only
+while visible, at most every five seconds. The query reuses its snapshot while
+`measurementRevision()` is unchanged AND the ledger files are unchanged on disk,
+so an unchanged ledger costs one integer comparison plus a four-file fingerprint
+(size, mtime and file id) instead of a full re-parse. The second check is what
+makes the tab correct when another process appends to the same ledger - the CLI
+and MCP agents do, because every agent shares `ledgers/measure.jsonl` (see
+`docs/agents/multi-agent-setup.md`) - and a changed fingerprint re-reads on that
+poll. Skipped-record counts follow the selected scope: `This task` counts only
+records attributable to the open task, ledger lines no task can be derived from
+are reported on their own line, and `Retained history` reports the full skipped
+count. Loading, no-task, empty, partial and read-error states are distinct;
+Retry is available, and failed refreshes label a retained chart stale.
+
+Neither the illustration's estimated saving, its measured split, estimated
+tokens, recorded reductions nor provider usage guarantees summary quality or a
+billing reduction. An unobserved context is drawn as "not measured yet" rather
+than estimated.
+
 ## Cache-friendly mode (provider prompt cache)
 
 The current code models Anthropic cache writes at 1.25x and reads at 0.1x,

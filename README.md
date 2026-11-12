@@ -26,7 +26,7 @@ npx @aiderdesk/extensions install -g https://github.com/777marvin/ext-broke
 
 Open any AiderDesk task. broke is active by default — the **💸 badge** shows its current state. Leave **Balanced** selected for everyday use. That's it.
 
-**Check setup** in the badge dialog verifies readiness without changing settings. See [Install](#install) for requirements and manual setup.
+Click the badge to open **Context Press**. In **Control**, choose the last included step: **Clean** (Safe), **Trim** (Balanced), or **Summarize** (Maximum savings), then **Save**. Each depth includes the earlier steps. Existing Custom settings stay Custom until you choose a preset. **Check setup** verifies the displayed draft without saving or generating a summary; the illustration above the choices draws the last measured context (a bar of real characters against the limit with a sealed head and an open rest, a derived scale and the limit line, plus a receipt for the cumulative, estimated saving in money), reads "not measured yet" before the first observed call, and **Replay** only animates it. See [Install](#install) for requirements and manual setup.
 
 ---
 
@@ -44,7 +44,9 @@ Yes — but with honest caveats:
 | **Estimated** | Tokens via `chars / 4` heuristic, USD via task model price |
 | **Not guaranteed** | Actual billing savings depend on system prompt, tool schemas, provider caching, and summarizer costs |
 
-The 💸 badge and `/broke stats` report what **your own tasks produce** — live numbers, not screenshots. Turn on the measurement ledger (`/broke measure on`, default) and `/broke measure` aggregates per-run data from `measure.jsonl`.
+The 💸 badge and `/broke stats` report what **your own tasks produce**. Context Press's **Statistics** tab shows recorded reductions by step or over time, in characters or rounded estimated tokens (`characters / 4`). **This task** is the default scope; **Retained history** explicitly includes the installation's retained records. Charts show 60 runs per page while totals cover the full selected retained scope. Net reduction can be negative, and step contributions can overlap. Totals sum individual calls, including repeated context; they do not measure unique material removed forever.
+
+**Record run history** uses the existing measurement preference (`stats.measure`, on by default). Save changes to affect future records; switching it off keeps earlier records and compression enabled, and switching it on cannot recreate missing runs. The rotation-bounded ledger is also available through `/broke measure`. Cached provider usage and avoided-context estimates remain separate from measured net reduction. See [Context Press and recorded statistics](docs/features.md#context-press-and-recorded-statistics).
 
 #### Reproducible reference benchmark
 
@@ -76,13 +78,13 @@ The first user message and recent turns are protected. Optional tool-level slici
 
 | Feature | What it does |
 |---------|--------------|
-| 💸 **Live status badge** | Shows tokens saved, activity state, and savings breakdown |
+| 💸 **Context Press** | Compact status badge opens cumulative depth controls and recorded Statistics |
 | 🔍 **broke-search** | Offline keyword index with budgeted `path:line` snippets |
 | 📄 **ST-slicing** | Interface views instead of full file bodies for large reads (opt-in) |
 | 📸 **Snapshots** | Milestone records per commit; reversible flush if needed |
 | ⚡ **Cache-friendly mode** | Preserves already-sent bytes to help provider prompt-cache reuse |
 | 🗜️ **Error compression** | Compiler/test output → diagnostic essence with explicit markers |
-| 📊 **Measurement ledger** | Per-run records of actual compression savings |
+| 📊 **Measurement ledger** | Rotation-bounded per-run character measurements with estimated token views |
 | 🤝 **Multi-agent MCP & CLI** | Use `broke` search, slicing, diffs, and error compression in Claude Code, Antigravity, Codex, and Cursor |
 
 ---

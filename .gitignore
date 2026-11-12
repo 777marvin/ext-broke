@@ -55,7 +55,13 @@ release-payload*.json
 .superpowers/
 .hyperframes/
 .thumbnails/
+.playwright-mcp/
 
 # Agent scratch plans (plan.md / todo.md) are working notes for the
 # maintainer, not part of the published extension or its docs.
 tasks/
+# Superpowers working docs (plans/specs) contain local machine paths and are
+# maintainer notes, not published docs.
+docs/superpowers/
+# Local test scaffolding produced by integration checks
+.tmp/

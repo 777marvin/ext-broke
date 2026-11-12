@@ -59,6 +59,7 @@ import {
 } from './slice';
 import { runSelfTest } from './selftest';
 import { checkSetupReadiness, deriveSetupReadiness, dismissSetup, loadSetupState } from './setup';
+import { StatisticsError, StatisticsService, validateStatisticsQuery } from './ui-statistics';
 import {
   buildFlushPlan,
   buildStateMessage,
@@ -299,6 +300,7 @@ export default class Broke implements Extension {
   private readonly statsByTask = new Map<string, TaskStats>();
   /** TTL-cached reads of stats.jsonl - a badge refresh must not re-scan 5 MB per tick. */
   private readonly statsLoader: StatsLoader = createStatsLoader();
+  private readonly statisticsService = new StatisticsService();
   private readonly lastPersistAt = new Map<string, number>();
   private readonly lastLogAt = new Map<string, number>();
   private readonly summarizeFailures = new Map<string, number>();
@@ -343,6 +345,15 @@ export default class Broke implements Extension {
    * never leak from one run into a later record. Bounded like the rest.
    */
   private readonly baselineCharsByTask = new Map<string, number>();
+  /**
+   * Shape of the last observed context per task: how much of it is the
+   * protected tail and how much the passes may touch. Captured in
+   * `onTransformMessages` from the SAME pre-transform array as the baseline,
+   * so the Context Press illustration can split its column proportionally
+   * instead of guessing. Unlike the baseline it is NOT consumed by a run -
+   * it is a display snapshot and survives until the next observation.
+   */
+  private readonly contextShapeByTask = new Map<string, { at: number; totalChars: number; protectedChars: number }>();
   /**
    * Provider-reported usage of the most recent completed model call per task.
    * Captured at `onOptimizeMessages` and used for honest Live-UI and /broke stats reporting (F6).
@@ -505,8 +516,22 @@ export default class Broke implements Extension {
       // Reentry: the cloud summarizer's generateText re-enters this pipeline;
       // never observe (or later record) via its prompt.
       if (this.optimizingTasks.has(taskId)) return undefined;
-      if (!getConfig().enabled) return undefined;
-      boundedMapSet(this.baselineCharsByTask, taskId, messagesChars(event.originalMessages));
+      const config = getConfig();
+      if (!config.enabled) return undefined;
+      const messages = event.originalMessages;
+      const totalChars = messagesChars(messages);
+      boundedMapSet(this.baselineCharsByTask, taskId, totalChars);
+      // Same array, same moment: the illustration splits this column between
+      // "the passes may touch this" and "nobody touches this". Keeping both
+      // numbers from ONE observation is what stops the drawing from mixing
+      // two different runs into one picture.
+      const range = compressibleRange(messages, config.protectedTurns);
+      const compressibleChars = range.end > range.start ? messagesChars(messages.slice(range.start, range.end)) : 0;
+      boundedMapSet(this.contextShapeByTask, taskId, {
+        at: Date.now(),
+        totalChars,
+        protectedChars: Math.max(totalChars - compressibleChars, 0),
+      });
     } catch {
       // Observation only - never let it reach the host model call.
     }
@@ -1396,7 +1421,10 @@ export default class Broke implements Extension {
           const cleared = emptyStats(taskId);
           ext.statsByTask.set(taskId, cleared);
           // Real reset: remove the task's persisted lines from stats.jsonl
-          // and drop the summarize cache so nothing stale survives.
+          // and drop the summarize cache so nothing stale survives. The
+          // measured context SHAPE is not dropped: it describes the last call
+          // that actually ran, so a reset that zeroes the savings must not also
+          // make the illustration claim the context was never measured.
           clearTaskStats(taskId);
           ext.statsLoader.invalidate(taskId);
           ext.lastPersistAt.delete(taskId);
@@ -1951,6 +1979,7 @@ export default class Broke implements Extension {
     const taskId = context.getTaskContext()?.data.id ?? '';
     const stats = this.statsFor(context);
     const observation = this.lastObservation.get(taskId) ?? null;
+    const shape = taskId ? (this.contextShapeByTask.get(taskId) ?? null) : null;
     const isOptimizing = taskId ? this.optimizingTasks.has(taskId) : false;
     // BRK-022: the badge headline is the MEASURED reduction (per-run input
     // before - after, summed) - same definition as /broke stats. Legacy
@@ -2003,6 +2032,21 @@ export default class Broke implements Extension {
             inputChars: observation.inputChars,
             inputTokens: estimateTokens(observation.inputChars),
             belowThreshold: observation.inputChars <= config.maxContextChars,
+          }
+        : null,
+      // Measured shape of the SAME array the illustration draws: fill against
+      // maxContextChars plus the proportional protected / compressible split.
+      // Null when no model call has been observed yet - the drawing then says
+      // "not measured" instead of inventing a split.
+      contextShape: shape
+        ? {
+            at: shape.at,
+            totalChars: shape.totalChars,
+            inputTokens: estimateTokens(shape.totalChars),
+            protectedChars: shape.protectedChars,
+            compressibleChars: Math.max(shape.totalChars - shape.protectedChars, 0),
+            fillPct: config.maxContextChars > 0 ? Math.round((shape.totalChars / config.maxContextChars) * 100) : 0,
+            belowThreshold: shape.totalChars <= config.maxContextChars,
           }
         : null,
       savedTokens: {
@@ -2068,6 +2112,39 @@ export default class Broke implements Extension {
    * exists, so a click died silently and looked like a broken extension.
    */
   async executeUIExtensionAction(_componentId: string, action: string, args: unknown[], context: ExtensionContext): Promise<unknown> {
+    if (action === 'getStatistics') {
+      try {
+        if (args.length !== 1) throw new StatisticsError('invalid-query');
+        const query = validateStatisticsQuery(args[0]);
+        // Resolve this supplied host context once; never borrow another task
+        // from the extension's onLoad context or re-read conversation content.
+        // A host context that cannot name its task is its own failure, not an
+        // unreadable ledger: 'read-failed' would blame the recorded history.
+        let taskId: string | null = null;
+        if (query.scope === 'task') {
+          try {
+            const task = typeof context?.getTaskContext === 'function' ? context.getTaskContext() : null;
+            taskId = typeof task?.data.id === 'string' && task.data.id.length ? task.data.id : null;
+          } catch {
+            throw new StatisticsError('task-unavailable');
+          }
+        }
+        const stats = taskId ? this.statsByTask.get(taskId) ?? this.statsLoader.peek(taskId) : null;
+        const usage = (taskId ? this.lastUsageByTask.get(taskId) : null) ?? stats?.lastUsage ?? null;
+        return await this.statisticsService.query({
+          rawQuery: query,
+          taskId,
+          recordingEnabled: getConfig().stats.measure,
+          extras: {
+            providerUsage: usage,
+            avoidedChars: { slice: stats?.savedChars?.slice, search: stats?.estimates?.search, flush: stats?.estimates?.flush },
+          },
+        });
+      } catch (error) {
+        const failure = error instanceof StatisticsError ? error : new StatisticsError('read-failed');
+        return { error: { code: failure.code, message: failure.message } };
+      }
+    }
     if (action === 'refresh') this.refreshUI();
     if (action === 'getConfig') return getConfig();
     if (action === 'getSetupState') return loadSetupState();
